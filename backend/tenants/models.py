@@ -18,8 +18,13 @@ class Tenant(models.Model):
         (PLAN_PRO, 'Pro'),
     ]
 
-    slug = models.SlugField(max_length=64, unique=True, help_text='Used as subdomain, e.g. acme → acme.techyatra.com')
+    slug = models.SlugField(max_length=64, unique=True, help_text='Used as subdomain, e.g. acme → acme.bms.techyatra.com.np')
     name = models.CharField(max_length=255)
+    # Optional fully custom domain, e.g. crm.els.com — leave blank to use subdomain only
+    custom_domain = models.CharField(
+        max_length=255, blank=True, default='',
+        help_text='Custom domain for this tenant, e.g. crm.els.com. Leave blank to use subdomain.',
+    )
     plan = models.CharField(max_length=16, choices=PLAN_CHOICES, default=PLAN_FREE)
     logo = models.URLField(blank=True)
     currency = models.CharField(max_length=8, default='NPR')

@@ -5,17 +5,9 @@ DEBUG = False
 
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', SECRET_KEY)
 
-# Leading dot = wildcard for all subdomains (e.g. els.bms.techyatra.com.np)
-# Also allow root domain + IP for direct access
-ALLOWED_HOSTS = [
-    '.bms.techyatra.com.np',   # *.bms.techyatra.com.np + bms.techyatra.com.np
-    '92.4.89.25',
-    'localhost',
-]
-# Allow overriding via env if needed
-_extra = os.environ.get('ALLOWED_HOSTS', '')
-if _extra:
-    ALLOWED_HOSTS += [h.strip() for h in _extra.split(',') if h.strip()]
+# '*' allows any hostname — safe because Nginx is the public boundary.
+# Custom tenant domains (els.com, etc.) can't be enumerated statically.
+ALLOWED_HOSTS = ['*']
 
 # CORS — allow all tenant subdomains in production
 CORS_ALLOWED_ORIGIN_REGEXES = [

@@ -10,6 +10,23 @@ _access_logger = logging.getLogger('nexus.access')
 _TENANT_CACHE_TTL = 300
 
 
+def _resolve_by_domain(host: str):
+    """
+    Look up a Tenant by custom_domain field.
+    Cached separately from slug lookups.
+    """
+    cache_key = f'tenant_domain_{host}'
+    tenant = cache.get(cache_key)
+    if tenant is None:
+        try:
+            from tenants.models import Tenant
+            tenant = Tenant.objects.get(custom_domain=host, is_active=True, is_deleted=False)
+        except Exception:
+            tenant = False
+        cache.set(cache_key, tenant, _TENANT_CACHE_TTL)
+    return tenant if tenant else None
+
+
 def _resolve_tenant(slug: str):
     """
     Look up a Tenant by slug. Result is cached for _TENANT_CACHE_TTL seconds
@@ -46,14 +63,19 @@ class TenantMiddleware(MiddlewareMixin):
     def process_request(self, request: HttpRequest):
         tenant = None
 
-        # --- 1. Try subdomain ---
         host = request.get_host().split(':')[0]  # strip port
-        parts = host.split('.')
-        if len(parts) > 2:
-            slug = parts[0]
-            tenant = _resolve_tenant(slug)
 
-        # --- 2. Fallback: X-Tenant-Slug header (dev / testing) ---
+        # --- 1. Custom domain (e.g. crm.els.com) ---
+        tenant = _resolve_by_domain(host)
+
+        # --- 2. Subdomain (e.g. els.bms.techyatra.com.np) ---
+        if tenant is None:
+            parts = host.split('.')
+            if len(parts) > 2:
+                slug = parts[0]
+                tenant = _resolve_tenant(slug)
+
+        # --- 3. Fallback: X-Tenant-Slug header (dev / localhost) ---
         if tenant is None:
             header_slug = request.headers.get('X-Tenant-Slug', '').strip()
             if header_slug:

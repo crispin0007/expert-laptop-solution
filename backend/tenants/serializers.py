@@ -10,6 +10,7 @@ class TenantSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'slug', 'name', 'plan', 'logo', 'currency',
             'vat_enabled', 'vat_rate', 'coin_to_money_rate',
+            'custom_domain',
             'is_active', 'is_deleted', 'created_at', 'member_count',
         )
         read_only_fields = ('id', 'is_deleted', 'created_at', 'member_count')
@@ -27,6 +28,6 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'name', 'slug', 'logo', 'currency',
             'vat_enabled', 'vat_rate',
-            'coin_to_money_rate',
+            'coin_to_money_rate', 'custom_domain',
         )
         read_only_fields = ('id', 'slug')
