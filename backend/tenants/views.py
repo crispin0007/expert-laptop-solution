@@ -26,7 +26,51 @@ class TenantViewSet(viewsets.ModelViewSet):
         ).order_by('slug')
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        tenant = serializer.save(created_by=self.request.user)
+
+        # Optionally create an owner/admin user for this tenant
+        admin_email = self.request.data.get('admin_email', '').strip()
+        admin_full_name = self.request.data.get('admin_full_name', '').strip()
+        admin_password = self.request.data.get('admin_password', '').strip()
+
+        if admin_email:
+            import secrets
+            from accounts.models import User, TenantMembership
+            # Create user if not exists
+            user, created = User.objects.get_or_create(
+                email=admin_email,
+                defaults={
+                    'username': admin_email,
+                    'full_name': admin_full_name or admin_email.split('@')[0],
+                    'is_active': True,
+                }
+            )
+            if created:
+                pwd = admin_password or secrets.token_urlsafe(12)
+                user.set_password(pwd)
+                user.save()
+                # Attach generated password to response via a custom attribute
+                tenant._admin_password = pwd
+                tenant._admin_email = admin_email
+            # Link as owner membership
+            TenantMembership.objects.get_or_create(
+                user=user,
+                tenant=tenant,
+                defaults={'role': 'owner', 'is_admin': True, 'is_active': True}
+            )
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        tenant = serializer.instance
+        data = serializer.data
+        # Include generated credentials in response if a new admin was created
+        if hasattr(tenant, '_admin_password'):
+            data = dict(data)
+            data['admin_email'] = tenant._admin_email
+            data['admin_password'] = tenant._admin_password
+        return Response(data, status=status.HTTP_201_CREATED)
 
     def destroy(self, request, *args, **kwargs):
         """Soft-delete instead of hard delete."""

@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import apiClient from '../../api/client'
 import Modal from '../../components/Modal'
+import { Eye, EyeOff } from 'lucide-react'
 
 interface Props {
   open: boolean
@@ -17,6 +18,9 @@ interface FormData {
   vat_enabled: boolean
   vat_rate: string
   coin_to_money_rate: string
+  admin_email: string
+  admin_full_name: string
+  admin_password: string
 }
 
 const defaultForm: FormData = {
@@ -27,6 +31,9 @@ const defaultForm: FormData = {
   vat_enabled: true,
   vat_rate: '0.13',
   coin_to_money_rate: '1.0',
+  admin_email: '',
+  admin_full_name: '',
+  admin_password: '',
 }
 
 /** Auto-generate a URL-safe slug from the tenant name */
@@ -41,6 +48,8 @@ function toSlug(name: string) {
 export default function CreateTenantModal({ open, onClose }: Props) {
   const qc = useQueryClient()
   const [form, setForm] = useState<FormData>(defaultForm)
+  const [showPassword, setShowPassword] = useState(false)
+  const [createdCreds, setCreatedCreds] = useState<{ email: string; password: string } | null>(null)
 
   function set<K extends keyof FormData>(key: K, value: FormData[K]) {
     setForm((f) => ({ ...f, [key]: value }))
@@ -48,11 +57,15 @@ export default function CreateTenantModal({ open, onClose }: Props) {
 
   const mutation = useMutation({
     mutationFn: (payload: object) => apiClient.post('/tenants/', payload),
-    onSuccess: () => {
+    onSuccess: (res) => {
       toast.success('Tenant created successfully')
       qc.invalidateQueries({ queryKey: ['admin', 'tenants'] })
-      setForm(defaultForm)
-      onClose()
+      if (res.data.admin_password) {
+        setCreatedCreds({ email: res.data.admin_email, password: res.data.admin_password })
+      } else {
+        setForm(defaultForm)
+        onClose()
+      }
     },
     onError: (err: any) => {
       const detail = err?.response?.data
@@ -73,13 +86,45 @@ export default function CreateTenantModal({ open, onClose }: Props) {
       vat_enabled: form.vat_enabled,
       vat_rate: parseFloat(form.vat_rate),
       coin_to_money_rate: parseFloat(form.coin_to_money_rate),
+      admin_email: form.admin_email || undefined,
+      admin_full_name: form.admin_full_name || undefined,
+      admin_password: form.admin_password || undefined,
     })
+  }
+
+  function handleDone() {
+    setCreatedCreds(null)
+    setForm(defaultForm)
+    onClose()
   }
 
   return (
     <Modal open={open} onClose={onClose} title="Create New Tenant" width="max-w-xl">
-      <form onSubmit={handleSubmit} className="space-y-4">
-
+      {/* Credentials reveal screen */}
+      {createdCreds ? (
+        <div className="space-y-4">
+          <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+            <p className="font-semibold text-green-800 mb-3">Tenant created! Share these credentials with the owner:</p>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between bg-white border border-green-200 rounded-lg px-3 py-2">
+                <span className="text-sm text-gray-600">Email</span>
+                <span className="text-sm font-mono font-semibold text-gray-900">{createdCreds.email}</span>
+              </div>
+              <div className="flex items-center justify-between bg-white border border-green-200 rounded-lg px-3 py-2">
+                <span className="text-sm text-gray-600">Password</span>
+                <span className="text-sm font-mono font-semibold text-gray-900">{createdCreds.password}</span>
+              </div>
+            </div>
+            <p className="text-xs text-green-700 mt-3">⚠ This password will not be shown again. Copy it now.</p>
+          </div>
+          <div className="flex justify-end">
+            <button onClick={handleDone} className="px-5 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">
+              Done
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-4">
         {/* Name */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -207,6 +252,52 @@ export default function CreateTenantModal({ open, onClose }: Props) {
           </div>
         </div>
 
+        {/* Admin / Owner */}
+        <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-4 space-y-3">
+          <p className="text-sm font-semibold text-indigo-800">Owner / Admin Account <span className="font-normal text-indigo-500">(optional)</span></p>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Full Name</label>
+            <input
+              type="text"
+              value={form.admin_full_name}
+              onChange={(e) => set('admin_full_name', e.target.value)}
+              placeholder="John Doe"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Email</label>
+            <input
+              type="email"
+              value={form.admin_email}
+              onChange={(e) => set('admin_email', e.target.value)}
+              placeholder="owner@company.com"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">
+              Password <span className="text-gray-400">(leave blank to auto-generate)</span>
+            </label>
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={form.admin_password}
+                onChange={(e) => set('admin_password', e.target.value)}
+                placeholder="Min 8 characters"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(s => !s)}
+                className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
+              >
+                {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Footer */}
         <div className="flex justify-end gap-3 pt-2 border-t border-gray-100 mt-2">
           <button
@@ -225,6 +316,7 @@ export default function CreateTenantModal({ open, onClose }: Props) {
           </button>
         </div>
       </form>
+      )}
     </Modal>
   )
 }
