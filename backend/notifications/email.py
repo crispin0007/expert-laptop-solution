@@ -18,7 +18,7 @@ def _send(subject: str, message: str, recipient_list: list[str]) -> None:
         send_mail(
             subject=subject,
             message=message,
-            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@nexusbms.io'),
+            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@techyatra.com'),
             recipient_list=recipient_list,
             fail_silently=False,
         )
@@ -35,7 +35,7 @@ def send_ticket_assigned(ticket, assignee) -> None:
     if not assignee.email:
         return
     _send(
-        subject=f"[NEXUS BMS] Ticket #{ticket.id} assigned to you",
+        subject=f"[TechYatra] Ticket #{ticket.id} assigned to you",
         message=(
             f"Hi {assignee.get_full_name() or assignee.username},\n\n"
             f"Ticket '{ticket.title}' has been assigned to you.\n\n"
@@ -50,7 +50,7 @@ def send_ticket_comment(ticket, comment, recipient) -> None:
     if not recipient.email:
         return
     _send(
-        subject=f"[NEXUS BMS] New comment on Ticket #{ticket.id}",
+        subject=f"[TechYatra] New comment on Ticket #{ticket.id}",
         message=(
             f"A new comment has been added to ticket '{ticket.title}':\n\n"
             f"{comment.body}\n"
@@ -64,7 +64,7 @@ def send_sla_warning(ticket, recipient) -> None:
     if not recipient.email:
         return
     _send(
-        subject=f"[NEXUS BMS] SLA Warning — Ticket #{ticket.id}",
+        subject=f"[TechYatra] SLA Warning — Ticket #{ticket.id}",
         message=(
             f"Ticket '{ticket.title}' is approaching its SLA deadline.\n\n"
             f"Please take action as soon as possible.\n"
@@ -76,7 +76,7 @@ def send_sla_warning(ticket, recipient) -> None:
 def send_invoice_issued(invoice, recipient_email: str) -> None:
     """Send invoice notification to a customer."""
     _send(
-        subject=f"[NEXUS BMS] Invoice #{invoice.invoice_number} issued",
+        subject=f"[TechYatra] Invoice #{invoice.invoice_number} issued",
         message=(
             f"Your invoice #{invoice.invoice_number} for "
             f"{invoice.tenant.name} is ready.\n\n"
@@ -92,15 +92,15 @@ def send_staff_invite(user, tenant, temp_password: str) -> None:
     if not user.email:
         return
     _send(
-        subject=f"[NEXUS BMS] You've been invited to {tenant.name}",
+        subject=f"[TechYatra] You've been invited to {tenant.name}",
         message=(
             f"Hi {user.full_name or user.email},\n\n"
-            f"You have been added as a staff member to {tenant.name} on NEXUS BMS.\n\n"
+            f"You have been added as a staff member to {tenant.name} on TechYatra.\n\n"
             f"Your login credentials:\n"
             f"  Email:    {user.email}\n"
             f"  Password: {temp_password}\n\n"
             f"Please log in and change your password immediately.\n\n"
-            f"Regards,\nThe NEXUS BMS Team"
+            f"Regards,\nThe TechYatra Team"
         ),
         recipient_list=[user.email],
     )
@@ -111,13 +111,13 @@ def send_staff_password_reset(user, tenant, new_password: str) -> None:
     if not user.email:
         return
     _send(
-        subject=f"[NEXUS BMS] Your password has been reset — {tenant.name}",
+        subject=f"[TechYatra] Your password has been reset — {tenant.name}",
         message=(
             f"Hi {user.full_name or user.email},\n\n"
-            f"An administrator at {tenant.name} has reset your NEXUS BMS password.\n\n"
+            f"An administrator at {tenant.name} has reset your TechYatra password.\n\n"
             f"  New Password: {new_password}\n\n"
             f"Please log in and change your password immediately.\n\n"
-            f"Regards,\nThe NEXUS BMS Team"
+            f"Regards,\nThe TechYatra Team"
         ),
         recipient_list=[user.email],
     )
@@ -128,14 +128,14 @@ def send_staff_reactivated(user, tenant) -> None:
     if not user.email:
         return
     _send(
-        subject=f"[NEXUS BMS] Your account has been reactivated — {tenant.name}",
+        subject=f"[TechYatra] Your account has been reactivated — {tenant.name}",
         message=(
             f"Hi {user.full_name or user.email},\n\n"
-            f"Your staff account at {tenant.name} on NEXUS BMS has been reactivated "
+            f"Your staff account at {tenant.name} on TechYatra has been reactivated "
             f"by an administrator.\n\n"
             f"You can now log in again using your existing credentials.\n\n"
             f"If you did not expect this, please contact your workspace administrator.\n\n"
-            f"Regards,\nThe NEXUS BMS Team"
+            f"Regards,\nThe TechYatra Team"
         ),
         recipient_list=[user.email],
     )

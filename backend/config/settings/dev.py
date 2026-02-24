@@ -19,6 +19,6 @@ EMAIL_PORT          = 587
 EMAIL_USE_TLS       = True
 EMAIL_HOST_USER     = 'sklearner57@gmail.com'
 EMAIL_HOST_PASSWORD = 'mnky cnob kcur josa'   # Gmail App Password
-DEFAULT_FROM_EMAIL  = 'NEXUS BMS <sklearner57@gmail.com>'
+DEFAULT_FROM_EMAIL  = 'TechYatra <sklearner57@gmail.com>'
 SERVER_EMAIL        = DEFAULT_FROM_EMAIL
 

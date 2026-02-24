@@ -118,7 +118,7 @@ export default function EditTenantModal({ open, onClose, tenant }: Props) {
               className="flex-1 px-3 py-2 text-sm outline-none bg-white"
             />
             <span className="px-3 py-2 bg-amber-50 text-amber-500 text-sm border-l border-amber-300 select-none">
-              .nexusbms.com
+              .techyatra.com
             </span>
           </div>
           <p className="mt-1 text-xs text-amber-600">

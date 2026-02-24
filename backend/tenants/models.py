@@ -18,7 +18,7 @@ class Tenant(models.Model):
         (PLAN_PRO, 'Pro'),
     ]
 
-    slug = models.SlugField(max_length=64, unique=True, help_text='Used as subdomain, e.g. acme → acme.nexusbms.com')
+    slug = models.SlugField(max_length=64, unique=True, help_text='Used as subdomain, e.g. acme → acme.techyatra.com')
     name = models.CharField(max_length=255)
     plan = models.CharField(max_length=16, choices=PLAN_CHOICES, default=PLAN_FREE)
     logo = models.URLField(blank=True)

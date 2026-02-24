@@ -68,7 +68,7 @@ export default function Sidebar() {
     <aside className="flex flex-col w-60 min-h-screen bg-gray-900 text-white shrink-0">
       {/* Brand */}
       <div className="px-6 py-5 border-b border-gray-700">
-        <p className="text-indigo-400 font-bold text-lg tracking-tight">NEXUS BMS</p>
+        <p className="text-indigo-400 font-bold text-lg tracking-tight">TechYatra</p>
         {tenantName && (
           <p className="text-gray-400 text-xs mt-0.5 truncate">{tenantName}</p>
         )}

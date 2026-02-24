@@ -81,7 +81,7 @@ WSGI_APPLICATION = 'config.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('POSTGRES_DB', 'nexusbms'),
+        'NAME': os.environ.get('POSTGRES_DB', 'techyatra'),
         'USER': os.environ.get('POSTGRES_USER', 'nexus'),
         'PASSWORD': os.environ.get('POSTGRES_PASSWORD', 'nexus_password'),
         'HOST': os.environ.get('POSTGRES_HOST', 'localhost'),

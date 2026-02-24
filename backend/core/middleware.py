@@ -35,7 +35,7 @@ class TenantMiddleware(MiddlewareMixin):
     Resolve tenant from subdomain and attach to request.tenant.
 
     Resolution order:
-      1. Subdomain: acme.nexusbms.com  → slug = 'acme'
+      1. Subdomain: acme.techyatra.com  → slug = 'acme'
       2. X-Tenant-Slug header (useful for local dev / API testing without subdomain)
       3. Falls back to None (super-admin endpoints work without a tenant)
 

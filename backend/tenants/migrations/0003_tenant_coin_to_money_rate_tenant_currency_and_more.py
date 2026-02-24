@@ -34,6 +34,6 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='tenant',
             name='slug',
-            field=models.SlugField(help_text='Used as subdomain, e.g. acme → acme.nexusbms.com', max_length=64, unique=True),
+            field=models.SlugField(help_text='Used as subdomain, e.g. acme → acme.techyatra.com', max_length=64, unique=True),
         ),
     ]

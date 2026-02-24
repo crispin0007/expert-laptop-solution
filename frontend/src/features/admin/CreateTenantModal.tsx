@@ -116,7 +116,7 @@ export default function CreateTenantModal({ open, onClose }: Props) {
               className="flex-1 px-3 py-2 text-sm outline-none bg-white"
             />
             <span className="px-3 py-2 bg-gray-50 text-gray-400 text-sm border-l border-gray-300 select-none">
-              .nexusbms.com
+              .techyatra.com
             </span>
           </div>
           <p className="mt-1 text-xs text-gray-400">Lowercase letters, numbers, and hyphens only.</p>

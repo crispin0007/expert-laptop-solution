@@ -5,7 +5,7 @@ services:
     image: postgres:16
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-nexusbms}
+      POSTGRES_DB: ${POSTGRES_DB:-techyatra}
       POSTGRES_USER: ${POSTGRES_USER:-nexus}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus_password}
     volumes:

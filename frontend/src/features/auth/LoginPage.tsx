@@ -24,7 +24,7 @@ export default function LoginPage() {
       <div className="bg-white rounded-2xl shadow-lg p-10 w-full max-w-md">
         {/* Logo / Brand */}
         <div className="mb-8 text-center">
-          <h1 className="text-3xl font-bold text-indigo-600 tracking-tight">NEXUS BMS</h1>
+          <h1 className="text-3xl font-bold text-indigo-600 tracking-tight">TechYatra</h1>
           <p className="text-gray-500 mt-1 text-sm">Sign in to your workspace</p>
         </div>
 
@@ -36,7 +36,7 @@ export default function LoginPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="admin@nexusbms.com"
+              placeholder="admin@techyatra.com"
               className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
             />
           </div>
@@ -64,7 +64,7 @@ export default function LoginPage() {
 
         {/* Dev hint */}
         <p className="mt-6 text-center text-xs text-gray-400">
-          Super admin: <span className="font-mono">admin@nexusbms.com</span>
+          Super admin: <span className="font-mono">admin@techyatra.com</span>
         </p>
       </div>
     </div>
