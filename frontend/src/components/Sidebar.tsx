@@ -56,7 +56,9 @@ export default function Sidebar() {
   const tenantName = useTenantStore((s) => s.tenantName)
   const clearTenant = useTenantStore((s) => s.clearTenant)
   const user = useAuthStore((s) => s.user)
-  const isSuperAdmin = user?.is_superadmin ?? false
+  const subdomain = useTenantStore((s) => s.subdomain)
+  const isRootDomain = !subdomain
+  const isSuperAdmin = (user?.is_superadmin ?? false) && isRootDomain
 
   function handleLogout() {
     logout()
