@@ -9,7 +9,11 @@ ENV VITE_API_BASE=$VITE_API_BASE
 ENV VITE_ROOT_DOMAIN=$VITE_ROOT_DOMAIN
 
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN npm config set fetch-retry-mintimeout 20000 \
+    && npm config set fetch-retry-maxtimeout 120000 \
+    && npm config set fetch-retries 5 \
+    && npm config set prefer-offline false \
+    && npm install --frozen-lockfile --prefer-offline || npm install
 
 COPY . .
 RUN npm run build
