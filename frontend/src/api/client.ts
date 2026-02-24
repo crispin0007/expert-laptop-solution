@@ -7,13 +7,29 @@ const apiClient = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+// Detect tenant slug from the URL hostname (production subdomain routing)
+// els.bms.techyatra.com.np → 'els' | bms.techyatra.com.np → null (super admin)
+function getSlugFromHostname(): string | null {
+  const hostname = window.location.hostname
+  const rootDomain = import.meta.env.VITE_ROOT_DOMAIN as string | undefined
+  if (!rootDomain || hostname === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
+    return null
+  }
+  if (hostname === rootDomain) return null // super admin root
+  if (hostname.endsWith('.' + rootDomain)) {
+    return hostname.slice(0, hostname.length - rootDomain.length - 1)
+  }
+  return null
+}
+
 // Attach access token + tenant slug to every request
 apiClient.interceptors.request.use((config) => {
   const token = useAuthStore.getState().accessToken
   if (token) config.headers.Authorization = `Bearer ${token}`
 
-  const subdomain = useTenantStore.getState().subdomain
-  if (subdomain) config.headers['X-Tenant-Slug'] = subdomain
+  // Priority: URL subdomain → store (fallback for dev/localhost)
+  const slug = getSlugFromHostname() ?? useTenantStore.getState().subdomain
+  if (slug) config.headers['X-Tenant-Slug'] = slug
 
   return config
 })
