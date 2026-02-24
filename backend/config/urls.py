@@ -1,9 +1,21 @@
 from django.contrib import admin
+from django.contrib.admin import AdminSite
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from core import views as core_views
 from tenants.views import TenantSettingsView
+
+
+class SuperUserAdminSite(AdminSite):
+    """Restrict Django admin to platform superusers only (is_superuser=True).
+    Tenant admins/staff cannot access /admin/ even if is_staff=True."""
+
+    def has_permission(self, request):
+        return bool(request.user and request.user.is_active and request.user.is_superuser)
+
+
+admin.site.__class__ = SuperUserAdminSite
 
 urlpatterns = [
     path('admin/', admin.site.urls),
