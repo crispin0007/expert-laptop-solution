@@ -13,7 +13,7 @@ class IsSuperAdmin(permissions.BasePermission):
         return bool(
             request.user
             and request.user.is_authenticated
-            and getattr(request.user, 'is_superadmin', False)
+            and (getattr(request.user, 'is_superadmin', False) or request.user.is_superuser)
         )
 
 
