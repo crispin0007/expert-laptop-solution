@@ -28,6 +28,7 @@ class MeSerializer(serializers.ModelSerializer):
     """Full current-user payload including membership + permissions."""
     membership = serializers.SerializerMethodField()
     tenants = serializers.SerializerMethodField()
+    is_superadmin = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -35,6 +36,10 @@ class MeSerializer(serializers.ModelSerializer):
             'id', 'email', 'username', 'full_name',
             'phone', 'avatar', 'is_superadmin', 'membership', 'tenants',
         )
+
+    def get_is_superadmin(self, user):
+        # Django superusers (createsuperuser) are also platform super admins
+        return bool(user.is_superadmin or user.is_superuser)
 
     def get_membership(self, user):
         request = self.context.get('request')
