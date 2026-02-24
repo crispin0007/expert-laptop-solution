@@ -1,0 +1,370 @@
+from django.db import models
+from core.models import TenantModel
+from django.conf import settings
+
+
+class TicketCategory(TenantModel):
+    """
+    Admin-defined category for grouping tickets (e.g. Hardware, Software, Network).
+    Each tenant manages their own categories.
+    """
+
+    name = models.CharField(max_length=128)
+    slug = models.SlugField(max_length=128, blank=True)
+    description = models.TextField(blank=True)
+    color = models.CharField(max_length=16, blank=True, help_text='Hex color code e.g. #FF5733')
+    icon = models.CharField(max_length=64, blank=True, help_text='Icon name from lucide-react')
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['name']
+        unique_together = ('tenant', 'name')
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            from django.utils.text import slugify
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
+
+
+class TicketSubCategory(TenantModel):
+    """
+    Admin-defined sub-category nested under a TicketCategory
+    (e.g. Category: Hardware → SubCategory: Printer, Monitor).
+    """
+
+    category = models.ForeignKey(
+        TicketCategory,
+        on_delete=models.CASCADE,
+        related_name='subcategories',
+    )
+    name = models.CharField(max_length=128)
+    slug = models.SlugField(max_length=128, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['name']
+        unique_together = ('category', 'name')
+
+    def __str__(self):
+        return f"{self.category.name} → {self.name}"
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            from django.utils.text import slugify
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
+
+
+class TicketType(TenantModel):
+    """Ticket kind — drives the creation wizard flow (e.g. Support, Maintenance, Project)."""
+
+    name = models.CharField(max_length=128)
+    slug = models.SlugField(max_length=128, blank=True)
+    default_sla_hours = models.PositiveIntegerField(default=24)
+    color = models.CharField(max_length=16, blank=True, help_text='Hex color code e.g. #FF5733')
+    icon = models.CharField(max_length=64, blank=True, help_text='Icon name from lucide-react')
+    requires_product = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['name']
+        unique_together = ('tenant', 'name')
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            from django.utils.text import slugify
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
+
+
+class Ticket(TenantModel):
+    STATUS_OPEN = 'open'
+    STATUS_IN_PROGRESS = 'in_progress'
+    STATUS_PENDING_CUSTOMER = 'pending_customer'
+    STATUS_RESOLVED = 'resolved'
+    STATUS_CLOSED = 'closed'
+    STATUS_CANCELLED = 'cancelled'
+
+    STATUS_CHOICES = [
+        (STATUS_OPEN, 'Open'),
+        (STATUS_IN_PROGRESS, 'In Progress'),
+        (STATUS_PENDING_CUSTOMER, 'Pending Customer'),
+        (STATUS_RESOLVED, 'Resolved'),
+        (STATUS_CLOSED, 'Closed'),
+        (STATUS_CANCELLED, 'Cancelled'),
+    ]
+
+    PRIORITY_LOW = 'low'
+    PRIORITY_MEDIUM = 'medium'
+    PRIORITY_HIGH = 'high'
+    PRIORITY_CRITICAL = 'critical'
+
+    PRIORITY_CHOICES = [
+        (PRIORITY_LOW, 'Low'),
+        (PRIORITY_MEDIUM, 'Medium'),
+        (PRIORITY_HIGH, 'High'),
+        (PRIORITY_CRITICAL, 'Critical'),
+    ]
+
+    # Auto-generated human-readable number per tenant, e.g. TKT-0001
+    ticket_number = models.CharField(max_length=32, blank=True, db_index=True)
+
+    ticket_type = models.ForeignKey(
+        TicketType,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='tickets',
+    )
+    customer = models.ForeignKey(
+        'customers.Customer',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='tickets',
+    )
+    department = models.ForeignKey(
+        'departments.Department',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='tickets',
+    )
+
+    # Category / sub-category (admin-defined per tenant)
+    category = models.ForeignKey(
+        TicketCategory,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='tickets',
+    )
+    subcategory = models.ForeignKey(
+        TicketSubCategory,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='tickets',
+    )
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    # Optional phone number to reach the contact person for this ticket
+    contact_phone = models.CharField(max_length=32, blank=True, help_text='Phone number to contact for this ticket')
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, default=STATUS_OPEN)
+    priority = models.CharField(max_length=16, choices=PRIORITY_CHOICES, default=PRIORITY_MEDIUM)
+
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='assigned_tickets',
+    )
+
+    # Multiple staff members who are working on this ticket
+    team_members = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        blank=True,
+        related_name='team_tickets',
+    )
+
+    # Linked to a parent ticket for sub-tasks / escalations
+    parent_ticket = models.ForeignKey(
+        'self',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='sub_tickets',
+    )
+
+    sla_deadline = models.DateTimeField(null=True, blank=True)
+    resolved_at  = models.DateTimeField(null=True, blank=True)
+    closed_at    = models.DateTimeField(null=True, blank=True)
+
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"[{self.ticket_number or self.pk}] {self.title}"
+
+    def save(self, *args, **kwargs):
+        if not self.ticket_number and self.tenant_id:
+            last = (
+                Ticket.objects.filter(tenant_id=self.tenant_id)
+                .order_by('-created_at')
+                .values_list('ticket_number', flat=True)
+                .first()
+            )
+            if last:
+                try:
+                    seq = int(last.split('-')[-1]) + 1
+                except (ValueError, IndexError):
+                    seq = 1
+            else:
+                seq = 1
+            self.ticket_number = f"TKT-{seq:04d}"
+        super().save(*args, **kwargs)
+
+
+class TicketSLA(TenantModel):
+    """Tracks SLA status for a ticket."""
+
+    ticket = models.OneToOneField(Ticket, on_delete=models.CASCADE, related_name='sla')
+    sla_hours = models.PositiveIntegerField()
+    breach_at = models.DateTimeField(null=True, blank=True)
+    warning_sent_at = models.DateTimeField(null=True, blank=True)
+    breached = models.BooleanField(default=False)
+    breached_at = models.DateTimeField(null=True, blank=True)
+    notified = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['breach_at']
+
+    def __str__(self):
+        return f"SLA {self.ticket} — breach_at={self.breach_at}"
+
+
+class TicketComment(TenantModel):
+    """Public or internal comment on a ticket."""
+
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='comments')
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='ticket_comments',
+    )
+    body = models.TextField()
+    is_internal = models.BooleanField(default=False)  # internal notes hidden from customer
+    attachment_files = models.JSONField(default=list, blank=True)  # [{file_url, file_name, file_size}]
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"Comment by {self.author_id} on {self.ticket_id}"
+
+
+class TicketAttachment(TenantModel):
+    """File attached to a ticket or a specific comment."""
+
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='attachments')
+    comment = models.ForeignKey(
+        TicketComment, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='file_attachments',
+    )
+    # Actual uploaded file (preferred)
+    file = models.FileField(upload_to='attachments/tickets/%Y/%m/', null=True, blank=True)
+    # Legacy / external URL fallback
+    file_url = models.URLField(blank=True)
+    file_name = models.CharField(max_length=255, blank=True)
+    file_size = models.PositiveIntegerField(default=0, help_text='Size in bytes')
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, on_delete=models.SET_NULL,
+        related_name='ticket_attachments',
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.file_name} on Ticket {self.ticket_id}"
+
+
+class TicketTransfer(TenantModel):
+    """Audit trail of department transfers on a ticket."""
+
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='transfers')
+    from_department = models.ForeignKey(
+        'departments.Department',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='outgoing_transfers',
+    )
+    to_department = models.ForeignKey(
+        'departments.Department',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='incoming_transfers',
+    )
+    transferred_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name='ticket_transfers',
+    )
+    reason = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Transfer {self.ticket_id}: {self.from_department_id} → {self.to_department_id}"
+
+
+class TicketTimeline(TenantModel):
+    """Chronological event log for a ticket — status changes, assignments, transfers, comments."""
+
+    EVENT_STATUS_CHANGE = 'status_change'
+    EVENT_ASSIGNED = 'assigned'
+    EVENT_TRANSFERRED = 'transferred'
+    EVENT_COMMENTED = 'commented'
+    EVENT_PRODUCT_ADDED = 'product_added'
+    EVENT_CREATED = 'created'
+
+    EVENT_TYPES = [
+        (EVENT_STATUS_CHANGE, 'Status Change'),
+        (EVENT_ASSIGNED, 'Assigned'),
+        (EVENT_TRANSFERRED, 'Transferred'),
+        (EVENT_COMMENTED, 'Commented'),
+        (EVENT_PRODUCT_ADDED, 'Product Added'),
+        (EVENT_CREATED, 'Created'),
+    ]
+
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='timeline')
+    event_type = models.CharField(max_length=32, choices=EVENT_TYPES)
+    description = models.TextField()
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='ticket_timeline_events',
+    )
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"[{self.event_type}] Ticket {self.ticket_id} at {self.created_at}"
+
+
+class TicketProduct(TenantModel):
+    """
+    Product / part used while resolving a ticket.
+
+    Saving triggers a StockMovement(type=out) via signal in inventory.signals.
+    Cancelling the parent ticket reverses the movement via signal.
+    """
+
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='products')
+    product = models.ForeignKey(
+        'inventory.Product',
+        on_delete=models.PROTECT,
+        related_name='ticket_usages',
+    )
+    quantity = models.PositiveIntegerField(default=1)
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    discount = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"{self.quantity}x {self.product_id} on Ticket {self.ticket_id}"
+

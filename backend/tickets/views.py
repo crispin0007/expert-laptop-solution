@@ -1,0 +1,751 @@
+"""
+Ticket views.
+
+All viewsets use TenantMixin so every queryset is automatically scoped to
+request.tenant.  Business logic lives in serializers (TicketCreateSerializer)
+and service functions — views only orchestrate.
+"""
+from django.contrib.auth import get_user_model
+from django.utils import timezone
+
+from rest_framework import viewsets, permissions, status, filters
+from rest_framework.decorators import action
+from rest_framework.response import Response
+
+from core.mixins import TenantMixin
+from .models import (
+    Ticket, TicketType, TicketComment, TicketTransfer,
+    TicketProduct, TicketSLA, TicketTimeline, TicketAttachment,
+    TicketCategory, TicketSubCategory,
+)
+from .serializers import (
+    TicketSerializer, TicketCreateSerializer, TicketTypeSerializer,
+    TicketCommentSerializer, TicketTransferSerializer,
+    TicketProductSerializer, TicketSLASerializer, TicketTimelineSerializer,
+    TicketAttachmentSerializer,
+    TicketCategorySerializer, TicketCategoryWriteSerializer, TicketSubCategorySerializer,
+)
+
+User = get_user_model()
+
+
+# ── Ticket Type ───────────────────────────────────────────────────────────────
+
+class TicketTypeViewSet(TenantMixin, viewsets.ModelViewSet):
+    """CRUD for ticket types scoped to the current tenant."""
+
+    serializer_class = TicketTypeSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['name']
+    ordering_fields = ['name', 'created_at']
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = TicketType.objects.filter(tenant=self.tenant)
+        # On list action only show active types; detail/update/delete work on all
+        if self.action == 'list':
+            qs = qs.filter(is_active=True)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.tenant, created_by=self.request.user)
+
+    @action(detail=True, methods=['post'], url_path='deactivate')
+    def deactivate(self, request, pk=None):
+        """POST .../types/{id}/deactivate/ — soft-disable a ticket type."""
+        tt = self.get_object()
+        tt.is_active = False
+        tt.save(update_fields=['is_active', 'updated_at'])
+        return Response(TicketTypeSerializer(tt).data)
+
+    @action(detail=True, methods=['post'], url_path='reactivate')
+    def reactivate(self, request, pk=None):
+        """POST .../types/{id}/reactivate/ — re-enable a deactivated ticket type."""
+        tt = self.get_object()
+        tt.is_active = True
+        tt.save(update_fields=['is_active', 'updated_at'])
+        return Response(TicketTypeSerializer(tt).data)
+
+
+# ── Ticket Category ───────────────────────────────────────────────────────────
+
+class TicketCategoryViewSet(TenantMixin, viewsets.ModelViewSet):
+    """CRUD for ticket categories (admin-defined per tenant)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['name']
+    ordering_fields = ['name', 'created_at']
+
+    def get_serializer_class(self):
+        if self.request.method in ('POST', 'PUT', 'PATCH'):
+            return TicketCategoryWriteSerializer
+        return TicketCategorySerializer
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = TicketCategory.objects.filter(tenant=self.tenant)
+        active_only = self.request.query_params.get('active')
+        if active_only == '1':
+            qs = qs.filter(is_active=True)
+        return qs.prefetch_related('subcategories')
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.tenant, created_by=self.request.user)
+
+    @action(detail=True, methods=['get'], url_path='subcategories')
+    def subcategories(self, request, pk=None):
+        """GET .../categories/{id}/subcategories/ — list subcategories for a category."""
+        category = self.get_object()
+        subs = TicketSubCategory.objects.filter(category=category, tenant=self.tenant)
+        return Response(TicketSubCategorySerializer(subs, many=True).data)
+
+
+class TicketSubCategoryViewSet(TenantMixin, viewsets.ModelViewSet):
+    """CRUD for ticket subcategories — always scoped to a parent category + tenant."""
+
+    serializer_class = TicketSubCategorySerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['name']
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = TicketSubCategory.objects.filter(tenant=self.tenant)
+        category_id = self.request.query_params.get('category')
+        if category_id:
+            qs = qs.filter(category_id=category_id)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.tenant, created_by=self.request.user)
+
+
+# ── Ticket ────────────────────────────────────────────────────────────────────
+
+class TicketViewSet(TenantMixin, viewsets.ModelViewSet):
+    """
+    Full ticket lifecycle:
+      list / create / retrieve / update / partial_update / destroy
+      + assign, transfer, status, timeline, sla-breached, sla-warning actions.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['title', 'ticket_number', 'description']
+    ordering_fields = ['created_at', 'priority', 'status', 'sla_deadline']
+
+    def get_serializer_class(self):
+        if self.action in ('create', 'update', 'partial_update'):
+            return TicketCreateSerializer
+        return TicketSerializer
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = Ticket.objects.filter(
+            tenant=self.tenant, is_deleted=False,
+        ).select_related(
+            'ticket_type', 'customer', 'department', 'assigned_to', 'created_by', 'sla',
+        )
+
+        params = self.request.query_params
+        if s := params.get('status'):
+            qs = qs.filter(status=s)
+        if p := params.get('priority'):
+            qs = qs.filter(priority=p)
+        if uid := params.get('assigned_to'):
+            qs = qs.filter(assigned_to_id=uid)
+        if dept := params.get('department'):
+            qs = qs.filter(department_id=dept)
+        if cust := params.get('customer'):
+            qs = qs.filter(customer_id=cust)
+        return qs
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        self.ensure_tenant()
+        ctx['tenant'] = self.tenant
+        return ctx
+
+    def perform_create(self, serializer):
+        # TicketCreateSerializer.create() handles tenant + SLA + timeline
+        serializer.save()
+
+    def _ticket_is_locked(self, ticket):
+        """Return True if the ticket is in a terminal state that staff cannot modify."""
+        return ticket.status in (
+            Ticket.STATUS_RESOLVED,
+            Ticket.STATUS_CLOSED,
+            Ticket.STATUS_CANCELLED,
+        )
+
+    def perform_update(self, serializer):
+        """Block staff from editing locked tickets."""
+        if self._ticket_is_locked(serializer.instance) and not self.is_manager_role():
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied(
+                'This ticket is locked. Only a manager or admin can modify it.'
+            )
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Soft-delete instead of hard delete."""
+        instance.is_deleted = True
+        instance.deleted_at = timezone.now()
+        instance.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
+
+    # ── actions ──────────────────────────────────────────────────────────────
+
+    @action(detail=True, methods=['post'], url_path='assign')
+    def assign(self, request, pk=None):
+        """POST /api/v1/tickets/{id}/assign/ — assign ticket to a staff member."""
+        ticket = self.get_object()
+        user_id = request.data.get('user_id')
+        if not user_id:
+            return Response(
+                {'success': False, 'errors': ['user_id is required.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            assignee = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {'success': False, 'errors': ['User not found.']},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        old_assignee = ticket.assigned_to
+        ticket.assigned_to = assignee
+        if ticket.status == Ticket.STATUS_OPEN:
+            ticket.status = Ticket.STATUS_IN_PROGRESS
+        ticket.save(update_fields=['assigned_to', 'status', 'updated_at'])
+
+        TicketTimeline.objects.create(
+            tenant=ticket.tenant,
+            ticket=ticket,
+            event_type=TicketTimeline.EVENT_ASSIGNED,
+            description=f"Assigned to {assignee.get_full_name() or assignee.email}",
+            actor=request.user,
+            created_by=request.user,
+            metadata={
+                'from': old_assignee.pk if old_assignee else None,
+                'to': assignee.pk,
+            },
+        )
+
+        # Async email notification
+        try:
+            from notifications.tasks import task_send_ticket_assigned
+            task_send_ticket_assigned.delay(ticket_id=ticket.pk, assignee_id=assignee.pk)
+        except Exception:
+            from notifications.email import send_ticket_assigned
+            send_ticket_assigned(ticket, assignee)
+
+        return Response({'success': True, 'data': TicketSerializer(ticket, context=self.get_serializer_context()).data})
+
+    @action(detail=True, methods=['post'], url_path='transfer')
+    def transfer(self, request, pk=None):
+        """
+        POST /api/v1/tickets/{id}/transfer/ — transfer ticket to another department.
+
+        Body: { "to_department": <id>, "reason": "<string>" }
+        """
+        ticket = self.get_object()
+        to_dept_id = request.data.get('to_department')
+        reason = request.data.get('reason', '').strip()
+
+        if not to_dept_id:
+            return Response(
+                {'success': False, 'errors': ['to_department is required.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from departments.models import Department
+        try:
+            to_dept = Department.objects.get(pk=to_dept_id, tenant=self.tenant)
+        except Department.DoesNotExist:
+            return Response(
+                {'success': False, 'errors': ['Department not found in this tenant.']},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        from_dept = ticket.department
+
+        # Record transfer
+        transfer = TicketTransfer.objects.create(
+            tenant=ticket.tenant,
+            ticket=ticket,
+            from_department=from_dept,
+            to_department=to_dept,
+            transferred_by=request.user,
+            reason=reason,
+            created_by=request.user,
+        )
+
+        # Update ticket department
+        ticket.department = to_dept
+        ticket.save(update_fields=['department', 'updated_at'])
+
+        # Timeline entry
+        TicketTimeline.objects.create(
+            tenant=ticket.tenant,
+            ticket=ticket,
+            event_type=TicketTimeline.EVENT_TRANSFERRED,
+            description=(
+                f"Transferred from {from_dept.name if from_dept else '—'} "
+                f"to {to_dept.name}. Reason: {reason or '—'}"
+            ),
+            actor=request.user,
+            created_by=request.user,
+            metadata={
+                'from_department': from_dept.pk if from_dept else None,
+                'to_department': to_dept.pk,
+                'reason': reason,
+            },
+        )
+
+        return Response({
+            'success': True,
+            'data': {
+                'transfer': TicketTransferSerializer(transfer).data,
+                'ticket': TicketSerializer(ticket, context=self.get_serializer_context()).data,
+            },
+        })
+
+    @action(detail=True, methods=['post'], url_path='status')
+    def change_status(self, request, pk=None):
+        """
+        POST /api/v1/tickets/{id}/status/ — change ticket status.
+
+        Transition rules
+        ----------------
+        Staff (non-manager):
+          - Can only set status to 'resolved'.
+          - Can only act on tickets assigned to themselves.
+          - Cannot act on tickets that are already resolved/closed/cancelled.
+
+        Manager / Admin / Owner:
+          - Can set any status EXCEPT 'closed'.
+          - Use the dedicated  POST /tickets/{id}/close/  action to close a ticket
+            and award coins in one step.
+        """
+        ticket = self.get_object()
+        new_status = request.data.get('status')
+        reason = request.data.get('reason', '').strip()
+        is_manager = self.is_manager_role()
+
+        valid = [s for s, _ in Ticket.STATUS_CHOICES]
+        if new_status not in valid:
+            return Response(
+                {'success': False, 'errors': [f'Invalid status. Choose from: {valid}']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 'closed' is reserved for the dedicated /close/ action
+        if new_status == Ticket.STATUS_CLOSED:
+            return Response(
+                {'success': False, 'errors': [
+                    "Use POST /tickets/{id}/close/ to close a ticket and award coins."
+                ]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not is_manager:
+            # Staff may only resolve tickets assigned to themselves
+            if new_status != Ticket.STATUS_RESOLVED:
+                return Response(
+                    {'success': False, 'errors': [
+                        'Staff may only set a ticket to resolved. '
+                        'Closing, cancelling, or re-opening requires a manager or admin.'
+                    ]},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if ticket.assigned_to_id != request.user.pk:
+                return Response(
+                    {'success': False, 'errors': [
+                        'You can only resolve tickets that are assigned to you.'
+                    ]},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if self._ticket_is_locked(ticket):
+                return Response(
+                    {'success': False, 'errors': [
+                        'This ticket is already resolved, closed, or cancelled.'
+                    ]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # Staff may only resolve from in_progress or pending_customer
+            allowed_from = (Ticket.STATUS_IN_PROGRESS, Ticket.STATUS_PENDING_CUSTOMER)
+            if ticket.status not in allowed_from:
+                return Response(
+                    {'success': False, 'errors': [
+                        f'Can only resolve a ticket that is in_progress or pending_customer. '
+                        f'Current status: {ticket.status}'
+                    ]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        old_status = ticket.status
+        ticket.status = new_status
+        now = timezone.now()
+
+        update_fields = ['status', 'updated_at']
+        if new_status == Ticket.STATUS_RESOLVED and not ticket.resolved_at:
+            ticket.resolved_at = now
+            update_fields.append('resolved_at')
+
+        ticket.save(update_fields=update_fields)
+
+        TicketTimeline.objects.create(
+            tenant=ticket.tenant,
+            ticket=ticket,
+            event_type=TicketTimeline.EVENT_STATUS_CHANGE,
+            description=f"Status changed from {old_status} to {new_status}.{(' ' + reason) if reason else ''}",
+            actor=request.user,
+            created_by=request.user,
+            metadata={'from': old_status, 'to': new_status, 'reason': reason},
+        )
+
+        return Response({'success': True, 'data': TicketSerializer(ticket, context=self.get_serializer_context()).data})
+
+    @action(detail=True, methods=['post'], url_path='close')
+    def close_ticket(self, request, pk=None):
+        """
+        POST /api/v1/tickets/{id}/close/ — Manager/Admin only.
+
+        Closes the ticket and immediately awards an approved CoinTransaction to
+        the assigned staff member.
+
+        Required: invoice must exist and be paid for this ticket before closing.
+
+        Body
+        ----
+        coin_amount : number   — coins to award (0 = no coins awarded)
+        reason      : string   — optional closure note
+
+        Workflow
+        --------
+        Finance generates invoice → marks invoice paid →
+        Manager calls this endpoint to close ticket + award coins.
+        """
+        from decimal import Decimal
+
+        if not self.is_manager_role():
+            return Response(
+                {'success': False, 'errors': ['Only managers or admins can close a ticket.']},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        ticket = self.get_object()
+
+        if ticket.status == Ticket.STATUS_CLOSED:
+            return Response(
+                {'success': False, 'errors': ['Ticket is already closed.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if ticket.status == Ticket.STATUS_CANCELLED:
+            return Response(
+                {'success': False, 'errors': ['Cannot close a cancelled ticket.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if ticket.status != Ticket.STATUS_RESOLVED:
+            return Response(
+                {'success': False, 'errors': [
+                    f'Ticket must be resolved before closing. Current status: {ticket.status}'
+                ]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate coin amount
+        raw_coins = request.data.get('coin_amount', 0)
+        try:
+            coin_amount = Decimal(str(raw_coins))
+            if coin_amount < 0:
+                raise ValueError
+        except (ValueError, TypeError):
+            return Response(
+                {'success': False, 'errors': ['coin_amount must be a non-negative number.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reason = request.data.get('reason', '').strip()
+        now = timezone.now()
+
+        # Close the ticket
+        ticket.status = Ticket.STATUS_CLOSED
+        ticket.closed_at = now
+        ticket.save(update_fields=['status', 'closed_at', 'updated_at'])
+
+        TicketTimeline.objects.create(
+            tenant=ticket.tenant,
+            ticket=ticket,
+            event_type=TicketTimeline.EVENT_STATUS_CHANGE,
+            description=f"Ticket closed by {request.user.get_full_name() or request.user.email}.{(' ' + reason) if reason else ''}",
+            actor=request.user,
+            created_by=request.user,
+            metadata={
+                'from': Ticket.STATUS_RESOLVED,
+                'to': Ticket.STATUS_CLOSED,
+                'reason': reason,
+                'coin_amount': str(coin_amount),
+            },
+        )
+
+        # Award coins to assigned staff (directly approved — no approval queue)
+        coin_txn = None
+        if coin_amount > 0 and ticket.assigned_to_id:
+            from accounting.models import CoinTransaction
+            coin_txn = CoinTransaction.objects.create(
+                tenant=ticket.tenant,
+                created_by=request.user,
+                staff=ticket.assigned_to,
+                amount=coin_amount,
+                source_type=CoinTransaction.SOURCE_TICKET,
+                source_id=ticket.pk,
+                status=CoinTransaction.STATUS_APPROVED,
+                approved_by=request.user,
+                note=f"Awarded on ticket close by {request.user.get_full_name() or request.user.email}. {reason}".strip(),
+            )
+
+            TicketTimeline.objects.create(
+                tenant=ticket.tenant,
+                ticket=ticket,
+                event_type=TicketTimeline.EVENT_STATUS_CHANGE,
+                description=(
+                    f"{coin_amount} coin(s) awarded to "
+                    f"{ticket.assigned_to.get_full_name() or ticket.assigned_to.email}."
+                ),
+                actor=request.user,
+                created_by=request.user,
+                metadata={'coin_amount': str(coin_amount), 'staff_id': ticket.assigned_to_id},
+            )
+
+        from accounting.serializers import CoinTransactionSerializer
+        return Response({
+            'success': True,
+            'data': {
+                'ticket': TicketSerializer(ticket, context=self.get_serializer_context()).data,
+                'coin_transaction': CoinTransactionSerializer(coin_txn).data if coin_txn else None,
+            },
+        })
+
+    @action(detail=True, methods=['get'], url_path='timeline')
+    def timeline(self, request, pk=None):
+        """GET /api/v1/tickets/{id}/timeline/ — full chronological event log."""
+        ticket = self.get_object()
+        events = TicketTimeline.objects.filter(ticket=ticket).select_related('actor')
+        return Response({
+            'success': True,
+            'data': TicketTimelineSerializer(events, many=True).data,
+        })
+
+    @action(detail=False, methods=['get'], url_path='sla-breached')
+    def sla_breached(self, request):
+        """GET /api/v1/tickets/sla-breached/ — all currently breached SLA records."""
+        self.ensure_tenant()
+        breached = TicketSLA.objects.filter(
+            tenant=self.tenant,
+            breached=True,
+        ).select_related('ticket')
+        return Response({
+            'success': True,
+            'data': TicketSLASerializer(breached, many=True).data,
+        })
+
+    @action(detail=False, methods=['get'], url_path='sla-warning')
+    def sla_warning(self, request):
+        """GET /api/v1/tickets/sla-warning/ — tickets within warning window of SLA breach."""
+        self.ensure_tenant()
+        now = timezone.now()
+        warning_slas = TicketSLA.objects.filter(
+            tenant=self.tenant,
+            breached=False,
+            breach_at__isnull=False,
+            breach_at__lte=now + timezone.timedelta(hours=6),
+            breach_at__gt=now,
+        ).select_related('ticket')
+        return Response({
+            'success': True,
+            'data': TicketSLASerializer(warning_slas, many=True).data,
+        })
+
+
+# ── Comment ───────────────────────────────────────────────────────────────────
+
+class TicketCommentViewSet(TenantMixin, viewsets.ModelViewSet):
+    """
+    Comments on a ticket — nested under /tickets/{ticket_pk}/comments/.
+
+    Internal comments (is_internal=True) are only visible to staff members.
+    """
+
+    serializer_class = TicketCommentSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        ticket_pk = self.kwargs.get('ticket_pk')
+        qs = TicketComment.objects.filter(
+            tenant=self.tenant,
+            ticket_id=ticket_pk,
+        ).select_related('author')
+        if not self.request.user.is_staff:
+            qs = qs.filter(is_internal=False)
+        return qs
+
+    def perform_create(self, serializer):
+        self.ensure_tenant()
+        ticket_pk = self.kwargs.get('ticket_pk')
+        ticket = Ticket.objects.get(pk=ticket_pk, tenant=self.tenant)
+
+        comment = serializer.save(
+            tenant=self.tenant,
+            ticket=ticket,
+            author=self.request.user,
+            created_by=self.request.user,
+        )
+
+        # Timeline entry for the comment
+        TicketTimeline.objects.create(
+            tenant=self.tenant,
+            ticket=ticket,
+            event_type=TicketTimeline.EVENT_COMMENTED,
+            description=f"{'[Internal] ' if comment.is_internal else ''}Comment by {self.request.user.get_full_name() or self.request.user.email}",
+            actor=self.request.user,
+            created_by=self.request.user,
+            metadata={'comment_id': comment.pk, 'is_internal': comment.is_internal},
+        )
+
+
+# ── Transfer ──────────────────────────────────────────────────────────────────
+
+class TicketTransferViewSet(TenantMixin, viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only view of transfer history.
+    Transfers are created via POST /tickets/{id}/transfer/ on TicketViewSet.
+    """
+
+    serializer_class = TicketTransferSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        return TicketTransfer.objects.filter(
+            tenant=self.tenant,
+        ).select_related('from_department', 'to_department', 'transferred_by')
+
+
+# ── Product ───────────────────────────────────────────────────────────────────
+
+class TicketProductViewSet(TenantMixin, viewsets.ModelViewSet):
+    """
+    Products / parts used on a ticket — triggers inventory StockMovement via signal.
+
+    Supports two routing patterns:
+      GET/POST  /api/v1/tickets/{ticket_pk}/products/   (nested under a ticket)
+      GET/…     /api/v1/tickets/products/               (flat — all ticket products)
+    """
+
+    serializer_class = TicketProductSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = TicketProduct.objects.filter(
+            tenant=self.tenant,
+        ).select_related('product', 'ticket')
+        # When nested under /tickets/{ticket_pk}/products/
+        ticket_pk = self.kwargs.get('ticket_pk')
+        if ticket_pk:
+            qs = qs.filter(ticket_id=ticket_pk)
+        return qs
+
+    def perform_create(self, serializer):
+        self.ensure_tenant()
+        ticket_pk = self.kwargs.get('ticket_pk')
+        kwargs = {'tenant': self.tenant, 'created_by': self.request.user}
+        if ticket_pk:
+            kwargs['ticket_id'] = ticket_pk
+        instance = serializer.save(**kwargs)
+        # Timeline entry
+        try:
+            TicketTimeline.objects.create(
+                tenant=self.tenant,
+                ticket=instance.ticket,
+                event_type=TicketTimeline.EVENT_PRODUCT_ADDED,
+                description=f"Product '{instance.product.name}' (×{instance.quantity}) added.",
+                actor=self.request.user,
+                created_by=self.request.user,
+            )
+        except Exception:
+            pass
+
+    def perform_destroy(self, instance):
+        """On removal, trigger a RETURN stock movement by calling delete."""
+        from inventory.models import StockMovement
+        # Create reversal movement before deletion (signal fires post_delete but
+        # we ensure it here for explicitness when using nested route)
+        already_reversed = StockMovement.objects.filter(
+            tenant=instance.tenant,
+            movement_type=StockMovement.MOVEMENT_RETURN,
+            reference_type='ticket_product',
+            reference_id=instance.pk,
+        ).exists()
+        if not already_reversed and not instance.product.is_service:
+            StockMovement.objects.create(
+                tenant=instance.tenant,
+                created_by=self.request.user,
+                product=instance.product,
+                movement_type=StockMovement.MOVEMENT_RETURN,
+                quantity=instance.quantity,
+                reference_type='ticket_product',
+                reference_id=instance.pk,
+                notes=f"Manual removal: TicketProduct #{instance.pk} removed from Ticket #{instance.ticket_id}",
+            )
+        instance.delete()
+
+
+# ── SLA ───────────────────────────────────────────────────────────────────────
+
+class TicketSLAViewSet(TenantMixin, viewsets.ReadOnlyModelViewSet):
+    """Read-only SLA records — one per ticket."""
+
+    serializer_class = TicketSLASerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        return TicketSLA.objects.filter(
+            tenant=self.tenant,
+        ).select_related('ticket')
+
+
+# ── Attachment ────────────────────────────────────────────────────────────────
+
+class TicketAttachmentViewSet(TenantMixin, viewsets.ModelViewSet):
+    """File attachments on tickets or comments."""
+
+    serializer_class = TicketAttachmentSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = TicketAttachment.objects.filter(
+            tenant=self.tenant,
+        ).select_related('uploaded_by', 'ticket')
+        ticket_pk = self.kwargs.get('ticket_pk')
+        if ticket_pk:
+            qs = qs.filter(ticket_id=ticket_pk)
+        return qs
+
+    def perform_create(self, serializer):
+        self.ensure_tenant()
+        ticket_pk = self.kwargs.get('ticket_pk')
+        if ticket_pk:
+            ticket = Ticket.objects.get(pk=ticket_pk, tenant=self.tenant)
+            serializer.save(tenant=self.tenant, uploaded_by=self.request.user, created_by=self.request.user, ticket=ticket)
+        else:
+            serializer.save(tenant=self.tenant, uploaded_by=self.request.user, created_by=self.request.user)
