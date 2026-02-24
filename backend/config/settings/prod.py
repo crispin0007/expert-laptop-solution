@@ -9,9 +9,10 @@ SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', SECRET_KEY)
 # Custom tenant domains (els.com, etc.) can't be enumerated statically.
 ALLOWED_HOSTS = ['*']
 
-# CORS — allow all tenant subdomains in production
+# CORS — allow all tenant subdomains in production (HTTP + HTTPS)
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r'^https?://.*\.bms\.techyatra\.com\.np$',
+    r'^https://bms\.techyatra\.com\.np$',
     r'^http://92\.4\.89\.25$',
     r'^http://localhost(:\d+)?$',
 ]
@@ -20,8 +21,8 @@ CORS_ALLOW_CREDENTIALS = True
 
 # Security headers
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-SESSION_COOKIE_SECURE = False  # Set True when SSL is enabled
-CSRF_COOKIE_SECURE = False     # Set True when SSL is enabled
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
 
 # Static & media
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
