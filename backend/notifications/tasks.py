@@ -58,6 +58,23 @@ def task_send_invoice_issued(self, invoice_id: int, recipient_email: str) -> Non
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def task_send_ticket_comment(self, ticket_id: int, comment_id: int, recipient_id: int) -> None:
+    """Send email notification for a new ticket comment."""
+    try:
+        from tickets.models import Ticket, TicketComment
+        from accounts.models import User
+        from notifications.email import send_ticket_comment
+
+        ticket = Ticket.objects.get(pk=ticket_id)
+        comment = TicketComment.objects.get(pk=comment_id)
+        recipient = User.objects.get(pk=recipient_id)
+        send_ticket_comment(ticket, comment, recipient)
+    except Exception as exc:
+        logger.error("task_send_ticket_comment failed: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
 def task_send_push(self, user_id: int, title: str, body: str, data: dict | None = None) -> None:
     try:
         from accounts.models import User
@@ -121,6 +138,103 @@ def task_send_staff_reactivated(self, user_id: int, tenant_id: int) -> None:
 # ---------------------------------------------------------------------------
 # SLA beat task — runs every 15 minutes via Celery Beat
 # ---------------------------------------------------------------------------
+
+# ── Inventory async tasks ────────────────────────────────────────────────────
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def task_send_low_stock_alert(self, product_id: int, recipient_id: int) -> None:
+    try:
+        from inventory.models import Product, StockLevel
+        from accounts.models import User
+        from notifications.email import send_low_stock_alert
+
+        product = Product.objects.get(pk=product_id)
+        recipient = User.objects.get(pk=recipient_id)
+        qty = getattr(getattr(product, 'stock_level', None), 'quantity_on_hand', 0) or 0
+        send_low_stock_alert(product, qty, recipient.email)
+    except Exception as exc:
+        logger.error("task_send_low_stock_alert failed: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def task_send_po_status_changed(self, po_id: int, recipient_id: int) -> None:
+    try:
+        from inventory.models import PurchaseOrder
+        from accounts.models import User
+        from notifications.email import send_po_status_changed
+
+        po = PurchaseOrder.objects.select_related('supplier').get(pk=po_id)
+        recipient = User.objects.get(pk=recipient_id)
+        send_po_status_changed(po, recipient.email)
+    except Exception as exc:
+        logger.error("task_send_po_status_changed failed: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def task_send_return_status_changed(self, return_id: int, recipient_id: int) -> None:
+    try:
+        from inventory.models import ReturnOrder
+        from accounts.models import User
+        from notifications.email import send_return_status_changed
+
+        return_order = ReturnOrder.objects.select_related('supplier').get(pk=return_id)
+        recipient = User.objects.get(pk=recipient_id)
+        send_return_status_changed(return_order, recipient.email)
+    except Exception as exc:
+        logger.error("task_send_return_status_changed failed: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+# ── Project async tasks ───────────────────────────────────────────────────────
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def task_send_project_assigned(self, project_id: int, manager_id: int) -> None:
+    try:
+        from projects.models import Project
+        from accounts.models import User
+        from notifications.email import send_project_assigned
+
+        project = Project.objects.get(pk=project_id)
+        manager = User.objects.get(pk=manager_id)
+        send_project_assigned(project, manager)
+    except Exception as exc:
+        logger.error("task_send_project_assigned failed: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def task_send_task_assigned(self, task_id: int, assignee_id: int) -> None:
+    try:
+        from projects.models import ProjectTask
+        from accounts.models import User
+        from notifications.email import send_task_assigned
+
+        task = ProjectTask.objects.select_related('project').get(pk=task_id)
+        assignee = User.objects.get(pk=assignee_id)
+        send_task_assigned(task, assignee)
+    except Exception as exc:
+        logger.error("task_send_task_assigned failed: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def task_send_task_completed(self, task_id: int, manager_id: int) -> None:
+    try:
+        from projects.models import ProjectTask
+        from accounts.models import User
+        from notifications.email import send_task_completed
+
+        task = ProjectTask.objects.select_related('project', 'assigned_to').get(pk=task_id)
+        manager = User.objects.get(pk=manager_id)
+        send_task_completed(task, manager)
+    except Exception as exc:
+        logger.error("task_send_task_completed failed: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+# ── Beat tasks ────────────────────────────────────────────────────────────────
 
 @shared_task
 def task_check_sla_deadlines() -> None:

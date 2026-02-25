@@ -4,6 +4,7 @@ from rest_framework import viewsets, permissions, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
@@ -22,6 +23,14 @@ from core.permissions import (
     TenantRolePermission, make_role_permission,
     ALL_ROLES, STAFF_ROLES, MANAGER_ROLES, ADMIN_ROLES,
 )
+
+
+class LoginRateThrottle(AnonRateThrottle):
+    """Strict per-IP rate limit on the token endpoint (3/min, burst=5).
+    This is a Django-layer defence; nginx applies limit_req zone=auth_limit
+    (5/min) as a first layer so direct-to-gunicorn calls are also covered."""
+    scope = 'login'
+    rate = '5/min'
 
 
 class TenantTokenObtainPairView(TokenObtainPairView):
@@ -47,6 +56,7 @@ class TenantTokenObtainPairView(TokenObtainPairView):
       Superuser on tenant:      rejected — superusers are root-domain only
       Staff on root domain:     rejected — staff must use workspace URL
     """
+    throttle_classes = [LoginRateThrottle]
 
     def post(self, request, *args, **kwargs):
         # Step 1: validate credentials using SimpleJWT's serializer

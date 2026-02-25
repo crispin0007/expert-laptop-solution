@@ -2,12 +2,18 @@
 Inventory signals.
 
 1. After StockMovement save: recompute StockLevel for that product.
-2. After TicketProduct save: create a StockMovement(type=out).
-3. After Ticket status → cancelled: reverse StockMovements for TicketProducts.
+2. After StockLevel recompute: fire low-stock notification if at/below reorder level.
+3. After TicketProduct save: create a StockMovement(type=out).
+4. After Ticket status → cancelled: reverse StockMovements for TicketProducts.
+5. After PurchaseOrder save: notify creator on status changes.
+6. After ReturnOrder save: notify creator on status changes.
 """
 from django.db import models
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @receiver(post_save, sender='inventory.StockMovement')
@@ -15,8 +21,8 @@ def update_stock_level(sender, instance, **kwargs):
     """Recompute quantity_on_hand from all movements for this product."""
     from inventory.models import StockLevel, StockMovement
 
-    IN_TYPES = (StockMovement.MOVEMENT_IN, StockMovement.MOVEMENT_RETURN)
-    OUT_TYPES = (StockMovement.MOVEMENT_OUT,)
+    IN_TYPES  = (StockMovement.MOVEMENT_IN, StockMovement.MOVEMENT_RETURN)
+    OUT_TYPES = (StockMovement.MOVEMENT_OUT, StockMovement.MOVEMENT_RETURN_SUPPLIER)
 
     agg = StockMovement.objects.filter(
         tenant=instance.tenant,
@@ -42,6 +48,20 @@ def update_stock_level(sender, instance, **kwargs):
         defaults={'quantity_on_hand': on_hand},
     )
 
+    # ── Low stock alert ──────────────────────────────────────────────────────
+    product = instance.product
+    if (
+        product.track_stock
+        and not product.is_service
+        and not product.is_deleted
+        and on_hand <= product.reorder_level
+    ):
+        try:
+            from notifications.service import notify_low_stock
+            notify_low_stock(product, on_hand)
+        except Exception:
+            logger.exception("Low stock notification failed for product %s", product.pk)
+
 
 @receiver(post_save, sender='tickets.TicketProduct')
 def create_stock_movement_for_ticket_product(sender, instance, created, **kwargs):
@@ -61,6 +81,68 @@ def create_stock_movement_for_ticket_product(sender, instance, created, **kwargs
         reference_id=instance.ticket_id,
         notes=f"Auto: TicketProduct #{instance.pk} on Ticket #{instance.ticket_id}",
     )
+
+
+# ── Purchase Order status change notifications ────────────────────────────────
+
+@receiver(pre_save, sender='inventory.PurchaseOrder')
+def _cache_po_status(sender, instance, **kwargs):
+    """Cache the pre-save status so the post_save handler can detect changes."""
+    if instance.pk:
+        try:
+            instance._pre_status = sender.objects.values_list('status', flat=True).get(pk=instance.pk)
+        except sender.DoesNotExist:
+            instance._pre_status = None
+    else:
+        instance._pre_status = None
+
+
+@receiver(post_save, sender='inventory.PurchaseOrder')
+def notify_po_updated(sender, instance, created, **kwargs):
+    """Notify PO creator when status changes (not on initial draft creation)."""
+    if created:
+        return
+    old_status = getattr(instance, '_pre_status', None)
+    if old_status == instance.status:
+        return
+    # Only notify on meaningful transitions
+    if instance.status not in ('sent', 'partial', 'received', 'cancelled'):
+        return
+    try:
+        from notifications.service import notify_po_status_changed
+        notify_po_status_changed(instance)
+    except Exception:
+        logger.exception("PO status notification failed for PO %s", instance.pk)
+
+
+# ── Return Order status change notifications ──────────────────────────────────
+
+@receiver(pre_save, sender='inventory.ReturnOrder')
+def _cache_return_status(sender, instance, **kwargs):
+    if instance.pk:
+        try:
+            instance._pre_status = sender.objects.values_list('status', flat=True).get(pk=instance.pk)
+        except sender.DoesNotExist:
+            instance._pre_status = None
+    else:
+        instance._pre_status = None
+
+
+@receiver(post_save, sender='inventory.ReturnOrder')
+def notify_return_updated(sender, instance, created, **kwargs):
+    """Notify return order creator when status changes to sent/accepted/cancelled."""
+    if created:
+        return
+    old_status = getattr(instance, '_pre_status', None)
+    if old_status == instance.status:
+        return
+    if instance.status not in ('sent', 'accepted', 'cancelled'):
+        return
+    try:
+        from notifications.service import notify_return_status_changed
+        notify_return_status_changed(instance)
+    except Exception:
+        logger.exception("Return status notification failed for return %s", instance.pk)
 
 
 @receiver(post_save, sender='tickets.Ticket')

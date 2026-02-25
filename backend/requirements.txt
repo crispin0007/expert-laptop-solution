@@ -4,6 +4,7 @@ psycopg2-binary
 gunicorn
 redis
 celery
+whitenoise
 python-dotenv
 
 djangorestframework-simplejwt>=5.3

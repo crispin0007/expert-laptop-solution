@@ -140,3 +140,98 @@ def send_staff_reactivated(user, tenant) -> None:
         recipient_list=[user.email],
     )
 
+
+# ── Inventory notifications ───────────────────────────────────────────────────
+
+def send_low_stock_alert(product, quantity: int, recipient_email: str) -> None:
+    """Notify an admin/manager that a product has hit or dropped below its reorder level."""
+    _send(
+        subject=f"[TechYatra] Low Stock: {product.name}",
+        message=(
+            f"Product '{product.name}' (SKU: {product.sku}) is at or below its reorder level.\n\n"
+            f"  Current stock : {quantity}\n"
+            f"  Reorder level : {product.reorder_level}\n\n"
+            f"Please create a purchase order to replenish stock."
+        ),
+        recipient_list=[recipient_email],
+    )
+
+
+def send_po_status_changed(po, recipient_email: str) -> None:
+    """Notify the PO creator when the purchase order status changes."""
+    _send(
+        subject=f"[TechYatra] Purchase Order {po.po_number} — {po.status.upper()}",
+        message=(
+            f"Purchase Order {po.po_number} (Supplier: {po.supplier.name}) "
+            f"has been updated to status: {po.get_status_display()}.\n"
+        ),
+        recipient_list=[recipient_email],
+    )
+
+
+def send_return_status_changed(return_order, recipient_email: str) -> None:
+    """Notify creator when a return order status changes."""
+    _send(
+        subject=f"[TechYatra] Return Order {return_order.return_number} — {return_order.status.upper()}",
+        message=(
+            f"Return Order {return_order.return_number} (Supplier: {return_order.supplier.name}) "
+            f"has been updated to status: {return_order.get_status_display()}.\n"
+        ),
+        recipient_list=[recipient_email],
+    )
+
+
+# ── Project notifications ─────────────────────────────────────────────────────
+
+def send_project_assigned(project, manager) -> None:
+    """Notify a user that they have been set as manager on a project."""
+    if not manager.email:
+        return
+    _send(
+        subject=f"[TechYatra] You are managing project {project.project_number}",
+        message=(
+            f"Hi {manager.full_name or manager.email},\n\n"
+            f"You have been assigned as manager for project \"{project.name}\" "
+            f"({project.project_number}).\n\n"
+            f"Status: {project.get_status_display()}\n"
+        ),
+        recipient_list=[manager.email],
+    )
+
+
+def send_task_assigned(task, assignee) -> None:
+    """Notify a staff member that a task has been assigned to them."""
+    if not assignee.email:
+        return
+    _send(
+        subject=f"[TechYatra] Task assigned: {task.title}",
+        message=(
+            f"Hi {assignee.full_name or assignee.email},\n\n"
+            f"You have been assigned a task in project {task.project.project_number} — {task.project.name}.\n\n"
+            f"Task    : {task.title}\n"
+            f"Priority: {task.get_priority_display()}\n"
+            f"Due date: {task.due_date or 'Not set'}\n\n"
+            f"Please log in to NEXUS BMS to view the full details.\n"
+        ),
+        recipient_list=[assignee.email],
+    )
+
+
+def send_task_completed(task, manager) -> None:
+    """Notify the project manager that a task has been marked done."""
+    if not manager.email:
+        return
+    assignee_name = (
+        task.assigned_to.full_name or task.assigned_to.email
+        if task.assigned_to else 'Unassigned'
+    )
+    _send(
+        subject=f"[TechYatra] Task completed in {task.project.project_number}: {task.title}",
+        message=(
+            f"Hi {manager.full_name or manager.email},\n\n"
+            f"Task \"{task.title}\" in project \"{task.project.name}\" has been marked as done "
+            f"by {assignee_name}.\n"
+        ),
+        recipient_list=[manager.email],
+    )
+

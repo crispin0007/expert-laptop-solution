@@ -3,6 +3,34 @@ from django.conf import settings
 from core.models import TenantModel
 
 
+# ── Unit of Measure ───────────────────────────────────────────────────────────
+
+class UnitOfMeasure(TenantModel):
+    """Units like pieces, kg, litres, boxes, etc."""
+
+    TYPE_UNIT   = 'unit'
+    TYPE_WEIGHT = 'weight'
+    TYPE_VOLUME = 'volume'
+    TYPE_LENGTH = 'length'
+    TYPE_CHOICES = [
+        (TYPE_UNIT,   'Unit'),
+        (TYPE_WEIGHT, 'Weight'),
+        (TYPE_VOLUME, 'Volume'),
+        (TYPE_LENGTH, 'Length'),
+    ]
+
+    name         = models.CharField(max_length=64)
+    abbreviation = models.CharField(max_length=16)
+    unit_type    = models.CharField(max_length=16, choices=TYPE_CHOICES, default=TYPE_UNIT)
+
+    class Meta:
+        ordering = ['name']
+        unique_together = ('tenant', 'name')
+
+    def __str__(self):
+        return f"{self.name} ({self.abbreviation})"
+
+
 class Category(TenantModel):
     name = models.CharField(max_length=128)
     slug = models.SlugField(max_length=128, blank=True)
@@ -46,7 +74,15 @@ class Product(TenantModel):
                                   help_text='Weight in kg')
     reorder_level = models.PositiveIntegerField(default=0,
                                                  help_text='Alert when stock falls below this')
+    uom = models.ForeignKey(
+        'UnitOfMeasure',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='products',
+        help_text='Unit of measure for this product',
+    )
     track_stock = models.BooleanField(default=True, help_text='Disable for unlimited-stock items')
+    has_variants = models.BooleanField(default=False, help_text='Product has size/color/spec variants')
     is_service = models.BooleanField(default=False)  # services have no stock
     is_published = models.BooleanField(default=False, help_text='Show on website CMS (Phase 3)')
     is_active = models.BooleanField(default=True)
@@ -99,16 +135,18 @@ class StockMovement(TenantModel):
     StockLevel is always COMPUTED from aggregation — never written directly.
     """
 
-    MOVEMENT_IN = 'in'
-    MOVEMENT_OUT = 'out'
-    MOVEMENT_ADJUSTMENT = 'adjustment'
-    MOVEMENT_RETURN = 'return'
+    MOVEMENT_IN              = 'in'
+    MOVEMENT_OUT             = 'out'
+    MOVEMENT_ADJUSTMENT      = 'adjustment'
+    MOVEMENT_RETURN          = 'return'
+    MOVEMENT_RETURN_SUPPLIER = 'return_supplier'
 
     MOVEMENT_TYPES = [
-        (MOVEMENT_IN, 'Stock In'),
-        (MOVEMENT_OUT, 'Stock Out'),
-        (MOVEMENT_ADJUSTMENT, 'Adjustment'),
-        (MOVEMENT_RETURN, 'Return'),
+        (MOVEMENT_IN,              'Stock In'),
+        (MOVEMENT_OUT,             'Stock Out'),
+        (MOVEMENT_ADJUSTMENT,      'Adjustment'),
+        (MOVEMENT_RETURN,          'Return from Customer'),
+        (MOVEMENT_RETURN_SUPPLIER, 'Return to Supplier'),
     ]
 
     product = models.ForeignKey(
@@ -149,3 +187,432 @@ class StockLevel(TenantModel):
 
     def __str__(self):
         return f"{self.product} — {self.quantity_on_hand} on hand"
+
+
+# ── Supplier ──────────────────────────────────────────────────────────────────
+
+class Supplier(TenantModel):
+    """Vendor/supplier that products are purchased from."""
+
+    name           = models.CharField(max_length=255)
+    contact_person = models.CharField(max_length=128, blank=True)
+    email          = models.EmailField(blank=True)
+    phone          = models.CharField(max_length=32, blank=True)
+    address        = models.TextField(blank=True)
+    city           = models.CharField(max_length=128, blank=True)
+    country        = models.CharField(max_length=64, blank=True, default='Nepal')
+    website        = models.URLField(max_length=300, blank=True)
+    payment_terms  = models.CharField(max_length=128, blank=True,
+                                       help_text='e.g. Net 30, COD')
+    notes          = models.TextField(blank=True)
+    is_active      = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['name']
+        unique_together = ('tenant', 'name')
+
+    def __str__(self):
+        return self.name
+
+
+# ── Purchase Order ────────────────────────────────────────────────────────────
+
+class PurchaseOrder(TenantModel):
+    """
+    A purchase order sent to a supplier.
+    Status flow: draft → sent → partial | received | cancelled
+    Stock is updated when items are marked as received.
+    """
+
+    STATUS_DRAFT     = 'draft'
+    STATUS_SENT      = 'sent'
+    STATUS_PARTIAL   = 'partial'
+    STATUS_RECEIVED  = 'received'
+    STATUS_CANCELLED = 'cancelled'
+
+    STATUS_CHOICES = [
+        (STATUS_DRAFT,     'Draft'),
+        (STATUS_SENT,      'Sent'),
+        (STATUS_PARTIAL,   'Partially Received'),
+        (STATUS_RECEIVED,  'Fully Received'),
+        (STATUS_CANCELLED, 'Cancelled'),
+    ]
+
+    po_number         = models.CharField(max_length=64, blank=True,
+                                          help_text='Auto-generated if blank')
+    supplier          = models.ForeignKey(
+        Supplier,
+        on_delete=models.PROTECT,
+        related_name='purchase_orders',
+    )
+    status            = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    expected_delivery = models.DateField(null=True, blank=True)
+    notes             = models.TextField(blank=True)
+    received_by       = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='received_purchase_orders',
+    )
+    received_at       = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.po_number or f"PO#{self.pk}"
+
+    def save(self, *args, **kwargs):
+        """Auto-generate PO number on first save."""
+        super().save(*args, **kwargs)
+        if not self.po_number:
+            self.po_number = f"PO-{self.pk:05d}"
+            PurchaseOrder.objects.filter(pk=self.pk).update(po_number=self.po_number)
+
+    @property
+    def total_amount(self):
+        return sum(
+            (item.quantity_ordered * item.unit_cost)
+            for item in self.items.all()
+        )
+
+    @property
+    def total_received(self):
+        return sum(item.quantity_received for item in self.items.all())
+
+    @property
+    def total_ordered(self):
+        return sum(item.quantity_ordered for item in self.items.all())
+
+
+class PurchaseOrderItem(TenantModel):
+    """A single line in a purchase order."""
+
+    po              = models.ForeignKey(
+        PurchaseOrder,
+        on_delete=models.CASCADE,
+        related_name='items',
+    )
+    product         = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name='po_items',
+    )
+    quantity_ordered  = models.PositiveIntegerField(default=1)
+    quantity_received = models.PositiveIntegerField(default=0)
+    unit_cost         = models.DecimalField(max_digits=12, decimal_places=2, default=0,
+                                             help_text='Cost per unit at time of PO creation')
+
+    class Meta:
+        ordering = ['id']
+        unique_together = ('po', 'product')
+
+    def __str__(self):
+        return f"{self.product.name} x{self.quantity_ordered}"
+
+    @property
+    def line_total(self):
+        return self.quantity_ordered * self.unit_cost
+
+    @property
+    def pending_quantity(self):
+        return self.quantity_ordered - self.quantity_received
+
+
+# ── Product Variants ──────────────────────────────────────────────────────────
+
+class ProductVariant(TenantModel):
+    """
+    A specific variation of a product (e.g. iPhone 15 / 128GB / Black).
+    Attributes stored as JSON: {'Color': 'Black', 'Storage': '128GB'}
+    Stock is tracked per variant via VariantStockLevel (computed from movements).
+    """
+
+    product           = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name='variants',
+    )
+    sku               = models.CharField(max_length=64, blank=True)
+    barcode           = models.CharField(max_length=64, blank=True)
+    attributes        = models.JSONField(default=dict,
+                                          help_text='e.g. {"Color": "Black", "Storage": "128GB"}')
+    price_adjustment  = models.DecimalField(max_digits=12, decimal_places=2, default=0,
+                                             help_text='Added to/subtracted from parent product price')
+    cost_price        = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    reorder_level     = models.PositiveIntegerField(default=0)
+    is_active         = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['id']
+        unique_together = ('product', 'sku')
+
+    def __str__(self):
+        attrs = ', '.join(f"{k}: {v}" for k, v in self.attributes.items())
+        return f"{self.product.name} [{attrs}]"
+
+    @property
+    def effective_price(self):
+        return float(self.product.unit_price) + float(self.price_adjustment)
+
+    @property
+    def stock_on_hand(self):
+        try:
+            return self.stock_level.quantity_on_hand
+        except Exception:
+            return 0
+
+
+class VariantStockLevel(TenantModel):
+    """Computed stock level per product variant. Never write directly — use StockMovement."""
+
+    variant           = models.OneToOneField(
+        ProductVariant,
+        on_delete=models.CASCADE,
+        related_name='stock_level',
+    )
+    quantity_on_hand  = models.IntegerField(default=0)
+    last_updated      = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['variant']
+
+    def __str__(self):
+        return f"{self.variant} — {self.quantity_on_hand} on hand"
+
+
+# ── Return to Supplier ────────────────────────────────────────────────────────
+
+class ReturnOrder(TenantModel):
+    """
+    Items returned to a supplier (defective, wrong item, overstock).
+    Status: draft → sent → accepted | cancelled
+    When sent, a StockMovement(return_supplier) is created to decrement stock.
+    """
+
+    STATUS_DRAFT     = 'draft'
+    STATUS_SENT      = 'sent'
+    STATUS_ACCEPTED  = 'accepted'
+    STATUS_CANCELLED = 'cancelled'
+
+    STATUS_CHOICES = [
+        (STATUS_DRAFT,     'Draft'),
+        (STATUS_SENT,      'Sent to Supplier'),
+        (STATUS_ACCEPTED,  'Accepted by Supplier'),
+        (STATUS_CANCELLED, 'Cancelled'),
+    ]
+
+    REASON_DEFECTIVE  = 'defective'
+    REASON_WRONG_ITEM = 'wrong_item'
+    REASON_OVERSTOCK  = 'overstock'
+    REASON_EXPIRED    = 'expired'
+    REASON_OTHER      = 'other'
+
+    REASON_CHOICES = [
+        (REASON_DEFECTIVE,  'Defective / Damaged'),
+        (REASON_WRONG_ITEM, 'Wrong Item Received'),
+        (REASON_OVERSTOCK,  'Overstock'),
+        (REASON_EXPIRED,    'Expired'),
+        (REASON_OTHER,      'Other'),
+    ]
+
+    return_number  = models.CharField(max_length=64, blank=True)
+    supplier       = models.ForeignKey(
+        Supplier,
+        on_delete=models.PROTECT,
+        related_name='return_orders',
+    )
+    purchase_order = models.ForeignKey(
+        PurchaseOrder,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='return_orders',
+        help_text='Original PO this return relates to (optional)',
+    )
+    status         = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    reason         = models.CharField(max_length=20, choices=REASON_CHOICES, default=REASON_DEFECTIVE)
+    notes          = models.TextField(blank=True)
+    sent_at        = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.return_number or f"RET#{self.pk}"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if not self.return_number:
+            self.return_number = f"RET-{self.pk:05d}"
+            ReturnOrder.objects.filter(pk=self.pk).update(return_number=self.return_number)
+
+    @property
+    def total_items(self):
+        return sum(item.quantity for item in self.items.all())
+
+    @property
+    def total_value(self):
+        return sum(item.quantity * item.unit_cost for item in self.items.all())
+
+
+class ReturnOrderItem(TenantModel):
+    """A single product line in a supplier return."""
+
+    return_order = models.ForeignKey(
+        ReturnOrder,
+        on_delete=models.CASCADE,
+        related_name='items',
+    )
+    product      = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name='return_items',
+    )
+    quantity     = models.PositiveIntegerField(default=1)
+    unit_cost    = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    class Meta:
+        ordering = ['id']
+        unique_together = ('return_order', 'product')
+
+    def __str__(self):
+        return f"{self.product.name} x{self.quantity}"
+
+    @property
+    def line_total(self):
+        return self.quantity * self.unit_cost
+
+
+# ── Supplier–Product Catalog ──────────────────────────────────────────────────
+
+class SupplierProduct(TenantModel):
+    """
+    Maps a product to a supplier with supplier-specific pricing and metadata.
+    A product may have multiple suppliers; exactly one per product should be
+    marked is_preferred=True (enforced at the view level).
+    """
+
+    supplier       = models.ForeignKey(
+        Supplier,
+        on_delete=models.CASCADE,
+        related_name='supplier_products',
+    )
+    product        = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name='supplier_products',
+    )
+    supplier_sku   = models.CharField(max_length=128, blank=True,
+                                       help_text="Supplier's own product code")
+    unit_cost      = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    lead_time_days = models.PositiveIntegerField(default=0,
+                                                  help_text='Average delivery lead time in days')
+    min_order_qty  = models.PositiveIntegerField(default=1)
+    is_preferred   = models.BooleanField(default=False,
+                                          help_text='Use this supplier for auto-reorder')
+    notes          = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-is_preferred', 'supplier__name']
+        unique_together = ('supplier', 'product')
+
+    def __str__(self):
+        return f"{self.supplier.name} → {self.product.name}"
+
+
+# ── Stock Count (Stocktake) ───────────────────────────────────────────────────
+
+class StockCount(TenantModel):
+    """
+    A physical inventory counting session.
+    Status flow: draft → counting → completed | cancelled
+    On completion, adjustment StockMovements are auto-created for all discrepancies.
+    """
+
+    STATUS_DRAFT     = 'draft'
+    STATUS_COUNTING  = 'counting'
+    STATUS_COMPLETED = 'completed'
+    STATUS_CANCELLED = 'cancelled'
+    STATUS_CHOICES = [
+        (STATUS_DRAFT,     'Draft'),
+        (STATUS_COUNTING,  'Counting'),
+        (STATUS_COMPLETED, 'Completed'),
+        (STATUS_CANCELLED, 'Cancelled'),
+    ]
+
+    count_number  = models.CharField(max_length=32, blank=True, editable=False)
+    description   = models.CharField(max_length=255, blank=True)
+    status        = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    # Snapshot: category filter used when count was started (optional)
+    category      = models.ForeignKey(
+        Category,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='stock_counts',
+        help_text='Limit this count to one category (optional)',
+    )
+    completed_at  = models.DateTimeField(null=True, blank=True)
+    completed_by  = models.ForeignKey(
+        'accounts.User',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='completed_stock_counts',
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.count_number or f"SC#{self.pk}"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if not self.count_number:
+            self.count_number = f"SC-{self.pk:05d}"
+            StockCount.objects.filter(pk=self.pk).update(count_number=self.count_number)
+
+    @property
+    def total_items(self):
+        return self.items.count()
+
+    @property
+    def discrepancy_count(self):
+        return self.items.exclude(discrepancy=0).count()
+
+
+class StockCountItem(TenantModel):
+    """
+    One product line in a stock count.
+    expected_qty is snapshot from StockLevel at session start.
+    counted_qty is what the user physically found.
+    discrepancy = counted_qty - expected_qty (negative = shrinkage).
+    """
+
+    stock_count   = models.ForeignKey(
+        StockCount,
+        on_delete=models.CASCADE,
+        related_name='items',
+    )
+    product       = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name='count_items',
+    )
+    expected_qty  = models.IntegerField(default=0,
+                                         help_text='System quantity at session start')
+    counted_qty   = models.IntegerField(null=True, blank=True,
+                                         help_text='Physically counted quantity (null = not yet counted)')
+    notes         = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['product__name']
+        unique_together = ('stock_count', 'product')
+
+    def __str__(self):
+        return f"{self.product.name} — expected {self.expected_qty}, counted {self.counted_qty}"
+
+    @property
+    def discrepancy(self):
+        if self.counted_qty is None:
+            return 0
+        return self.counted_qty - self.expected_qty

@@ -14,6 +14,7 @@ ALLOWED_HOSTS = ['*']
 REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
     'anon': '5/min',   # auth endpoints — stricter in prod
     'user': '2000/day',
+    'login': '5/min',  # dedicated scope on LoginRateThrottle
 }
 
 # CORS — allow all tenant subdomains in production (HTTP + HTTPS)
@@ -37,9 +38,27 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_BROWSER_XSS_FILTER = True
 X_FRAME_OPTIONS = 'DENY'
 
+# Nginx handles HTTP→HTTPS redirect and TLS termination — do NOT redirect at
+# the Django layer (that would cause double-redirect behind the proxy).
+SECURE_SSL_REDIRECT = False
+
+# Silence the deploy check warning about SECURE_SSL_REDIRECT — nginx owns it.
+SILENCED_SYSTEM_CHECKS = ['security.W008']
+
 # Static & media
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+# Whitenoise: serve compressed + cached static files directly from Django/gunicorn
+# as a fallback when nginx isn't the upstream (e.g. health checks, scratchpad runs).
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
 
 # Logging
 LOGGING = {

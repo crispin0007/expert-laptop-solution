@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { useAuthStore } from '../../store/authStore'
 import {
   Ticket as TicketIcon, Plus, Search, Filter, AlertCircle,
   Clock, CheckCircle2, CircleDot, Settings2,
@@ -21,6 +22,7 @@ interface Ticket {
   ticket_type_name: string
   customer_name: string
   department_name: string
+  assigned_to?: number | null
   assigned_to_name: string
   sla_breached: boolean
   sla_deadline: string | null
@@ -91,9 +93,14 @@ export default function TicketListPage() {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const { can } = usePermissions()
+  const currentUser = useAuthStore((s) => s.user)
+  const [urlParams] = useSearchParams()
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(
+    (urlParams.get('status') as StatusFilter) ?? 'all'
+  )
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all')
+  const assignedToMe = urlParams.get('assigned') === 'me'
   const [showCreate, setShowCreate] = useState(false)
 
   const { data: tickets = [], isLoading } = useQuery<Ticket[]>({
@@ -106,6 +113,7 @@ export default function TicketListPage() {
 
   const filtered = useMemo(() => {
     return tickets.filter(t => {
+      if (assignedToMe && currentUser && t.assigned_to !== currentUser.id) return false
       if (statusFilter !== 'all' && t.status !== statusFilter) return false
       if (priorityFilter !== 'all' && t.priority !== priorityFilter) return false
       if (search.trim()) {
@@ -118,16 +126,22 @@ export default function TicketListPage() {
       }
       return true
     })
-  }, [tickets, statusFilter, priorityFilter, search])
+  }, [tickets, statusFilter, priorityFilter, search, assignedToMe, currentUser])
 
   // ── Stats ──────────────────────────────────────────────────────────────────
+  const baseTickets = useMemo(() =>
+    assignedToMe && currentUser
+      ? tickets.filter(t => t.assigned_to === currentUser.id)
+      : tickets
+  , [tickets, assignedToMe, currentUser])
+
   const stats = useMemo(() => ({
-    total: tickets.length,
-    open: tickets.filter(t => t.status === 'open').length,
-    inProgress: tickets.filter(t => t.status === 'in_progress').length,
-    resolved: tickets.filter(t => t.status === 'resolved').length,
-    breached: tickets.filter(t => t.sla_breached).length,
-  }), [tickets])
+    total: baseTickets.length,
+    open: baseTickets.filter(t => t.status === 'open').length,
+    inProgress: baseTickets.filter(t => t.status === 'in_progress').length,
+    resolved: baseTickets.filter(t => t.status === 'resolved').length,
+    breached: baseTickets.filter(t => t.sla_breached).length,
+  }), [baseTickets])
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -137,8 +151,12 @@ export default function TicketListPage() {
         <div className="flex items-center gap-3">
           <TicketIcon className="text-indigo-500" size={24} />
           <div>
-            <h1 className="text-xl font-semibold text-gray-900">Tickets</h1>
-            <p className="text-xs text-gray-400">{stats.total} total</p>
+            <h1 className="text-xl font-semibold text-gray-900">
+              {assignedToMe ? 'My Tickets' : 'Tickets'}
+            </h1>
+            <p className="text-xs text-gray-400">
+              {assignedToMe ? `${stats.total} assigned to me` : `${stats.total} total`}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2">

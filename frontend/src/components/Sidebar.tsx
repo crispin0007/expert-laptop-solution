@@ -1,4 +1,5 @@
-import { NavLink } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { NavLink, Link, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
   Ticket,
@@ -16,7 +17,17 @@ import {
   ClipboardList,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   X,
+  AlertTriangle,
+  Layers,
+  Scale,
+  Truck,
+  ShoppingCart,
+  RotateCcw,
+  BarChart2,
+  ArrowLeftRight,
+  CheckSquare,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { useTenantStore } from '../store/tenantStore'
@@ -60,6 +71,110 @@ function SectionLabel({ label, collapsed }: { label: string; collapsed?: boolean
   return (
     <div className="pt-4 pb-1 px-3">
       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{label}</p>
+    </div>
+  )
+}
+
+// ── Sub-nav item (used inside NavSection) ─────────────────────────────────────
+
+function SubNavItem({ to, label, icon }: { to: string; label: string; icon?: React.ReactNode }) {
+  const location = useLocation()
+  // Parse `to` into pathname + search so we can do exact matching on both
+  const qIdx   = to.indexOf('?')
+  const toPath = qIdx === -1 ? to : to.slice(0, qIdx)
+  const toQs   = qIdx === -1 ? '' : to.slice(qIdx + 1)
+  const toP    = new URLSearchParams(toQs)
+  const curP   = new URLSearchParams(location.search)
+
+  const isActive = location.pathname === toPath && (
+    toQs === ''
+      ? !location.search                                              // no query → match only bare path
+      : Array.from(toP.entries()).every(([k, v]) => curP.get(k) === v) // all query params match
+  )
+
+  return (
+    <Link
+      to={to}
+      className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${
+        isActive
+          ? 'text-indigo-400 bg-indigo-950/60'
+          : 'text-gray-500 hover:text-gray-200 hover:bg-gray-800/70'
+      }`}
+    >
+      {icon && <span className="shrink-0 opacity-75">{icon}</span>}
+      <span className="truncate">{label}</span>
+    </Link>
+  )
+}
+
+// ── Collapsible nav section ───────────────────────────────────────────────────
+
+function NavSection({
+  label,
+  icon: Icon,
+  basePath,
+  collapsed,
+  children,
+}: {
+  label: string
+  icon: React.ElementType
+  basePath: string
+  collapsed?: boolean
+  children: React.ReactNode
+}) {
+  const location  = useLocation()
+  const isOnBase  = location.pathname.startsWith(basePath)
+  const [open, setOpen] = useState(isOnBase)
+
+  // Auto-expand when navigating into this section
+  useEffect(() => { if (isOnBase) setOpen(true) }, [isOnBase])
+
+  // Icon-only mode: just a NavLink to the top-level route
+  if (collapsed) {
+    return (
+      <NavLink
+        to={basePath}
+        title={label}
+        className={({ isActive }) =>
+          `flex items-center justify-center px-3 py-2.5 rounded-lg transition-colors ${
+            isActive
+              ? 'bg-indigo-600 text-white'
+              : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+          }`
+        }
+      >
+        <Icon size={18} className="shrink-0" />
+      </NavLink>
+    )
+  }
+
+  return (
+    <div>
+      {/* Section header toggle */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`flex items-center justify-between w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+          isOnBase
+            ? 'text-indigo-300 bg-indigo-900/30'
+            : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+        }`}
+      >
+        <span className="flex items-center gap-3">
+          <Icon size={18} className="shrink-0" />
+          <span className="truncate">{label}</span>
+        </span>
+        <ChevronDown
+          size={14}
+          className={`shrink-0 transition-transform duration-200 ${open ? '' : '-rotate-90'}`}
+        />
+      </button>
+
+      {/* Sub-items */}
+      {open && (
+        <div className="mt-0.5 ml-3 pl-3 border-l border-gray-700/70 space-y-0.5 pb-1">
+          {children}
+        </div>
+      )}
     </div>
   )
 }
@@ -155,10 +270,19 @@ function SidebarContent({
 
             {/* Module-gated: hidden when module not in tenant's active plan */}
             {modules.has('tickets') && perms.can('can_view_tickets') && (
-              <NavItem to="/tickets"    label="Tickets"    icon={Ticket}       collapsed={collapsed} />
+              <NavSection label="Tickets" icon={Ticket} basePath="/tickets" collapsed={collapsed}>
+                <SubNavItem to="/tickets" label="All Tickets" icon={<Ticket size={13} />} />
+                <SubNavItem to="/tickets?assigned=me" label="My Tickets" icon={<UserCircle size={13} />} />
+                {perms.can('can_manage_ticket_types') && (
+                  <SubNavItem to="/tickets/settings" label="Settings" icon={<Settings size={13} />} />
+                )}
+              </NavSection>
             )}
             {modules.has('projects') && perms.can('can_view_projects') && (
-              <NavItem to="/projects"   label="Projects"   icon={FolderKanban} collapsed={collapsed} />
+              <NavSection label="Projects" icon={FolderKanban} basePath="/projects" collapsed={collapsed}>
+                <SubNavItem to="/projects" label="All Projects" icon={<FolderKanban size={13} />} />
+                <SubNavItem to="/projects?assigned=me" label="My Projects" icon={<CheckSquare size={13} />} />
+              </NavSection>
             )}
             {modules.has('accounting') && perms.can('can_view_accounting') && (
               <NavItem to="/accounting" label="Accounting" icon={Receipt}      collapsed={collapsed} />
@@ -167,7 +291,20 @@ function SidebarContent({
               <NavItem to="/coins"      label="Coins"      icon={Coins}        collapsed={collapsed} />
             )}
             {modules.has('inventory') && perms.can('can_view_inventory') && (
-              <NavItem to="/inventory"  label="Inventory"  icon={Package}      collapsed={collapsed} />
+              <NavSection label="Inventory" icon={Package} basePath="/inventory" collapsed={collapsed}>
+                <SubNavItem to="/inventory?tab=products"        label="Products"         icon={<Package        size={13} />} />
+                <SubNavItem to="/inventory?tab=movements"       label="Stock Movements"  icon={<ArrowLeftRight size={13} />} />
+                <SubNavItem to="/inventory?tab=low-stock"       label="Low Stock"        icon={<AlertTriangle  size={13} />} />
+                <SubNavItem to="/inventory?tab=categories"      label="Categories"       icon={<Layers         size={13} />} />
+                <SubNavItem to="/inventory?tab=uom"             label="Units of Measure" icon={<Scale          size={13} />} />
+                <SubNavItem to="/inventory?tab=variants"        label="Variants"         icon={<Layers         size={13} />} />
+                <SubNavItem to="/inventory?tab=suppliers"       label="Suppliers"        icon={<Truck          size={13} />} />
+                <SubNavItem to="/inventory?tab=purchase-orders" label="Purchase Orders"  icon={<ShoppingCart   size={13} />} />
+                <SubNavItem to="/inventory?tab=returns"         label="Returns"          icon={<RotateCcw      size={13} />} />
+                <SubNavItem to="/inventory?tab=supplier-catalog" label="Supplier Catalog" icon={<Truck         size={13} />} />
+                <SubNavItem to="/inventory?tab=stock-counts"    label="Stock Counts"     icon={<ClipboardList  size={13} />} />
+                <SubNavItem to="/inventory?tab=reports"         label="Reports"          icon={<BarChart2      size={13} />} />
+              </NavSection>
             )}
             {perms.can('can_manage_settings') && (
               <NavItem to="/settings"   label="Settings"   icon={Settings}     collapsed={collapsed} />

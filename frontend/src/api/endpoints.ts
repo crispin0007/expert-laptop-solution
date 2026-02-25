@@ -141,4 +141,45 @@ export const INVENTORY = {
   PRODUCT_IMAGE_SET_PRIMARY: (id: number) => `/inventory/product-images/${id}/set-primary/`,
   STOCK_LEVELS: '/inventory/stock-levels/',
   MOVEMENTS: '/inventory/movements/',
+  MOVEMENT_DETAIL: (id: number) => `/inventory/movements/${id}/`,
+  LOW_STOCK: '/inventory/products/low-stock/',
+  SUPPLIERS: '/inventory/suppliers/',
+  SUPPLIER_DETAIL: (id: number) => `/inventory/suppliers/${id}/`,
+  PURCHASE_ORDERS: '/inventory/purchase-orders/',
+  PURCHASE_ORDER_DETAIL: (id: number) => `/inventory/purchase-orders/${id}/`,
+  PURCHASE_ORDER_RECEIVE: (id: number) => `/inventory/purchase-orders/${id}/receive/`,
+  PURCHASE_ORDER_SEND: (id: number) => `/inventory/purchase-orders/${id}/send/`,
+  PURCHASE_ORDER_CANCEL: (id: number) => `/inventory/purchase-orders/${id}/cancel/`,
+  // Units of Measure
+  UOM: '/inventory/uom/',
+  UOM_DETAIL: (id: number) => `/inventory/uom/${id}/`,
+  // Product Variants
+  VARIANTS: '/inventory/variants/',
+  VARIANT_DETAIL: (id: number) => `/inventory/variants/${id}/`,
+  // Return to Supplier
+  RETURN_ORDERS: '/inventory/return-orders/',
+  RETURN_ORDER_DETAIL: (id: number) => `/inventory/return-orders/${id}/`,
+  RETURN_ORDER_SEND: (id: number) => `/inventory/return-orders/${id}/send/`,
+  RETURN_ORDER_ACCEPT: (id: number) => `/inventory/return-orders/${id}/accept/`,
+  RETURN_ORDER_CANCEL: (id: number) => `/inventory/return-orders/${id}/cancel/`,
+  // Reports
+  REPORT_VALUATION: '/inventory/reports/valuation/',
+  REPORT_DEAD_STOCK: '/inventory/reports/dead-stock/',
+  REPORT_ABC: '/inventory/reports/abc-analysis/',
+  REPORT_FORECAST: '/inventory/reports/forecast/',
+  REPORT_EXPORT_CSV: '/inventory/reports/export-csv/',
+  // CSV Import
+  PRODUCT_IMPORT_CSV: '/inventory/products/import-csv/',
+  // Auto-Reorder
+  REPORT_AUTO_REORDER: '/inventory/reports/auto-reorder/',
+  // Supplier–Product Catalog
+  SUPPLIER_PRODUCTS: '/inventory/supplier-products/',
+  SUPPLIER_PRODUCT_DETAIL: (id: number) => `/inventory/supplier-products/${id}/`,
+  // Stock Counts (Stocktake)
+  STOCK_COUNTS: '/inventory/stock-counts/',
+  STOCK_COUNT_DETAIL: (id: number) => `/inventory/stock-counts/${id}/`,
+  STOCK_COUNT_START: (id: number) => `/inventory/stock-counts/${id}/start/`,
+  STOCK_COUNT_ITEM: (id: number) => `/inventory/stock-counts/${id}/count-item/`,
+  STOCK_COUNT_COMPLETE: (id: number) => `/inventory/stock-counts/${id}/complete/`,
+  STOCK_COUNT_CANCEL: (id: number) => `/inventory/stock-counts/${id}/cancel/`,
 } as const

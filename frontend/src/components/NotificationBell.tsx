@@ -15,12 +15,20 @@ interface NotificationItem {
 
 const TYPE_COLORS: Record<string, string> = {
   ticket_assigned: 'bg-indigo-500',
-  task_assigned: 'bg-violet-500',
-  coin_approved: 'bg-emerald-500',
-  coin_rejected: 'bg-red-500',
-  sla_warning: 'bg-yellow-500',
-  sla_breached: 'bg-red-600',
-  general: 'bg-gray-400',
+  ticket_comment:  'bg-indigo-400',
+  ticket_transfer: 'bg-violet-500',
+  ticket_status:   'bg-blue-400',
+  task_assigned:   'bg-violet-500',
+  task_done:       'bg-emerald-500',
+  project_assigned:'bg-blue-600',
+  coin_approved:   'bg-emerald-500',
+  coin_rejected:   'bg-red-500',
+  sla_warning:     'bg-yellow-500',
+  sla_breached:    'bg-red-600',
+  low_stock:       'bg-orange-500',
+  po_status:       'bg-sky-500',
+  return_status:   'bg-teal-500',
+  general:         'bg-gray-400',
 }
 
 export default function NotificationBell() {

@@ -20,6 +20,10 @@ class Notification(TenantModel):
     TYPE_COIN_REJECTED = 'coin_rejected'
     TYPE_PROJECT_ASSIGNED = 'project_assigned'
     TYPE_TASK_ASSIGNED = 'task_assigned'
+    TYPE_TASK_DONE = 'task_done'
+    TYPE_LOW_STOCK = 'low_stock'
+    TYPE_PO_STATUS = 'po_status'
+    TYPE_RETURN_STATUS = 'return_status'
     TYPE_GENERAL = 'general'
 
     TYPE_CHOICES = [
@@ -33,6 +37,10 @@ class Notification(TenantModel):
         (TYPE_COIN_REJECTED, 'Coin Rejected'),
         (TYPE_PROJECT_ASSIGNED, 'Project Assigned'),
         (TYPE_TASK_ASSIGNED, 'Task Assigned'),
+        (TYPE_TASK_DONE, 'Task Completed'),
+        (TYPE_LOW_STOCK, 'Low Stock Alert'),
+        (TYPE_PO_STATUS, 'Purchase Order Update'),
+        (TYPE_RETURN_STATUS, 'Return Order Update'),
         (TYPE_GENERAL, 'General'),
     ]
 

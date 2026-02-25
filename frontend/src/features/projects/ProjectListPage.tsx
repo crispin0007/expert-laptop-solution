@@ -1,12 +1,13 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import apiClient from '../../api/client'
 import { PROJECTS, CUSTOMERS, STAFF } from '../../api/endpoints'
 import toast from 'react-hot-toast'
 import { Plus, X } from 'lucide-react'
+import { useAuthStore } from '../../store/authStore'
 
-interface Project { id: number; project_number: string; name: string; status: string; customer: number | null; customer_name: string; start_date: string | null; end_date: string | null }
+interface Project { id: number; project_number: string; name: string; status: string; manager?: number | null; customer: number | null; customer_name: string; start_date: string | null; end_date: string | null }
 interface Customer { id: number; name: string }
 interface StaffMember { id: number; full_name: string }
 
@@ -31,15 +32,23 @@ const BLANK_FORM = {
 export default function ProjectListPage() {
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const currentUser = useAuthStore((s) => s.user)
+  const [urlParams] = useSearchParams()
+  const assignedToMe = urlParams.get('assigned') === 'me'
   const [showCreate, setShowCreate] = useState(false)
   const [form, setForm] = useState(BLANK_FORM)
 
-  const { data: projects = [], isLoading } = useQuery<Project[]>({
+  const { data: rawProjects = [], isLoading } = useQuery<Project[]>({
     queryKey: ['projects'],
     queryFn: () => apiClient.get(PROJECTS.LIST).then(r =>
       Array.isArray(r.data) ? r.data : r.data.results ?? []
     ),
   })
+
+  const projects = useMemo(() => {
+    if (!assignedToMe || !currentUser) return rawProjects
+    return rawProjects.filter(p => p.manager === currentUser.id)
+  }, [rawProjects, assignedToMe, currentUser])
 
   const { data: customers = [] } = useQuery<Customer[]>({
     queryKey: ['customers-simple'],
@@ -85,7 +94,14 @@ export default function ProjectListPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">Projects</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-800">
+            {assignedToMe ? 'My Projects' : 'Projects'}
+          </h1>
+          {assignedToMe && (
+            <p className="text-xs text-gray-400 mt-0.5">Showing projects where you are the manager</p>
+          )}
+        </div>
         <button
           onClick={() => setShowCreate(true)}
           className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition"
