@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import {
-  ArrowLeft, Building2, Edit2, Trash2, PauseCircle, CheckCircle2,
+  ArrowLeft, Building2, Edit2, PauseCircle, CheckCircle2,
   UserPlus, ToggleLeft, ToggleRight, X, Key, Copy,
   Puzzle, Check, Minus, Package, Ticket, Users, FolderKanban, Receipt,
 } from 'lucide-react'

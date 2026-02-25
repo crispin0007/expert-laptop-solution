@@ -248,7 +248,7 @@ function StaffCoinHistoryPanel() {
 
 export default function CoinsPage() {
   const qc = useQueryClient()
-  const { isManager, can } = usePermissions()
+  const { isManager } = usePermissions()
   const managerView = isManager
 
   const [statusFilter, setStatusFilter] = useState<'pending' | 'approved' | 'rejected' | ''>('pending')
