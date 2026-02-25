@@ -110,7 +110,7 @@ function SidebarContent({
               {tenantName || 'NEXUS BMS'}
             </p>
             {tenantName && (
-              <p className="text-gray-500 text-xs mt-0.5">powered by TechYatra</p>
+              <p className="text-gray-500 text-xs mt-0.5">powered by NEXUS BMS</p>
             )}
           </div>
         )}
