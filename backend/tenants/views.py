@@ -490,15 +490,34 @@ def verify_domain(request):
 @require_GET
 def tenant_public_info(request):
     """
-    Returns minimal public info about the current tenant (resolved from the
-    Host header by TenantMiddleware).  No authentication required — used by
-    the login page to display the tenant's company name.
+    Returns minimal public info about the current tenant.  No authentication
+    required — used by the login page to display the tenant's company name.
+
+    Resolution order:
+      1. TenantMiddleware already resolved request.tenant (subdomain case).
+      2. Fallback: look up by Host header directly (custom domain case,
+         bypasses middleware cache so stale cache entries don't break the UI).
 
     Returns 200 + JSON  {"name": "...", "slug": "..."} on a tenant domain.
     Returns 404 when called from the root domain (no tenant context).
     """
     from django.http import JsonResponse
+    from django.conf import settings
+
     tenant = getattr(request, 'tenant', None)
+
+    if tenant is None:
+        # Fallback: resolve directly from Host header, bypassing cache
+        host = request.get_host().split(':')[0].lower()
+        root_domain = getattr(settings, 'ROOT_DOMAIN', '').lower()
+
+        if host and host != root_domain and not host.endswith('.localhost'):
+            # Try custom domain lookup
+            tenant = Tenant.objects.filter(
+                custom_domain=host, is_active=True, is_deleted=False
+            ).first()
+
     if tenant is None:
         return JsonResponse({'detail': 'No tenant context.'}, status=404)
+
     return JsonResponse({'name': tenant.name, 'slug': tenant.slug})
