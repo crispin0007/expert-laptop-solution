@@ -11,7 +11,7 @@ import {
   ArrowUpCircle, RefreshCw, AlertTriangle, Layers, Clock, Trash2,
   TrendingDown, Truck, ShoppingCart, Send, Ban, Download,
   Building2, ReceiptText, Scale, RotateCcw, FileBarChart2, Upload,
-  FileDown, TrendingUp, Archive, ChevronDown, ChevronUp, ClipboardList,
+  FileDown, TrendingUp, Archive, ClipboardList,
 } from 'lucide-react'
 import { usePermissions } from '../../hooks/usePermissions'
 
