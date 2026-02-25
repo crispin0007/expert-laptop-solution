@@ -6,26 +6,43 @@ from .models import Tenant
 @receiver(post_save, sender=Tenant)
 def create_owner_membership(sender, instance, created, **kwargs):
     """
-    When a new Tenant is created, auto-create an owner-level TenantMembership
-    for the user who created it (instance.created_by).
+    When a new Tenant is created:
+    1. Auto-create an owner-level TenantMembership for the creating user.
+    2. Seed all PRELOAD_ROLES into the tenant's custom role library.
 
     This ensures the creating superadmin can immediately make API calls
-    with X-Tenant-Slug and have `ensure_tenant()` succeed.
+    and that every tenant ships with sane default roles (Finance, Technician,
+    HR, Support Agent, Project Manager, Read Only).
     """
     if not created:
         return
-    if not instance.created_by:
-        return
 
-    # Late import to avoid circular dependency
+    # Late imports to avoid circular dependencies at module load time
     from accounts.models import TenantMembership
+    from roles.models import Role
+    from roles.permissions_map import PRELOAD_ROLES
 
-    TenantMembership.objects.get_or_create(
-        user=instance.created_by,
-        tenant=instance,
-        defaults={
-            'role': 'admin',
-            'is_admin': True,
-            'is_active': True,
-        },
-    )
+    # 1. Owner membership for the creating user
+    if instance.created_by:
+        TenantMembership.objects.get_or_create(
+            user=instance.created_by,
+            tenant=instance,
+            defaults={
+                'role': 'admin',
+                'is_admin': True,
+                'is_active': True,
+            },
+        )
+
+    # 2. Seed preload roles — skip any that already exist (idempotent)
+    for template in PRELOAD_ROLES:
+        Role.objects.get_or_create(
+            tenant=instance,
+            name=template['name'],
+            defaults={
+                'description': template.get('description', ''),
+                'permissions': template.get('permissions', {}),
+                'is_system_role': True,
+                'created_by': instance.created_by,
+            },
+        )

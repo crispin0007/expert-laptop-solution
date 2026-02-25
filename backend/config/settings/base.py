@@ -106,7 +106,13 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
-AUTH_PASSWORD_VALIDATORS = []
+AUTH_PASSWORD_VALIDATORS = [
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+     'OPTIONS': {'min_length': 8}},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
+]
 
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
@@ -124,11 +130,25 @@ REST_FRAMEWORK = {
         'rest_framework.renderers.JSONRenderer',
     ],
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        # Custom auth class — validates standard JWT claims PLUS the tenant_id
+        # claim that is embedded in every token at login time.
+        # A token issued for tenant A is rejected on tenant B at this layer,
+        # before any view or permission class executes.
+        'accounts.authentication.TenantJWTAuthentication',
     ],
+    # Rate limiting — brute-force protection on auth endpoints.
+    # Anon: 10/min (login attempts).  User: 1000/day (normal API usage).
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '10/min',
+        'user': '1000/day',
+    },
 }
 
-# SimpleJWT settings (keep defaults but expose for future tuning)
+# SimpleJWT settings
 from datetime import timedelta
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
@@ -136,6 +156,9 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
+    # Use our tenant-scoped token classes so every token embeds a tenant_id claim.
+    # TenantJWTAuthentication validates this claim on every request.
+    'TOKEN_OBTAIN_SERIALIZER': 'rest_framework_simplejwt.serializers.TokenObtainPairSerializer',
 }
 
 # CORS — allow Vite dev server and the secondary PC on the local network

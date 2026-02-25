@@ -8,6 +8,7 @@ import {
 import apiClient from '../../api/client'
 import { TICKETS } from '../../api/endpoints'
 import CreateTicketWizard from './CreateTicketWizard'
+import { usePermissions } from '../../hooks/usePermissions'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -89,6 +90,7 @@ function SLABadge({ breached, deadline }: { breached: boolean; deadline: string 
 export default function TicketListPage() {
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const { can } = usePermissions()
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all')
@@ -140,18 +142,22 @@ export default function TicketListPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Link
-            to="/tickets/settings"
-            className="flex items-center gap-1.5 px-3 py-2 text-sm text-slate-600 border border-slate-300 bg-white rounded-lg hover:bg-slate-50 transition"
-          >
-            <Settings2 size={14} /> Settings
-          </Link>
-          <button
-            onClick={() => setShowCreate(true)}
-            className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-sm transition"
-          >
-            <Plus size={15} /> New Ticket
-          </button>
+          {can('can_manage_ticket_types') && (
+            <Link
+              to="/tickets/settings"
+              className="flex items-center gap-1.5 px-3 py-2 text-sm text-slate-600 border border-slate-300 bg-white rounded-lg hover:bg-slate-50 transition"
+            >
+              <Settings2 size={14} /> Settings
+            </Link>
+          )}
+          {can('can_create_tickets') && (
+            <button
+              onClick={() => setShowCreate(true)}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-sm transition"
+            >
+              <Plus size={15} /> New Ticket
+            </button>
+          )}
         </div>
       </div>
 

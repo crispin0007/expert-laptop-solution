@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLogin } from './useLogin'
+import { useAuthStore } from '../../store/authStore'
 import toast from 'react-hot-toast'
 
 export default function LoginPage() {
@@ -13,9 +14,18 @@ export default function LoginPage() {
     e.preventDefault()
     try {
       await login.mutateAsync({ email, password })
-      navigate('/')
+      // onSuccess in useLogin sets the user before mutateAsync resolves —
+      // read the stored user to decide where to redirect.
+      const storedUser = useAuthStore.getState().user
+      if (storedUser?.is_superadmin || storedUser?.domain_type === 'main') {
+        toast.success('Welcome back, Super Admin!')
+        navigate('/')
+      } else {
+        toast.success(`Welcome back!`)
+        navigate('/')
+      }
     } catch {
-      toast.error('Invalid email or password')
+      toast.error('Invalid email or password. Please try again.')
     }
   }
 
@@ -64,7 +74,7 @@ export default function LoginPage() {
 
         {/* Dev hint */}
         <p className="mt-6 text-center text-xs text-gray-400">
-          Super admin: <span className="font-mono">admin@techyatra.com</span>
+          Super admin: <span className="font-mono">info@techyatra.com.np</span>
         </p>
       </div>
     </div>

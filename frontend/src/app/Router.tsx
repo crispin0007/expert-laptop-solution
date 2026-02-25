@@ -2,8 +2,22 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './Layout'
 import ProtectedRoute from '../features/auth/ProtectedRoute'
 import SuperAdminRoute from '../features/admin/SuperAdminRoute'
+import RoleGuard from '../features/auth/RoleGuard'
+import ModuleGuard from '../features/auth/ModuleGuard'
 import LoginPage from '../features/auth/LoginPage'
 import DashboardPage from '../features/dashboard/DashboardPage'
+import PlatformDashboard from '../features/admin/PlatformDashboard'
+import TenantDetailPage from '../features/admin/TenantDetailPage'
+import UpgradePage from '../features/upgrade/UpgradePage'
+import { useAuthStore } from '../store/authStore'
+import { useTenantStore } from '../store/tenantStore'
+
+function SmartIndex() {
+  const user = useAuthStore((s) => s.user)
+  const subdomain = useTenantStore((s) => s.subdomain)
+  const isSuperAdmin = (user?.is_superadmin ?? false) && !subdomain
+  return isSuperAdmin ? <PlatformDashboard /> : <DashboardPage />
+}
 import TicketListPage from '../features/tickets/TicketListPage'
 import TicketDetailPage from '../features/tickets/TicketDetailPage'
 import TicketTypeManagementPage from '../features/tickets/TicketTypeManagementPage'
@@ -16,7 +30,9 @@ import CoinsPage from '../features/accounting/CoinsPage'
 import InventoryPage from '../features/inventory/InventoryPage'
 import DepartmentListPage from '../features/departments/DepartmentListPage'
 import StaffListPage from '../features/staff/StaffListPage'
+import RolesListPage from '../features/roles/RolesListPage'
 import TenantManagementPage from '../features/admin/TenantManagementPage'
+import PlanManagementPage from '../features/admin/PlanManagementPage'
 import SettingsPage from '../features/settings/SettingsPage'
 
 export default function Router() {
@@ -24,6 +40,7 @@ export default function Router() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/upgrade" element={<UpgradePage />} />
         <Route
           element={
             <ProtectedRoute>
@@ -31,20 +48,146 @@ export default function Router() {
             </ProtectedRoute>
           }
         >
-          <Route index element={<DashboardPage />} />
-          <Route path="tickets" element={<TicketListPage />} />
-          <Route path="tickets/settings" element={<TicketTypeManagementPage />} />
-          <Route path="tickets/:id" element={<TicketDetailPage />} />
-          <Route path="projects" element={<ProjectListPage />} />
-          <Route path="projects/:id" element={<ProjectDetailPage />} />
-          <Route path="customers" element={<CustomerListPage />} />
-          <Route path="customers/:id" element={<CustomerDetailPage />} />
-          <Route path="accounting" element={<AccountingPage />} />
-          <Route path="coins" element={<CoinsPage />} />
-          <Route path="inventory" element={<InventoryPage />} />
-          <Route path="departments" element={<DepartmentListPage />} />
-          <Route path="staff" element={<StaffListPage />} />
-          <Route path="settings" element={<SettingsPage />} />
+          {/* All authenticated members */}
+          <Route index element={<SmartIndex />} />
+
+          {/* Tickets module */}
+          <Route
+            path="tickets"
+            element={
+              <ModuleGuard module="tickets">
+                <TicketListPage />
+              </ModuleGuard>
+            }
+          />
+          <Route
+            path="tickets/:id"
+            element={
+              <ModuleGuard module="tickets">
+                <TicketDetailPage />
+              </ModuleGuard>
+            }
+          />
+
+          {/* Projects module */}
+          <Route
+            path="projects"
+            element={
+              <ModuleGuard module="projects">
+                <ProjectListPage />
+              </ModuleGuard>
+            }
+          />
+          <Route
+            path="projects/:id"
+            element={
+              <ModuleGuard module="projects">
+                <ProjectDetailPage />
+              </ModuleGuard>
+            }
+          />
+
+          {/* Customers module */}
+          <Route
+            path="customers"
+            element={
+              <ModuleGuard module="customers">
+                <CustomerListPage />
+              </ModuleGuard>
+            }
+          />
+          <Route
+            path="customers/:id"
+            element={
+              <ModuleGuard module="customers">
+                <CustomerDetailPage />
+              </ModuleGuard>
+            }
+          />
+
+          {/* Inventory module */}
+          <Route
+            path="inventory"
+            element={
+              <ModuleGuard module="inventory">
+                <InventoryPage />
+              </ModuleGuard>
+            }
+          />
+
+          {/* Departments module */}
+          <Route
+            path="departments"
+            element={
+              <ModuleGuard module="departments">
+                <DepartmentListPage />
+              </ModuleGuard>
+            }
+          />
+
+          {/* Accounting module */}
+          <Route
+            path="coins"
+            element={
+              <ModuleGuard module="accounting">
+                <CoinsPage />
+              </ModuleGuard>
+            }
+          />
+
+          {/* Ticket type admin — admin+ */}
+          <Route
+            path="tickets/settings"
+            element={
+              <ModuleGuard module="tickets">
+                <RoleGuard require="can_manage_ticket_types">
+                  <TicketTypeManagementPage />
+                </RoleGuard>
+              </ModuleGuard>
+            }
+          />
+
+          {/* Staff list — manager+ */}
+          <Route
+            path="staff"
+            element={
+              <RoleGuard require="can_view_staff">
+                <StaffListPage />
+              </RoleGuard>
+            }
+          />
+
+          {/* Roles & permissions — admin+ */}
+          <Route
+            path="roles"
+            element={
+              <RoleGuard require="can_manage_roles">
+                <RolesListPage />
+              </RoleGuard>
+            }
+          />
+
+          {/* Accounting — manager+ */}
+          <Route
+            path="accounting"
+            element={
+              <ModuleGuard module="accounting">
+                <RoleGuard require="can_view_accounting">
+                  <AccountingPage />
+                </RoleGuard>
+              </ModuleGuard>
+            }
+          />
+
+          {/* Settings — admin+ */}
+          <Route
+            path="settings"
+            element={
+              <RoleGuard require="can_manage_settings">
+                <SettingsPage />
+              </RoleGuard>
+            }
+          />
 
           {/* Super Admin only */}
           <Route
@@ -55,9 +198,26 @@ export default function Router() {
               </SuperAdminRoute>
             }
           />
+          <Route
+            path="admin/tenants/:id"
+            element={
+              <SuperAdminRoute>
+                <TenantDetailPage />
+              </SuperAdminRoute>
+            }
+          />
+          <Route
+            path="admin/plans"
+            element={
+              <SuperAdminRoute>
+                <PlanManagementPage />
+              </SuperAdminRoute>
+            }
+          />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   )
 }
+

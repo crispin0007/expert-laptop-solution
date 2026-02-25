@@ -10,15 +10,45 @@ INSTALLED_APPS += []
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '[{asctime}] {levelname} {name} | {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'loggers': {
+        # Tenant isolation / security events — always log these
+        'nexus.security': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        # General access logging
+        'nexus.access': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        # Django request errors
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+    },
 }
 
-# ── SMTP (Gmail) — dev credentials ───────────────────────────────────────────
-EMAIL_BACKEND       = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST          = 'smtp.gmail.com'
-EMAIL_PORT          = 587
-EMAIL_USE_TLS       = True
-EMAIL_HOST_USER     = 'sklearner57@gmail.com'
-EMAIL_HOST_PASSWORD = 'mnky cnob kcur josa'   # Gmail App Password
-DEFAULT_FROM_EMAIL  = 'TechYatra <sklearner57@gmail.com>'
-SERVER_EMAIL        = DEFAULT_FROM_EMAIL
+# ── SMTP — dev uses console backend by default so no SMTP credentials needed.
+# To test real email, copy .env.example → .env and set EMAIL_* vars there,
+# OR set EMAIL_BACKEND to smtp in docker-compose.yml environment section.
+EMAIL_BACKEND = os.environ.get(
+    'EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend'
+)
+# Remaining EMAIL_* vars are inherited from base.py (read from env).
 

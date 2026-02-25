@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import apiClient from '../../api/client'
 import Modal from '../../components/Modal'
@@ -20,15 +21,19 @@ function StatusBadge({ tenant }: { tenant: Tenant }) {
   return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Active</span>
 }
 
-function PlanBadge({ plan }: { plan: string }) {
+function PlanBadge({ plan }: { plan: string | { id: number; name: string; slug: string } | null }) {
+  const slug = !plan ? 'free' : typeof plan === 'string' ? plan : plan.slug
+  const label = !plan ? 'Free' : typeof plan === 'string'
+    ? plan.charAt(0).toUpperCase() + plan.slice(1)
+    : plan.name
   const cls: Record<string, string> = {
     free: 'bg-gray-100 text-gray-600',
     basic: 'bg-blue-100 text-blue-700',
     pro: 'bg-indigo-100 text-indigo-700',
   }
   return (
-    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${cls[plan] ?? 'bg-gray-100 text-gray-600'}`}>
-      {plan.charAt(0).toUpperCase() + plan.slice(1)}
+    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${cls[slug] ?? 'bg-gray-100 text-gray-600'}`}>
+      {label}
     </span>
   )
 }
@@ -166,6 +171,7 @@ export default function TenantManagementPage() {
               <th className="px-4 py-3">Plan</th>
               <th className="px-4 py-3">Currency</th>
               <th className="px-4 py-3">VAT</th>
+              <th className="px-4 py-3">Domain</th>
               <th className="px-4 py-3">Members</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Created</th>
@@ -176,13 +182,13 @@ export default function TenantManagementPage() {
 
             {isLoading && (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-gray-400">Loading tenants…</td>
+                <td colSpan={9} className="px-4 py-10 text-center text-gray-400">Loading tenants…</td>
               </tr>
             )}
 
             {!isLoading && filtered.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-10 text-center text-gray-400">
+                <td colSpan={9} className="px-4 py-10 text-center text-gray-400">
                   {search ? 'No tenants match your search.' : 'No tenants yet. Create the first one.'}
                 </td>
               </tr>
@@ -192,7 +198,9 @@ export default function TenantManagementPage() {
               <tr key={t.id} className={`hover:bg-gray-50 transition-colors ${t.is_deleted ? 'opacity-50' : ''}`}>
 
                 <td className="px-4 py-3">
-                  <p className="font-medium text-gray-900">{t.name}</p>
+                  <Link to={`/admin/tenants/${t.id}`} className="hover:underline">
+                    <p className="font-medium text-indigo-700">{t.name}</p>
+                  </Link>
                   <p className="text-xs text-gray-400 font-mono">{t.slug}</p>
                 </td>
 
@@ -204,6 +212,13 @@ export default function TenantManagementPage() {
                   {t.vat_enabled
                     ? <span className="text-gray-700">{(parseFloat(t.vat_rate) * 100).toFixed(0)}%</span>
                     : <span className="text-gray-400">Off</span>}
+                </td>
+
+                <td className="px-4 py-3 text-xs">
+                  {t.custom_domain
+                    ? <a href={`https://${t.custom_domain}`} target="_blank" rel="noreferrer"
+                        className="text-indigo-600 hover:underline font-mono">{t.custom_domain}</a>
+                    : <span className="text-gray-400 font-mono">{t.slug}.bms.techyatra.com.np</span>}
                 </td>
 
                 <td className="px-4 py-3 text-gray-600">{t.member_count}</td>

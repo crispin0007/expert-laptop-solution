@@ -7,14 +7,26 @@ const apiClient = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-// Detect tenant slug from the URL hostname (production subdomain routing)
-// els.bms.techyatra.com.np → 'els' | bms.techyatra.com.np → null (super admin)
+// Detect tenant slug from the URL hostname.
+//   test.localhost        → 'test'  (dev subdomain)
+//   localhost             → null    (dev root / super admin)
+//   els.bms.example.com  → 'els'   (prod subdomain)
+//   bms.example.com      → null    (prod root)
 function getSlugFromHostname(): string | null {
   const hostname = window.location.hostname
-  const rootDomain = import.meta.env.VITE_ROOT_DOMAIN as string | undefined
-  if (!rootDomain || hostname === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
-    return null
+
+  // Dev: any *.localhost subdomain is a tenant (e.g. test.localhost → 'test')
+  if (hostname.endsWith('.localhost')) {
+    const slug = hostname.slice(0, hostname.length - '.localhost'.length)
+    return slug || null
   }
+
+  // Bare localhost or IP → root / super admin domain
+  if (hostname === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(hostname)) return null
+
+  // Production subdomain detection via VITE_ROOT_DOMAIN
+  const rootDomain = import.meta.env.VITE_ROOT_DOMAIN as string | undefined
+  if (!rootDomain) return null
   if (hostname === rootDomain) return null // super admin root
   if (hostname.endsWith('.' + rootDomain)) {
     return hostname.slice(0, hostname.length - rootDomain.length - 1)

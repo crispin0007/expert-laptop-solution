@@ -2,6 +2,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from core.mixins import TenantMixin
+from core.permissions import make_role_permission, STAFF_ROLES, MANAGER_ROLES, ALL_ROLES
 from .models import Customer, CustomerContact
 from .serializers import CustomerSerializer, CustomerContactSerializer
 
@@ -10,13 +11,26 @@ class CustomerViewSet(TenantMixin, viewsets.ModelViewSet):
     """
     GET/POST   /api/v1/customers/        — list active / create
     GET/PUT/PATCH /api/v1/customers/{id}/ — detail / update
-    DELETE     /api/v1/customers/{id}/   — soft delete
+    DELETE     /api/v1/customers/{id}/   — soft delete (manager+)
+
+    Permissions:
+    - read: all tenant members
+    - create/update: staff+
+    - delete: manager+
     """
+    required_module = 'customers'
     serializer_class = CustomerSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+        if self.action == 'destroy':
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
 
     def get_queryset(self):
-        return Customer.objects.filter(is_deleted=False)
+        self.ensure_tenant()
+        return Customer.objects.filter(tenant=self.tenant, is_deleted=False)
 
     def perform_create(self, serializer):
         serializer.save(
@@ -32,11 +46,26 @@ class CustomerViewSet(TenantMixin, viewsets.ModelViewSet):
 
 
 class CustomerContactViewSet(TenantMixin, viewsets.ModelViewSet):
+    """Contacts inherit the parent customer's permission level."""
+
+    required_module = 'customers'
     serializer_class = CustomerContactSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+        if self.action == 'destroy':
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
 
     def get_queryset(self):
-        return CustomerContact.objects.filter(customer_id=self.kwargs['customer_pk'])
+        self.ensure_tenant()
+        # Scope contacts to the parent customer AND the current tenant to prevent
+        # a user from probing contacts across tenants by guessing customer_pk.
+        return CustomerContact.objects.filter(
+            customer_id=self.kwargs['customer_pk'],
+            customer__tenant=self.tenant,
+        )
 
     def perform_create(self, serializer):
         serializer.save(customer_id=self.kwargs['customer_pk'])

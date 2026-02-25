@@ -37,15 +37,24 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
           vat_rate: number
         }> = res.data.tenants ?? []
 
-        // Only overwrite if subdomain is missing — preserve any explicitly
-        // selected tenant (future: multi-tenant picker)
-        if (!subdomain && tenants.length > 0) {
-          setTenant({
-            subdomain: tenants[0].subdomain,
-            name: tenants[0].name,
-            vat_enabled: tenants[0].vat_enabled,
-            vat_rate: tenants[0].vat_rate,
-          })
+        // Superadmins always operate on the root domain — never pin them to a
+        // tenant subdomain, otherwise X-Tenant-Slug leaks into every request.
+        if (!res.data.is_superadmin) {
+          // Use the current subdomain (from URL/store) or fall back to first tenant
+          const resolvedSubdomain = subdomain ?? tenants[0]?.subdomain
+          const tenantMeta = tenants.find(t => t.subdomain === resolvedSubdomain) ?? tenants[0]
+          if (resolvedSubdomain && tenantMeta) {
+            // Always refresh — includes active_modules from the backend (reflects
+            // the latest plan assignment — e.g. after an admin changes the plan)
+            setTenant({
+              subdomain: tenantMeta.subdomain,
+              name: tenantMeta.name,
+              vat_enabled: tenantMeta.vat_enabled,
+              vat_rate: tenantMeta.vat_rate,
+              active_modules: res.data.active_modules ?? null,
+              plan: res.data.plan ?? null,
+            })
+          }
         }
       })
       .catch(() => {

@@ -6,6 +6,7 @@ import { Users, Plus, Search, Building2, User, Trash2, ChevronRight } from 'luci
 import apiClient from '../../api/client'
 import type { Customer } from './types'
 import CreateCustomerModal from './CreateCustomerModal'
+import { usePermissions } from '../../hooks/usePermissions'
 import Modal from '../../components/Modal'
 
 const TYPE_FILTER = ['all', 'individual', 'organization'] as const
@@ -14,6 +15,7 @@ type TypeFilter = (typeof TYPE_FILTER)[number]
 export default function CustomerListPage() {
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const { can } = usePermissions()
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
   const [showCreate, setShowCreate] = useState(false)
@@ -61,10 +63,12 @@ export default function CustomerListPage() {
             <p className="text-xs text-gray-400">{total} total</p>
           </div>
         </div>
-        <button onClick={() => setShowCreate(true)}
-          className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-sm">
-          <Plus size={15} /> Add Customer
-        </button>
+        {can('can_create_customers') && (
+          <button onClick={() => setShowCreate(true)}
+            className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-sm">
+            <Plus size={15} /> Add Customer
+          </button>
+        )}
       </div>
 
       {/* Stats */}

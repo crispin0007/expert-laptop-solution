@@ -76,7 +76,15 @@ export const STAFF = {
   DEACTIVATE: (id: number) => `/staff/${id}/deactivate/`,
   REACTIVATE: (id: number) => `/staff/${id}/reactivate/`,
   RESET_PASSWORD: (id: number) => `/staff/${id}/reset_password/`,
+  ASSIGN_ROLE: (id: number) => `/staff/${id}/assign-role/`,
   AVAILABILITY: '/staff/availability/',
+} as const
+
+export const ROLES = {
+  LIST: '/roles/',
+  DETAIL: (id: number) => `/roles/${id}/`,
+  PERMISSION_MAP: '/roles/permission-map/',
+  SEED_PRELOADS: '/roles/seed-preloads/',
 } as const
 
 export const ACCOUNTING = {
@@ -97,6 +105,30 @@ export const ACCOUNTING = {
 } as const
 
 export const SETTINGS = '/settings/' as const
+
+export const TENANTS = {
+  LIST: '/tenants/',
+  DETAIL: (id: number) => `/tenants/${id}/`,
+  SUSPEND: (id: number) => `/tenants/${id}/suspend/`,
+  ACTIVATE: (id: number) => `/tenants/${id}/activate/`,
+  MEMBERS: (id: number) => `/tenants/${id}/members/`,
+  MEMBER: (id: number, mid: number) => `/tenants/${id}/members/${mid}/`,
+  MODULE_OVERRIDES: (id: number) => `/tenants/${id}/module_overrides/`,
+  MODULE_OVERRIDE_DELETE: (tenantId: number, moduleId: number) =>
+    `/tenants/${tenantId}/module_overrides/${moduleId}/`,
+} as const
+
+export const PLANS = {
+  LIST: '/plans/',
+  DETAIL: (id: number) => `/plans/${id}/`,
+  TOGGLE_MODULE: (id: number) => `/plans/${id}/toggle_module/`,
+} as const
+
+export const MODULES = {
+  LIST: '/modules/',
+} as const
+
+
 
 export const INVENTORY = {
   PRODUCTS: '/inventory/products/',

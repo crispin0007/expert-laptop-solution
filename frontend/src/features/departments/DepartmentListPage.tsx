@@ -7,9 +7,11 @@ import Modal from '../../components/Modal'
 import CreateDepartmentModal from './CreateDepartmentModal'
 import EditDepartmentModal from './EditDepartmentModal'
 import type { Department } from './EditDepartmentModal'
+import { usePermissions } from '../../hooks/usePermissions'
 
 export default function DepartmentListPage() {
   const qc = useQueryClient()
+  const { can } = usePermissions()
   const [showCreate, setShowCreate] = useState(false)
   const [editTarget, setEditTarget] = useState<Department | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Department | null>(null)
@@ -43,10 +45,12 @@ export default function DepartmentListPage() {
             <p className="text-xs text-gray-400">{departments.length} departments</p>
           </div>
         </div>
-        <button onClick={() => setShowCreate(true)}
-          className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-sm">
-          <Plus size={15} /> New Department
-        </button>
+        {can('can_manage_departments') && (
+          <button onClick={() => setShowCreate(true)}
+            className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-sm">
+            <Plus size={15} /> New Department
+          </button>
+        )}
       </div>
 
       {/* Grid */}
@@ -68,14 +72,18 @@ export default function DepartmentListPage() {
                 <Building2 size={18} className="text-indigo-500" />
               </div>
               <div className="flex gap-1">
-                <button onClick={() => setEditTarget(d)} title="Edit"
-                  className="p-1.5 rounded hover:bg-gray-100 text-gray-400">
-                  <Pencil size={13} />
-                </button>
-                <button onClick={() => setDeleteTarget(d)} title="Delete"
-                  className="p-1.5 rounded hover:bg-red-50 text-red-400">
-                  <Trash2 size={13} />
-                </button>
+                {can('can_manage_departments') && (
+                  <>
+                    <button onClick={() => setEditTarget(d)} title="Edit"
+                      className="p-1.5 rounded hover:bg-gray-100 text-gray-400">
+                      <Pencil size={13} />
+                    </button>
+                    <button onClick={() => setDeleteTarget(d)} title="Delete"
+                      className="p-1.5 rounded hover:bg-red-50 text-red-400">
+                      <Trash2 size={13} />
+                    </button>
+                  </>
+                )}
               </div>
             </div>
             <h3 className="font-semibold text-gray-900 text-sm">{d.name}</h3>

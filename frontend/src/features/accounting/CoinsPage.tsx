@@ -7,7 +7,7 @@ import toast from 'react-hot-toast'
 import {
   CheckCircle2, XCircle, Loader2, Coins, History, Plus,
 } from 'lucide-react'
-import { useAuthStore, isManager } from '../../store/authStore'
+import { usePermissions } from '../../hooks/usePermissions'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -248,8 +248,8 @@ function StaffCoinHistoryPanel() {
 
 export default function CoinsPage() {
   const qc = useQueryClient()
-  const user = useAuthStore(s => s.user)
-  const managerView = isManager(user)
+  const { isManager, can } = usePermissions()
+  const managerView = isManager
 
   const [statusFilter, setStatusFilter] = useState<'pending' | 'approved' | 'rejected' | ''>('pending')
   const [showAwardCoins, setShowAwardCoins] = useState(false)

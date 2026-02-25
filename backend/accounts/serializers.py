@@ -48,14 +48,76 @@ class MeSerializer(serializers.ModelSerializer):
         tenant = getattr(request, 'tenant', None)
         if not tenant:
             return None
-        membership = TenantMembership.objects.filter(user=user, tenant=tenant, is_active=True).first()
+        membership = TenantMembership.objects.select_related(
+            'department', 'custom_role'
+        ).filter(user=user, tenant=tenant, is_active=True).first()
         if not membership:
             return None
+
+        role = membership.role
+        # Compute effective permissions for this role
+        # These mirror the backend ViewSet permission matrix so the UI can gate
+        # buttons/routes without additional API calls.
+        is_admin = role in ('owner', 'admin')
+        is_manager = role in ('owner', 'admin', 'manager')
+        is_staff = role in ('owner', 'admin', 'manager', 'staff')
+        is_viewer = role == 'viewer'
+
+        # Custom role: merge any explicit overrides
+        custom_perms = {}
+        if role == 'custom' and membership.custom_role:
+            custom_perms = membership.custom_role.permissions or {}
+
+        def _perm(default: bool, key: str) -> bool:
+            return custom_perms.get(key, default) if role == 'custom' else default
+
+        permissions = {
+            # Tickets
+            'can_view_tickets': _perm(True, 'tickets.view'),
+            'can_create_tickets': _perm(is_staff, 'tickets.create'),
+            'can_update_tickets': _perm(is_staff, 'tickets.update'),
+            'can_delete_tickets': _perm(is_manager, 'tickets.delete'),
+            'can_assign_tickets': _perm(is_manager, 'tickets.assign'),
+            'can_transfer_tickets': _perm(is_manager, 'tickets.transfer'),
+            'can_close_tickets': _perm(is_manager, 'tickets.close'),
+            'can_manage_ticket_types': _perm(is_admin, 'tickets.manage_types'),
+            # Customers
+            'can_view_customers': _perm(True, 'customers.view'),
+            'can_create_customers': _perm(is_staff, 'customers.create'),
+            'can_delete_customers': _perm(is_manager, 'customers.delete'),
+            # Projects
+            'can_view_projects': _perm(True, 'projects.view'),
+            'can_create_projects': _perm(is_staff, 'projects.create'),
+            'can_delete_projects': _perm(is_manager, 'projects.delete'),
+            # Departments
+            'can_view_departments': _perm(True, 'departments.view'),
+            'can_manage_departments': _perm(is_manager, 'departments.manage'),
+            # Staff
+            'can_view_staff': _perm(is_manager, 'staff.view'),
+            'can_manage_staff': _perm(is_admin, 'staff.manage'),
+            # Inventory
+            'can_view_inventory': _perm(True, 'inventory.view'),
+            'can_manage_inventory': _perm(is_admin, 'inventory.manage'),
+            # Accounting
+            'can_view_accounting': _perm(is_manager, 'accounting.view'),
+            'can_manage_accounting': _perm(is_admin, 'accounting.manage'),
+            # Coins
+            'can_view_coins': _perm(True, 'coins.view'),
+            'can_approve_coins': _perm(is_manager, 'coins.approve'),
+            # Settings & roles
+            'can_manage_settings': _perm(is_admin, 'settings.manage'),
+            'can_manage_roles': _perm(is_admin, 'roles.manage'),
+        }
+
         return {
-            'role': membership.role,
+            'role': role,
+            'role_display': membership.get_role_display(),
             'is_admin': membership.is_admin,
             'department': membership.department_id,
+            'department_name': membership.department.name if membership.department else None,
             'employee_id': membership.employee_id,
+            'staff_number': membership.staff_number,
+            'permissions': permissions,
         }
 
     def get_tenants(self, user):
@@ -98,11 +160,15 @@ class StaffMembershipSerializer(serializers.ModelSerializer):
     """Membership details nested inside a staff profile response."""
     department_name = serializers.CharField(source='department.name', read_only=True)
     role_display = serializers.CharField(source='get_role_display', read_only=True)
+    custom_role_id = serializers.IntegerField(source='custom_role.id', read_only=True)
+    custom_role_name = serializers.CharField(source='custom_role.name', read_only=True)
 
     class Meta:
         model = TenantMembership
         fields = (
-            'id', 'role', 'role_display', 'department', 'department_name',
+            'id', 'role', 'role_display',
+            'custom_role_id', 'custom_role_name',
+            'department', 'department_name',
             'employee_id', 'staff_number', 'join_date', 'is_admin', 'is_active',
         )
 

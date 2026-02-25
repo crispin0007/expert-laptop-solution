@@ -31,20 +31,25 @@ export function useLogin() {
       })
       setUser(me.data)
 
-      // Auto-select the first tenant membership so X-Tenant-Slug is sent on all requests
-      const tenants: Array<{
-        subdomain: string
-        name: string
-        vat_enabled: boolean
-        vat_rate: number
-      }> = me.data.tenants ?? []
-      if (tenants.length > 0) {
-        setTenant({
-          subdomain: tenants[0].subdomain,
-          name: tenants[0].name,
-          vat_enabled: tenants[0].vat_enabled,
-          vat_rate: tenants[0].vat_rate,
-        })
+      // Superadmins operate on the root domain — never pin them to a tenant subdomain.
+      // Only set the tenant context for regular tenant members.
+      if (!me.data.is_superadmin) {
+        const tenants: Array<{
+          subdomain: string
+          name: string
+          vat_enabled: boolean
+          vat_rate: number
+        }> = me.data.tenants ?? []
+        if (tenants.length > 0) {
+          setTenant({
+            subdomain: tenants[0].subdomain,
+            name: tenants[0].name,
+            vat_enabled: tenants[0].vat_enabled,
+            vat_rate: tenants[0].vat_rate,
+            active_modules: me.data.active_modules ?? null,
+            plan: me.data.plan ?? null,
+          })
+        }
       }
     },
   })

@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import apiClient from '../../api/client'
 import Modal from '../../components/Modal'
 import { Eye, EyeOff } from 'lucide-react'
+import { PLANS } from '../../api/endpoints'
 
 interface Props {
   open: boolean
@@ -13,11 +14,12 @@ interface Props {
 interface FormData {
   name: string
   slug: string
-  plan: 'free' | 'basic' | 'pro'
+  plan: string   // plan slug used for display; plan_id sent on submit
   currency: string
   vat_enabled: boolean
   vat_rate: string
   coin_to_money_rate: string
+  custom_domain: string
   admin_email: string
   admin_full_name: string
   admin_password: string
@@ -31,6 +33,7 @@ const defaultForm: FormData = {
   vat_enabled: true,
   vat_rate: '0.13',
   coin_to_money_rate: '1.0',
+  custom_domain: '',
   admin_email: '',
   admin_full_name: '',
   admin_password: '',
@@ -50,6 +53,16 @@ export default function CreateTenantModal({ open, onClose }: Props) {
   const [form, setForm] = useState<FormData>(defaultForm)
   const [showPassword, setShowPassword] = useState(false)
   const [createdCreds, setCreatedCreds] = useState<{ email: string; password: string } | null>(null)
+
+  // Fetch plans to build slug → id map
+  const { data: plansData } = useQuery<{ id: number; name: string; slug: string }[]>({
+    queryKey: ['plans'],
+    queryFn: () => apiClient.get(PLANS.LIST).then((r) => {
+      const d = r.data
+      return Array.isArray(d) ? d : d.results ?? []
+    }),
+  })
+  const planSlugToId = Object.fromEntries((plansData ?? []).map((p) => [p.slug, p.id]))
 
   function set<K extends keyof FormData>(key: K, value: FormData[K]) {
     setForm((f) => ({ ...f, [key]: value }))
@@ -78,14 +91,16 @@ export default function CreateTenantModal({ open, onClose }: Props) {
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
+    const planId = planSlugToId[form.plan]
     mutation.mutate({
       name: form.name,
       slug: form.slug || toSlug(form.name),
-      plan: form.plan,
+      ...(planId ? { plan_id: planId } : {}),
       currency: form.currency,
       vat_enabled: form.vat_enabled,
       vat_rate: parseFloat(form.vat_rate),
       coin_to_money_rate: parseFloat(form.coin_to_money_rate),
+      custom_domain: form.custom_domain.trim() || null,
       admin_email: form.admin_email || undefined,
       admin_full_name: form.admin_full_name || undefined,
       admin_password: form.admin_password || undefined,
@@ -167,18 +182,33 @@ export default function CreateTenantModal({ open, onClose }: Props) {
           <p className="mt-1 text-xs text-gray-400">Lowercase letters, numbers, and hyphens only.</p>
         </div>
 
+        {/* Custom Domain */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Custom Domain <span className="text-gray-400 font-normal">(optional)</span></label>
+          <input
+            type="text"
+            value={form.custom_domain}
+            onChange={(e) => set('custom_domain', e.target.value.toLowerCase().trim())}
+            placeholder="bms.els.com"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <p className="mt-1 text-xs text-gray-400">
+            Tenant must point their DNS A record to this server. Leave blank to use the default subdomain.
+          </p>
+        </div>
+
         {/* Plan + Currency */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Plan</label>
             <select
               value={form.plan}
-              onChange={(e) => set('plan', e.target.value as FormData['plan'])}
+              onChange={(e) => set('plan', e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             >
-              <option value="free">Free</option>
-              <option value="basic">Basic</option>
-              <option value="pro">Pro</option>
+              {(plansData ?? [{ id: 0, name: 'Free', slug: 'free' }, { id: 0, name: 'Basic', slug: 'basic' }, { id: 0, name: 'Pro', slug: 'pro' }]).map((p) => (
+                <option key={p.slug} value={p.slug}>{p.name}</option>
+              ))}
             </select>
           </div>
           <div>

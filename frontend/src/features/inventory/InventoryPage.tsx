@@ -8,6 +8,7 @@ import {
   Plus, Pencil, Loader2, PackageX, Package, Tag, BarChart2,
   DollarSign, Info, CheckCircle2, XCircle, Globe,
 } from 'lucide-react'
+import { usePermissions } from '../../hooks/usePermissions'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -228,10 +229,18 @@ function ProductModal({
   )
 
   const mutation = useMutation({
-    mutationFn: () =>
-      initial
-        ? apiClient.patch(INVENTORY.PRODUCT_DETAIL(initial.id), form)
-        : apiClient.post(INVENTORY.PRODUCTS, form),
+    mutationFn: () => {
+      // Sanitize: DRF rejects '' for FK/integer/decimal fields — coerce to null/0 as appropriate
+      const payload = {
+        ...form,
+        category:      form.category      === '' ? null : form.category,  // nullable FK
+        reorder_level: form.reorder_level === '' ? 0    : form.reorder_level, // non-null int, default 0
+        cost_price:    form.cost_price    === '' ? '0'  : form.cost_price,    // non-null decimal, default 0
+      }
+      return initial
+        ? apiClient.patch(INVENTORY.PRODUCT_DETAIL(initial.id), payload)
+        : apiClient.post(INVENTORY.PRODUCTS, payload)
+    },
     onSuccess: () => { toast.success(initial ? 'Product updated' : 'Product created'); onSaved() },
     onError: () => toast.error('Failed to save product'),
   })
@@ -346,6 +355,7 @@ function ProductModal({
 export default function InventoryPage() {
   const qc = useQueryClient()
   const [showAdd, setShowAdd]               = useState(false)
+  const { can } = usePermissions()
   const [editProduct, setEditProduct]       = useState<Product | null>(null)
   const [detailProduct, setDetailProduct]   = useState<Product | null>(null)
   const [categoryFilter, setCategoryFilter] = useState<number | ''>('')
@@ -406,12 +416,14 @@ export default function InventoryPage() {
           </h1>
           <p className="text-xs text-gray-400 mt-0.5">Products and stock levels</p>
         </div>
-        <button
-          onClick={() => setShowAdd(true)}
-          className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition"
-        >
-          <Plus size={15} /> Add Product
-        </button>
+        {can('can_manage_inventory') && (
+          <button
+            onClick={() => setShowAdd(true)}
+            className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition"
+          >
+            <Plus size={15} /> Add Product
+          </button>
+        )}
       </div>
 
       {/* Summary cards */}

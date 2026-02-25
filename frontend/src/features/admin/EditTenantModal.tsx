@@ -1,18 +1,20 @@
 import { useState, useEffect, type FormEvent } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import apiClient from '../../api/client'
 import Modal from '../../components/Modal'
+import { PLANS } from '../../api/endpoints'
 
 export interface Tenant {
   id: number
   name: string
   slug: string
-  plan: 'free' | 'basic' | 'pro'
+  plan: { id: number; name: string; slug: string; module_keys: string[] } | null
   currency: string
   vat_enabled: boolean
   vat_rate: string
   coin_to_money_rate: string
+  custom_domain: string | null
   is_active: boolean
   is_deleted: boolean
   member_count: number
@@ -30,23 +32,35 @@ export default function EditTenantModal({ open, onClose, tenant }: Props) {
   const [form, setForm] = useState({
     name: '',
     slug: '',
-    plan: 'free' as 'free' | 'basic' | 'pro',
+    planSlug: 'free' as string,
     currency: 'NPR',
     vat_enabled: true,
     vat_rate: '0.13',
     coin_to_money_rate: '1.0',
+    custom_domain: '',
   })
+
+  // Fetch all plans to build a slug → id map for the submit payload
+  const { data: plansData } = useQuery<{ id: number; name: string; slug: string }[]>({
+    queryKey: ['plans'],
+    queryFn: () => apiClient.get(PLANS.LIST).then((r) => {
+      const d = r.data
+      return Array.isArray(d) ? d : d.results ?? []
+    }),
+  })
+  const planSlugToId = Object.fromEntries((plansData ?? []).map((p) => [p.slug, p.id]))
 
   useEffect(() => {
     if (tenant) {
       setForm({
         name: tenant.name,
         slug: tenant.slug,
-        plan: tenant.plan,
+        planSlug: tenant.plan?.slug ?? 'free',
         currency: tenant.currency,
         vat_enabled: tenant.vat_enabled,
         vat_rate: String(tenant.vat_rate),
         coin_to_money_rate: String(tenant.coin_to_money_rate),
+        custom_domain: tenant.custom_domain ?? '',
       })
     }
   }, [tenant])
@@ -60,6 +74,7 @@ export default function EditTenantModal({ open, onClose, tenant }: Props) {
     onSuccess: () => {
       toast.success('Tenant updated')
       qc.invalidateQueries({ queryKey: ['admin', 'tenants'] })
+      qc.invalidateQueries({ queryKey: ['admin', 'tenant'] })
       onClose()
     },
     onError: (err: any) => {
@@ -73,15 +88,19 @@ export default function EditTenantModal({ open, onClose, tenant }: Props) {
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
-    mutation.mutate({
+    const payload: Record<string, unknown> = {
       name: form.name,
       slug: form.slug,
-      plan: form.plan,
       currency: form.currency,
       vat_enabled: form.vat_enabled,
       vat_rate: parseFloat(form.vat_rate),
       coin_to_money_rate: parseFloat(form.coin_to_money_rate),
-    })
+      custom_domain: form.custom_domain.trim() || null,
+    }
+    // Backend write field is plan_id (PrimaryKeyRelatedField)
+    const planId = planSlugToId[form.planSlug]
+    if (planId) payload.plan_id = planId
+    mutation.mutate(payload)
   }
 
   if (!tenant) return null
@@ -126,18 +145,31 @@ export default function EditTenantModal({ open, onClose, tenant }: Props) {
           </p>
         </div>
 
-        {/* Plan + Currency */}
+        {/* Custom Domain */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Custom Domain <span className="text-gray-400 font-normal">(optional)</span></label>
+          <input
+            type="text"
+            value={form.custom_domain}
+            onChange={(e) => set('custom_domain', e.target.value.toLowerCase().trim())}
+            placeholder="bms.els.com"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <p className="mt-1 text-xs text-gray-400">
+            Tenant must point their DNS A record to this server. Leave blank to use the default subdomain.
+          </p>
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Plan</label>
             <select
-              value={form.plan}
-              onChange={(e) => set('plan', e.target.value as typeof form.plan)}
+              value={form.planSlug}
+              onChange={(e) => set('planSlug', e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             >
-              <option value="free">Free</option>
-              <option value="basic">Basic</option>
-              <option value="pro">Pro</option>
+              {(plansData ?? [{ id: 0, name: 'Free', slug: 'free' }, { id: 0, name: 'Basic', slug: 'basic' }, { id: 0, name: 'Pro', slug: 'pro' }]).map((p) => (
+                <option key={p.slug} value={p.slug}>{p.name}</option>
+              ))}
             </select>
           </div>
           <div>

@@ -6,6 +6,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework.exceptions import AuthenticationFailed
+from .tokens import TenantRefreshToken
 
 from .models import User, TenantMembership
 from .serializers import (
@@ -14,7 +18,157 @@ from .serializers import (
     StaffSerializer, InviteStaffSerializer, UpdateStaffSerializer,
 )
 from core.mixins import TenantMixin
-from core.permissions import TenantRolePermission
+from core.permissions import (
+    TenantRolePermission, make_role_permission,
+    ALL_ROLES, STAFF_ROLES, MANAGER_ROLES, ADMIN_ROLES,
+)
+
+
+class TenantTokenObtainPairView(TokenObtainPairView):
+    """
+    Tenant-aware JWT login — the ONLY place tokens are issued.
+
+    Security model
+    ──────────────
+    Every token carries a cryptographically signed `tenant_id` claim.
+    TenantJWTAuthentication (accounts/authentication.py) validates this
+    claim on EVERY subsequent request — at the authentication layer, before
+    any view or permission class runs.
+
+    This means:
+      • A token issued for tenant A is rejected on tenant B — backend enforced.
+      • A main-domain token is rejected on any tenant workspace.
+      • No frontend, header, proxy, or custom client can bypass this.
+
+    Login rules
+    ───────────
+      Main domain (no tenant):  only superusers may log in → token has tenant_id=None
+      Tenant subdomain:         only active workspace members may log in → token has tenant_id=<id>
+      Superuser on tenant:      rejected — superusers are root-domain only
+      Staff on root domain:     rejected — staff must use workspace URL
+    """
+
+    def post(self, request, *args, **kwargs):
+        # Step 1: validate credentials using SimpleJWT's serializer
+        serializer = TokenObtainPairSerializer(
+            data=request.data,
+            context=self.get_serializer_context(),
+        )
+        try:
+            serializer.is_valid(raise_exception=True)
+        except Exception:
+            raise AuthenticationFailed('Invalid email or password.')
+
+        user = serializer.user
+        tenant = getattr(request, 'tenant', None)
+
+        # Step 2: domain / membership gate
+        if tenant is None:
+            # Root domain — superusers only. Staff must use their workspace URL.
+            if not user.is_superuser:
+                raise AuthenticationFailed(
+                    'Staff accounts must log in via your workspace URL. '
+                    'Please use <your-company>.nexusbms.com to sign in.'
+                )
+        else:
+            # Tenant subdomain — superusers are root-domain accounts and must
+            # NOT log in here. Only active workspace members may log in.
+            if user.is_superuser:
+                raise AuthenticationFailed(
+                    'Super-admin accounts must log in from the main domain, '
+                    'not a workspace URL.'
+                )
+            is_member = TenantMembership.objects.filter(
+                user=user,
+                tenant=tenant,
+                is_active=True,
+            ).exists()
+            if not is_member:
+                raise AuthenticationFailed(
+                    'You are not a member of this workspace. '
+                    'Contact your administrator.'
+                )
+
+        # Step 3: issue tenant-scoped tokens
+        # tenant_id is embedded in the JWT payload and validated on every request
+        # by TenantJWTAuthentication — no client-side value can override this.
+        refresh = TenantRefreshToken.for_user_and_tenant(user, tenant)
+
+        return Response({
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+        })
+
+
+class TenantTokenRefreshView(TokenRefreshView):
+    """
+    Tenant-aware token refresh.
+
+    Wraps SimpleJWT's TokenRefreshView to ensure the new access token is
+    issued via TenantRefreshToken so the tenant_id claim is preserved in
+    the rotated tokens.  Without this, the default RefreshToken class would
+    strip the custom claim from the refreshed access token.
+    """
+
+    def post(self, request, *args, **kwargs):
+        raw_refresh = request.data.get('refresh', '')
+        if not raw_refresh:
+            raise AuthenticationFailed('Refresh token is required.')
+
+        try:
+            # Instantiate as TenantRefreshToken so access_token_class = TenantAccessToken
+            old_refresh = TenantRefreshToken(raw_refresh)
+        except TokenError as exc:
+            raise AuthenticationFailed(str(exc))
+
+        # Validate tenant claim consistency:
+        # The refresh token must have been issued for the current tenant.
+        request_tenant = getattr(request, 'tenant', None)
+        token_tenant_id = old_refresh.get('tenant_id', 'MISSING')
+
+        if token_tenant_id == 'MISSING':
+            raise AuthenticationFailed('Token is missing the tenant_id claim. Please log in again.')
+
+        if request_tenant is None and token_tenant_id is not None:
+            raise AuthenticationFailed('This token belongs to a tenant workspace.')
+
+        if request_tenant is not None:
+            if token_tenant_id is None or token_tenant_id != request_tenant.id:
+                raise AuthenticationFailed('This token belongs to a different workspace.')
+
+        # Issue a new access token (and rotate the refresh token)
+        data = {'access': str(old_refresh.access_token)}
+
+        if old_refresh.get('jti'):
+            # Blacklist the old refresh token and issue a new one (ROTATE_REFRESH_TOKENS=True)
+            try:
+                old_refresh.blacklist()
+            except Exception:
+                pass  # token_blacklist app may not be installed
+            new_refresh = TenantRefreshToken.for_user_and_tenant(
+                request._request.user if hasattr(request, '_request') else request.user,
+                request_tenant,
+            ) if False else _rotate_refresh(old_refresh, request_tenant)
+            data['refresh'] = str(new_refresh)
+
+        return Response(data)
+
+
+def _rotate_refresh(old_token: TenantRefreshToken, tenant) -> TenantRefreshToken:
+    """Create a rotated refresh token preserving the tenant_id claim."""
+    from rest_framework_simplejwt.tokens import BlacklistMixin
+    from datetime import timezone as tz, datetime
+
+    # Build a new refresh token carrying the same user + tenant
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    try:
+        user_id = old_token['user_id']
+        user = User.objects.get(pk=user_id)
+        return TenantRefreshToken.for_user_and_tenant(user, tenant)
+    except Exception:
+        # Fallback: return a plain new token from the old one
+        return old_token
 
 
 class MeView(APIView):
@@ -24,7 +178,30 @@ class MeView(APIView):
 
     def get(self, request):
         serializer = MeSerializer(request.user, context={'request': request})
-        return Response(serializer.data)
+        data = dict(serializer.data)
+        # Tell the frontend which domain context this request came from.
+        # Main domain (no tenant resolved) → super admin portal.
+        # Tenant domain → normal workspace.
+        is_main = getattr(request, 'is_main_domain', request.tenant is None)
+        data['domain_type'] = 'main' if is_main else 'tenant'
+        data['is_main_domain'] = is_main
+
+        # Include active modules so the frontend can gate routes/sidebar
+        # without additional API calls.  Superadmin on root → all modules.
+        tenant = getattr(request, 'tenant', None)
+        if tenant is not None:
+            data['active_modules'] = sorted(tenant.active_modules_set)
+            data['plan'] = {
+                'id': tenant.plan_id,
+                'name': tenant.plan.name if tenant.plan else None,
+                'slug': tenant.plan.slug if tenant.plan else None,
+            }
+        else:
+            # Root domain / superadmin — no scoped module restriction
+            data['active_modules'] = None  # None means "all" in the frontend
+            data['plan'] = None
+
+        return Response(data)
 
 
 class LogoutView(APIView):
@@ -80,16 +257,26 @@ class StaffAvailabilityView(TenantMixin, APIView):
 
 
 class UserViewSet(TenantMixin, viewsets.ReadOnlyModelViewSet):
+    """Read-only user listing — members of the current tenant only."""
+
     queryset = User.objects.all()
     serializer_class = UserSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*MANAGER_ROLES)]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        member_ids = TenantMembership.objects.filter(
+            tenant=self.tenant, is_active=True,
+        ).values_list('user_id', flat=True)
+        return User.objects.filter(id__in=member_ids)
 
 
 class TenantMembershipViewSet(TenantMixin, viewsets.ModelViewSet):
+    """Tenant membership management — admin+ only."""
+
     queryset = TenantMembership.objects.all()
     serializer_class = TenantMembershipSerializer
-    permission_classes = [permissions.IsAuthenticated, TenantRolePermission]
-    required_roles = ['owner', 'admin']
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*ADMIN_ROLES)]
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -103,16 +290,22 @@ class TenantMembershipViewSet(TenantMixin, viewsets.ModelViewSet):
 
 class StaffViewSet(TenantMixin, viewsets.ViewSet):
     """
-    GET  /api/v1/staff/                         — list all staff (active + inactive) in this tenant
-    POST /api/v1/staff/                         — invite (create) a new staff member
-    GET  /api/v1/staff/{pk}/                    — staff profile + membership detail
-    PATCH/PUT /api/v1/staff/{pk}/               — update profile + membership
-    POST /api/v1/staff/{pk}/deactivate/         — deactivate membership (blocks login)
-    POST /api/v1/staff/{pk}/reactivate/         — reactivate membership + send email
-    POST /api/v1/staff/{pk}/reset_password/     — admin resets a staff member's password
+    GET  /api/v1/staff/                         — list all staff (manager+)
+    POST /api/v1/staff/                         — invite a new staff member (admin+)
+    GET  /api/v1/staff/{pk}/                    — staff profile + membership detail (manager+)
+    PATCH/PUT /api/v1/staff/{pk}/               — update profile + membership (admin+)
+    POST /api/v1/staff/{pk}/deactivate/         — deactivate membership (admin+)
+    POST /api/v1/staff/{pk}/reactivate/         — reactivate membership (admin+)
+    POST /api/v1/staff/{pk}/reset_password/     — admin resets password (admin+)
     """
-    permission_classes = [permissions.IsAuthenticated]
     _NOT_FOUND = {'detail': 'Not found.'}
+
+    def get_permissions(self):
+        """Read actions: manager+. Write/admin actions: admin+."""
+        read_actions = ('list', 'retrieve', 'generate_employee_id')
+        if self.action in read_actions:
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
     def _get_tenant_staff(self, tenant):
         """Return User queryset for ALL members of this tenant (active + inactive)."""
@@ -275,3 +468,69 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
                 pass
 
         return Response({'detail': f'Password reset. Email sent to {user.email}.'})
+
+    @action(detail=True, methods=['post'], url_path='assign-role')
+    def assign_role(self, request, pk=None):
+        """
+        POST /api/v1/staff/{id}/assign-role/
+
+        Assign or change the role for a staff member in this tenant.
+
+        Body (one of):
+            { "role": "manager" }                          — system role
+            { "role": "custom", "custom_role_id": 7 }     — custom/preload role
+
+        System roles: owner, admin, manager, staff, viewer
+        Custom roles: any Role object belonging to this tenant
+                      (Finance, Technician, HR, etc.)
+        """
+        self.ensure_tenant()
+        try:
+            membership = TenantMembership.objects.select_related('user').get(
+                user_id=pk, tenant=self.tenant
+            )
+        except TenantMembership.DoesNotExist:
+            return Response(self._NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+
+        role = request.data.get('role', '').strip()
+        valid_system_roles = ['owner', 'admin', 'manager', 'staff', 'viewer', 'custom']
+        if role not in valid_system_roles:
+            return Response(
+                {'detail': f'Invalid role. Choose from: {", ".join(valid_system_roles)}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if role == 'custom':
+            custom_role_id = request.data.get('custom_role_id')
+            if not custom_role_id:
+                return Response(
+                    {'detail': 'custom_role_id is required when role is "custom".'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            from roles.models import Role as CustomRole
+            try:
+                custom_role = CustomRole.objects.get(pk=custom_role_id, tenant=self.tenant)
+            except CustomRole.DoesNotExist:
+                return Response(
+                    {'detail': 'Custom role not found in this workspace.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            membership.role = 'custom'
+            membership.custom_role = custom_role
+        else:
+            membership.role = role
+            membership.custom_role = None
+
+        membership.save(update_fields=['role', 'custom_role'])
+        cache.delete(f'staff_availability_{self.tenant.pk}')
+
+        role_display = (
+            membership.custom_role.name if membership.custom_role else membership.role
+        )
+        return Response({
+            'detail': f'Role updated to "{role_display}" for {membership.user.email}.',
+            'user_id': membership.user_id,
+            'role': membership.role,
+            'custom_role_id': membership.custom_role_id,
+            'custom_role_name': membership.custom_role.name if membership.custom_role else None,
+        })

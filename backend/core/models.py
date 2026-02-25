@@ -1,40 +1,22 @@
 from django.db import models
 from django.conf import settings
-from django.utils import timezone
-import contextvars
-
-# Module-level contextvar to hold current tenant for TenantManager
-_current_tenant = contextvars.ContextVar('current_tenant', default=None)
-
-
-def get_current_tenant():
-    return _current_tenant.get()
-
-
-def set_current_tenant(tenant):
-    _current_tenant.set(tenant)
 
 
 class TenantManager(models.Manager):
-    """Manager that filters by current tenant when available.
-
-    Note: This manager expects TenantMiddleware to set the current tenant
-    through core.middleware.set_current_tenant.
     """
-
-    def get_queryset(self):
-        qs = super().get_queryset()
-        tenant = get_current_tenant()
-        if tenant is not None:
-            # assume models using this manager have a `tenant` FK
-            return qs.filter(tenant=tenant)
-        return qs
+    Default manager for all TenantModel subclasses.
+    Does NOT auto-filter — filtering is done explicitly in TenantMixin
+    via request.tenant to avoid thread-local / contextvar state bugs.
+    """
+    pass
 
 
 class TenantModel(models.Model):
-    """Abstract base model for tenant-scoped models.
+    """Abstract base for every tenant-scoped model.
 
-    Fields: tenant (FK to tenants.Tenant), created_at, updated_at, created_by
+    Fields: tenant (FK to tenants.Tenant), created_at, updated_at, created_by.
+    Tenant filtering is enforced at the view layer by TenantMixin,
+    NOT by this manager, to avoid implicit global state.
     """
 
     tenant = models.ForeignKey(
@@ -58,11 +40,3 @@ class TenantModel(models.Model):
 
     class Meta:
         abstract = True
-
-    def save(self, *args, **kwargs):
-        # if tenant is not set and we have a current tenant, set it automatically
-        if not self.tenant:
-            tenant = get_current_tenant()
-            if tenant is not None:
-                self.tenant = tenant
-        super().save(*args, **kwargs)

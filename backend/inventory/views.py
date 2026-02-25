@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from core.mixins import TenantMixin
+from core.permissions import make_role_permission, ADMIN_ROLES, ALL_ROLES
 from .models import Category, Product, ProductImage, StockLevel, StockMovement
 from .serializers import (
     CategorySerializer, CategoryTreeSerializer,
@@ -19,12 +20,19 @@ class ProductPagination(PageNumberPagination):
 
 
 class CategoryViewSet(TenantMixin, viewsets.ModelViewSet):
+    """Inventory categories: read=all, write=admin+."""
+
+    required_module = 'inventory'
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve', 'tree'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        serializer.save(tenant=self.tenant, created_by=self.request.user)
 
     @action(detail=False, methods=['get'], url_path='tree')
     def tree(self, request):
@@ -34,18 +42,24 @@ class CategoryViewSet(TenantMixin, viewsets.ModelViewSet):
 
 
 class ProductImageViewSet(TenantMixin, viewsets.ModelViewSet):
+    required_module = 'inventory'
     serializer_class = ProductImageSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
     def get_queryset(self):
-        qs = ProductImage.objects.filter(product__tenant=self.request.tenant)
+        self.ensure_tenant()
+        qs = ProductImage.objects.filter(tenant=self.tenant)
         product_id = self.request.query_params.get('product')
         if product_id:
             qs = qs.filter(product_id=product_id)
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        serializer.save(tenant=self.tenant, created_by=self.request.user)
 
     @action(detail=True, methods=['post'], url_path='set-primary')
     def set_primary(self, request, pk=None):
@@ -57,9 +71,11 @@ class ProductImageViewSet(TenantMixin, viewsets.ModelViewSet):
 
 
 class ProductViewSet(TenantMixin, viewsets.ModelViewSet):
+    """Products: read=all, write=admin+."""
+
+    required_module = 'inventory'
     queryset = Product.objects.filter(is_deleted=False).select_related('category', 'stock_level').prefetch_related('images')
     serializer_class = ProductSerializer
-    permission_classes = [permissions.IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter, DjangoFilterBackend]
     search_fields = ['name', 'sku', 'barcode', 'brand', 'description']
     ordering_fields = ['name', 'unit_price', 'created_at']
@@ -67,8 +83,13 @@ class ProductViewSet(TenantMixin, viewsets.ModelViewSet):
     filterset_fields = ['category', 'is_service', 'is_active']
     pagination_class = ProductPagination
 
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        serializer.save(tenant=self.tenant, created_by=self.request.user)
 
     def list(self, request, *args, **kwargs):
         """Override list to support ?all=true for lightweight autocomplete lists."""
@@ -81,15 +102,22 @@ class ProductViewSet(TenantMixin, viewsets.ModelViewSet):
 
 class StockLevelViewSet(TenantMixin, viewsets.ReadOnlyModelViewSet):
     """Stock levels are read-only; they are managed by signals."""
+    required_module = 'inventory'
     queryset = StockLevel.objects.select_related('product')
     serializer_class = StockLevelSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*ALL_ROLES)]
 
 
 class StockMovementViewSet(TenantMixin, viewsets.ModelViewSet):
+    """Stock movements: read=all, write=admin+."""
+    required_module = 'inventory'
     queryset = StockMovement.objects.select_related('product').order_by('-created_at')
     serializer_class = StockMovementSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        serializer.save(tenant=self.tenant, created_by=self.request.user)

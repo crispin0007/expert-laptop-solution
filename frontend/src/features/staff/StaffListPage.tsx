@@ -8,11 +8,14 @@ import InviteStaffModal from './InviteStaffModal'
 import EditStaffModal from './EditStaffModal'
 import ResetPasswordModal from './ResetPasswordModal'
 import Modal from '../../components/Modal'
+import { usePermissions } from '../../hooks/usePermissions'
 
 interface StaffMembership {
   id: number
   role: string
   role_display: string
+  custom_role_id: number | null
+  custom_role_name: string | null
   department: number | null
   department_name: string
   employee_id: string
@@ -35,7 +38,14 @@ interface StaffMember {
 
 interface Department { id: number; name: string }
 
-function RoleBadge({ role }: { role: string }) {
+function RoleBadge({ role, customRoleName }: { role: string; customRoleName?: string | null }) {
+  if (customRoleName) {
+    return (
+      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-teal-100 text-teal-700">
+        {customRoleName}
+      </span>
+    )
+  }
   const cls: Record<string, string> = {
     owner: 'bg-purple-100 text-purple-700',
     admin: 'bg-indigo-100 text-indigo-700',
@@ -52,6 +62,7 @@ function RoleBadge({ role }: { role: string }) {
 
 export default function StaffListPage() {
   const qc = useQueryClient()
+  const { can } = usePermissions()
   const [search, setSearch] = useState('')
   const [showInvite, setShowInvite] = useState(false)
   const [editTarget, setEditTarget] = useState<StaffMember | null>(null)
@@ -129,10 +140,12 @@ export default function StaffListPage() {
             className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
             <RefreshCw size={14} /> Refresh
           </button>
-          <button onClick={() => setShowInvite(true)}
-            className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-sm">
-            <Plus size={15} /> Invite Staff
-          </button>
+          {can('can_manage_staff') && (
+            <button onClick={() => setShowInvite(true)}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 shadow-sm">
+              <Plus size={15} /> Invite Staff
+            </button>
+          )}
         </div>
       </div>
 
@@ -198,7 +211,9 @@ export default function StaffListPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    {s.membership ? <RoleBadge role={s.membership.role} /> : '—'}
+                    {s.membership ? (
+                      <RoleBadge role={s.membership.role} customRoleName={s.membership.custom_role_name} />
+                    ) : '—'}
                     {s.membership?.is_admin && (
                       <span className="ml-1 px-1.5 py-0.5 text-xs bg-amber-100 text-amber-700 rounded-full">Admin</span>
                     )}
@@ -218,24 +233,28 @@ export default function StaffListPage() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-1">
-                      <button title="Edit staff member" onClick={() => setEditTarget(s)}
-                        className="p-1.5 rounded hover:bg-indigo-50 text-indigo-400">
-                        <Pencil size={14} />
-                      </button>
-                      <button title="Reset password" onClick={() => setResetTarget(s)}
-                        className="p-1.5 rounded hover:bg-amber-50 text-amber-400">
-                        <KeyRound size={14} />
-                      </button>
-                      {s.membership?.is_active !== false ? (
-                        <button title="Deactivate — blocks login" onClick={() => setDeactivateTarget(s)}
-                          className="p-1.5 rounded hover:bg-red-50 text-red-400">
-                          <PowerOff size={14} />
-                        </button>
-                      ) : (
-                        <button title="Reactivate — restore login" onClick={() => setReactivateTarget(s)}
-                          className="p-1.5 rounded hover:bg-green-50 text-green-500">
-                          <RotateCcw size={14} />
-                        </button>
+                      {can('can_manage_staff') && (
+                        <>
+                          <button title="Edit staff member" onClick={() => setEditTarget(s)}
+                            className="p-1.5 rounded hover:bg-indigo-50 text-indigo-400">
+                            <Pencil size={14} />
+                          </button>
+                          <button title="Reset password" onClick={() => setResetTarget(s)}
+                            className="p-1.5 rounded hover:bg-amber-50 text-amber-400">
+                            <KeyRound size={14} />
+                          </button>
+                          {s.membership?.is_active !== false ? (
+                            <button title="Deactivate — blocks login" onClick={() => setDeactivateTarget(s)}
+                              className="p-1.5 rounded hover:bg-red-50 text-red-400">
+                              <PowerOff size={14} />
+                            </button>
+                          ) : (
+                            <button title="Reactivate — restore login" onClick={() => setReactivateTarget(s)}
+                              className="p-1.5 rounded hover:bg-green-50 text-green-500">
+                              <RotateCcw size={14} />
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
                   </td>

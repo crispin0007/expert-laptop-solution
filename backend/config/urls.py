@@ -7,15 +7,29 @@ from core import views as core_views
 from tenants.views import TenantSettingsView
 
 
-class SuperUserAdminSite(AdminSite):
-    """Restrict Django admin to platform superusers only (is_superuser=True).
-    Tenant admins/staff cannot access /admin/ even if is_staff=True."""
+class MainDomainOnlyAdminSite(AdminSite):
+    """
+    Restricts Django admin to two conditions simultaneously:
+      1. User must be a Django superuser (is_superuser=True).
+      2. Request must come from the main domain (request.tenant is None).
+
+    Accessing /admin/ from a tenant subdomain is blocked at the middleware level
+    (returns 404 before Django routing even runs). This class is a second line
+    of defence in case the middleware is bypassed (e.g. direct WSGI call).
+    """
 
     def has_permission(self, request):
-        return bool(request.user and request.user.is_active and request.user.is_superuser)
+        # Must be an active superuser
+        if not (request.user and request.user.is_active and request.user.is_superuser):
+            return False
+        # Must be on the main domain — block even if a superuser somehow hits
+        # this from a tenant domain (e.g. through a misconfigured proxy).
+        if getattr(request, 'tenant', None) is not None:
+            return False
+        return True
 
 
-admin.site.__class__ = SuperUserAdminSite
+admin.site.__class__ = MainDomainOnlyAdminSite
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -42,6 +56,10 @@ urlpatterns = [
 
     # Tenant settings (coin rate, VAT, currency) — accessible by tenant admin/manager
     path('api/v1/settings/', TenantSettingsView.as_view(), name='tenant-settings'),
+
+    # Subscription plans + modules (super admin only)
+    path('api/v1/plans/', include('tenants.plan_urls')),
+    path('api/v1/modules/', include('tenants.module_urls')),
 
     # Sprint 5
     path('api/v1/projects/', include('projects.urls')),

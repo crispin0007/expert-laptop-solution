@@ -11,7 +11,7 @@ import {
 import apiClient from '../../api/client'
 import { TICKETS, ACCOUNTING, INVENTORY, DEPARTMENTS } from '../../api/endpoints'
 import Modal from '../../components/Modal'
-import { useAuthStore, isManager } from '../../store/authStore'
+import { usePermissions } from '../../hooks/usePermissions'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -625,8 +625,8 @@ export default function TicketDetailPage() {
   const ticketId = Number(id)
   const qc = useQueryClient()
 
-  const user = useAuthStore((s) => s.user)
-  const managerView = isManager(user)
+  const { isManager, can } = usePermissions()
+  const managerView = isManager
 
   const [commentBody, setCommentBody] = useState('')
   const [isInternal, setIsInternal] = useState(false)

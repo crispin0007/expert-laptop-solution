@@ -3,26 +3,46 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from core.mixins import TenantMixin
+from core.permissions import make_role_permission, STAFF_ROLES, MANAGER_ROLES, ALL_ROLES
 from .models import Project, ProjectMilestone, ProjectTask, ProjectProduct, ProjectAttachment
 from .serializers import (
     ProjectSerializer, ProjectMilestoneSerializer,
     ProjectTaskSerializer, ProjectProductSerializer, ProjectAttachmentSerializer,
 )
 
+# Shared helper to avoid repeating the same three-liner
+_READ_PERMS = lambda: [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+_STAFF_PERMS = lambda: [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
+_MANAGER_PERMS = lambda: [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+
 
 class ProjectViewSet(TenantMixin, viewsets.ModelViewSet):
+    """Project CRUD: read=all, write=staff+, delete=manager+."""
+
+    required_module = 'projects'
     queryset = Project.objects.filter(is_deleted=False).select_related('customer', 'manager')
     serializer_class = ProjectSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return _READ_PERMS()
+        if self.action == 'destroy':
+            return _MANAGER_PERMS()
+        return _STAFF_PERMS()
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        serializer.save(tenant=self.tenant, created_by=self.request.user)
 
 
 class ProjectMilestoneViewSet(TenantMixin, viewsets.ModelViewSet):
+    required_module = 'projects'
     queryset = ProjectMilestone.objects.select_related('project')
     serializer_class = ProjectMilestoneSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return _READ_PERMS()
+        return _STAFF_PERMS()
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -47,9 +67,14 @@ class ProjectMilestoneViewSet(TenantMixin, viewsets.ModelViewSet):
 
 
 class ProjectTaskViewSet(TenantMixin, viewsets.ModelViewSet):
+    required_module = 'projects'
     queryset = ProjectTask.objects.select_related('project', 'milestone', 'assigned_to')
     serializer_class = ProjectTaskSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return _READ_PERMS()
+        return _STAFF_PERMS()
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -94,9 +119,14 @@ class ProjectTaskViewSet(TenantMixin, viewsets.ModelViewSet):
 
 
 class ProjectProductViewSet(TenantMixin, viewsets.ModelViewSet):
+    required_module = 'projects'
     queryset = ProjectProduct.objects.select_related('product', 'project')
     serializer_class = ProjectProductSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return _READ_PERMS()
+        return _STAFF_PERMS()
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -113,9 +143,16 @@ class ProjectProductViewSet(TenantMixin, viewsets.ModelViewSet):
 
 class ProjectAttachmentViewSet(TenantMixin, viewsets.ModelViewSet):
     """File attachments for a project."""
+    required_module = 'projects'
     serializer_class = ProjectAttachmentSerializer
-    permission_classes = [permissions.IsAuthenticated]
     http_method_names = ['get', 'post', 'delete', 'head', 'options']
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return _READ_PERMS()
+        if self.action == 'destroy':
+            return _MANAGER_PERMS()
+        return _STAFF_PERMS()
 
     def get_queryset(self):
         self.ensure_tenant()

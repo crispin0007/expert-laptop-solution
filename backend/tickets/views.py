@@ -13,6 +13,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from core.mixins import TenantMixin
+from core.permissions import make_role_permission, ALL_ROLES, STAFF_ROLES, MANAGER_ROLES, ADMIN_ROLES
 from .models import (
     Ticket, TicketType, TicketComment, TicketTransfer,
     TicketProduct, TicketSLA, TicketTimeline, TicketAttachment,
@@ -32,13 +33,21 @@ User = get_user_model()
 # ── Ticket Type ───────────────────────────────────────────────────────────────
 
 class TicketTypeViewSet(TenantMixin, viewsets.ModelViewSet):
-    """CRUD for ticket types scoped to the current tenant."""
+    """CRUD for ticket types scoped to the current tenant.
 
+    Permissions: read=all members, write/delete=admin+.
+    """
+
+    required_module = 'tickets'
     serializer_class = TicketTypeSerializer
-    permission_classes = [permissions.IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name']
     ordering_fields = ['name', 'created_at']
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -71,12 +80,20 @@ class TicketTypeViewSet(TenantMixin, viewsets.ModelViewSet):
 # ── Ticket Category ───────────────────────────────────────────────────────────
 
 class TicketCategoryViewSet(TenantMixin, viewsets.ModelViewSet):
-    """CRUD for ticket categories (admin-defined per tenant)."""
+    """CRUD for ticket categories (admin-defined per tenant).
 
-    permission_classes = [permissions.IsAuthenticated]
+    Permissions: read=all members, write/delete=admin+.
+    """
+
+    required_module = 'tickets'
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name']
     ordering_fields = ['name', 'created_at']
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve', 'subcategories'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
     def get_serializer_class(self):
         if self.request.method in ('POST', 'PUT', 'PATCH'):
@@ -103,12 +120,20 @@ class TicketCategoryViewSet(TenantMixin, viewsets.ModelViewSet):
 
 
 class TicketSubCategoryViewSet(TenantMixin, viewsets.ModelViewSet):
-    """CRUD for ticket subcategories — always scoped to a parent category + tenant."""
+    """CRUD for ticket subcategories — always scoped to a parent category + tenant.
 
+    Permissions: read=all members, write/delete=admin+.
+    """
+
+    required_module = 'tickets'
     serializer_class = TicketSubCategorySerializer
-    permission_classes = [permissions.IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name']
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -129,12 +154,27 @@ class TicketViewSet(TenantMixin, viewsets.ModelViewSet):
     Full ticket lifecycle:
       list / create / retrieve / update / partial_update / destroy
       + assign, transfer, status, timeline, sla-breached, sla-warning actions.
+
+    Permissions:
+    - read (list, retrieve, timeline, sla-*): all members
+    - create / update / change_status:        staff+
+    - destroy / assign / transfer / close:    manager+
     """
 
-    permission_classes = [permissions.IsAuthenticated]
+    required_module = 'tickets'
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['title', 'ticket_number', 'description']
     ordering_fields = ['created_at', 'priority', 'status', 'sla_deadline']
+
+    def get_permissions(self):
+        # Read-only actions — every tenant member
+        if self.action in ('list', 'retrieve', 'timeline', 'sla_breached', 'sla_warning'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+        # Write actions needing manager or above
+        if self.action in ('destroy', 'assign', 'transfer', 'close_ticket'):
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        # create / update / partial_update / change_status — staff+
+        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
 
     def get_serializer_class(self):
         if self.action in ('create', 'update', 'partial_update'):
@@ -579,10 +619,16 @@ class TicketCommentViewSet(TenantMixin, viewsets.ModelViewSet):
     Comments on a ticket — nested under /tickets/{ticket_pk}/comments/.
 
     Internal comments (is_internal=True) are only visible to staff members.
+    Permissions: read=all members (internal filtered for viewers), write=staff+.
     """
 
+    required_module = 'tickets'
     serializer_class = TicketCommentSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -627,8 +673,9 @@ class TicketTransferViewSet(TenantMixin, viewsets.ReadOnlyModelViewSet):
     Transfers are created via POST /tickets/{id}/transfer/ on TicketViewSet.
     """
 
+    required_module = 'tickets'
     serializer_class = TicketTransferSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*ALL_ROLES)]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -646,10 +693,19 @@ class TicketProductViewSet(TenantMixin, viewsets.ModelViewSet):
     Supports two routing patterns:
       GET/POST  /api/v1/tickets/{ticket_pk}/products/   (nested under a ticket)
       GET/…     /api/v1/tickets/products/               (flat — all ticket products)
+
+    Permissions: read=all members, write=staff+, delete=manager+.
     """
 
+    required_module = 'tickets'
     serializer_class = TicketProductSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+        if self.action == 'destroy':
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -710,10 +766,11 @@ class TicketProductViewSet(TenantMixin, viewsets.ModelViewSet):
 # ── SLA ───────────────────────────────────────────────────────────────────────
 
 class TicketSLAViewSet(TenantMixin, viewsets.ReadOnlyModelViewSet):
-    """Read-only SLA records — one per ticket."""
+    """Read-only SLA records — one per ticket. Visible to all tenant members."""
 
+    required_module = 'tickets'
     serializer_class = TicketSLASerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*ALL_ROLES)]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -725,11 +782,21 @@ class TicketSLAViewSet(TenantMixin, viewsets.ReadOnlyModelViewSet):
 # ── Attachment ────────────────────────────────────────────────────────────────
 
 class TicketAttachmentViewSet(TenantMixin, viewsets.ModelViewSet):
-    """File attachments on tickets or comments."""
+    """File attachments on tickets or comments.
 
+    Permissions: read=all members, upload=staff+, delete=manager+.
+    """
+
+    required_module = 'tickets'
     serializer_class = TicketAttachmentSerializer
-    permission_classes = [permissions.IsAuthenticated]
     http_method_names = ['get', 'post', 'delete', 'head', 'options']
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+        if self.action == 'destroy':
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
 
     def get_queryset(self):
         self.ensure_tenant()

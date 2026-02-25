@@ -78,4 +78,9 @@ coverage.xml
 
 # Uploads
 uploads/
-server.key
+
+# SSL / private keys — never commit
+*.key
+*.pem
+*.crt
+firebase-credentials.json

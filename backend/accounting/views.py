@@ -3,6 +3,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from core.mixins import TenantMixin
+from core.permissions import make_role_permission, ALL_ROLES, STAFF_ROLES, MANAGER_ROLES, ADMIN_ROLES
 from .models import CoinTransaction, Payslip, Invoice
 from .serializers import CoinTransactionSerializer, PayslipSerializer, InvoiceSerializer
 
@@ -23,11 +24,27 @@ class CoinTransactionViewSet(TenantMixin, viewsets.ModelViewSet):
     GET  /coins/pending/                — shorthand: all pending transactions
     POST /coins/award/                  — manually award coins to a staff member (manager+)
     GET  /coins/staff/{staff_id}/       — coin history for a staff member (alias for ?staff=)
+
+    Permissions
+    -----------
+    - list/retrieve: all members (auto-filtered to own coins for non-managers)
+    - create: staff+
+    - approve/reject/award/pending: manager+
+    - destroy: admin+
     """
 
     queryset = CoinTransaction.objects.select_related('staff', 'approved_by')
     serializer_class = CoinTransactionSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    required_module = 'accounting'
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+        if self.action in ('approve', 'reject', 'pending', 'award', 'staff_coins'):
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        if self.action == 'destroy':
+            return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -37,6 +54,9 @@ class CoinTransactionViewSet(TenantMixin, viewsets.ModelViewSet):
             qs = qs.filter(status=s)
         if staff_id := params.get('staff'):
             qs = qs.filter(staff_id=staff_id)
+        # Non-managers (staff/viewer) can only see their own coin transactions
+        elif not self.is_manager_role():
+            qs = qs.filter(staff=self.request.user)
         return qs.order_by('-created_at')
 
     def perform_create(self, serializer):
@@ -186,12 +206,23 @@ class CoinTransactionViewSet(TenantMixin, viewsets.ModelViewSet):
 
 
 class PayslipViewSet(TenantMixin, viewsets.ModelViewSet):
+    """Payslips: read=manager+, write=admin+."""
+
+    required_module = 'accounting'
     queryset = Payslip.objects.select_related('staff')
     serializer_class = PayslipSerializer
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        return Payslip.objects.filter(tenant=self.tenant).select_related('staff').order_by('-created_at')
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        serializer.save(tenant=self.tenant, created_by=self.request.user)
 
 
 class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
@@ -202,11 +233,18 @@ class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
     POST /api/v1/accounting/invoices/generate-from-ticket/ — build from ticket products
     POST /api/v1/accounting/invoices/<id>/mark-paid/      — mark invoice as paid
     Supports ?status=draft|issued|paid|void filtering.
+
+    Permissions: read=manager+, write=admin+.
     """
 
     queryset = Invoice.objects.select_related('customer', 'ticket', 'project')
     serializer_class = InvoiceSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    required_module = 'accounting'
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
     def get_queryset(self):
         self.ensure_tenant()
