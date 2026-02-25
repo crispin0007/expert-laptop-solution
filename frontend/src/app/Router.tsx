@@ -26,7 +26,6 @@ import ProjectDetailPage from '../features/projects/ProjectDetailPage'
 import CustomerListPage from '../features/customers/CustomerListPage'
 import CustomerDetailPage from '../features/customers/CustomerDetailPage'
 import AccountingPage from '../features/accounting/AccountingPage'
-import CoinsPage from '../features/accounting/CoinsPage'
 import InventoryPage from '../features/inventory/InventoryPage'
 import DepartmentListPage from '../features/departments/DepartmentListPage'
 import StaffListPage from '../features/staff/StaffListPage'
@@ -125,14 +124,10 @@ export default function Router() {
             }
           />
 
-          {/* Accounting module */}
+          {/* Accounting module — /coins redirects to the Payslips & Coins tab */}
           <Route
             path="coins"
-            element={
-              <ModuleGuard module="accounting">
-                <CoinsPage />
-              </ModuleGuard>
-            }
+            element={<Navigate to="/accounting?tab=payslips" replace />}
           />
 
           {/* Ticket type admin — admin+ */}

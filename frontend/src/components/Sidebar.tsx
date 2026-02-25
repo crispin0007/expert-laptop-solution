@@ -28,6 +28,9 @@ import {
   BarChart2,
   ArrowLeftRight,
   CheckSquare,
+  FileText,
+  CreditCard,
+  BookOpen,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { useTenantStore } from '../store/tenantStore'
@@ -285,10 +288,18 @@ function SidebarContent({
               </NavSection>
             )}
             {modules.has('accounting') && perms.can('can_view_accounting') && (
-              <NavItem to="/accounting" label="Accounting" icon={Receipt}      collapsed={collapsed} />
-            )}
-            {modules.has('accounting') && perms.can('can_view_coins') && (
-              <NavItem to="/coins"      label="Coins"      icon={Coins}        collapsed={collapsed} />
+              <NavSection label="Accounting" icon={Receipt} basePath="/accounting" collapsed={collapsed}>
+                <SubNavItem to="/accounting"                      label="Dashboard"          icon={<LayoutDashboard size={13} />} />
+                <SubNavItem to="/accounting?tab=invoices"         label="Invoices"           icon={<Receipt         size={13} />} />
+                <SubNavItem to="/accounting?tab=bills"            label="Bills"              icon={<FileText        size={13} />} />
+                <SubNavItem to="/accounting?tab=payments"         label="Payments"           icon={<CreditCard      size={13} />} />
+                <SubNavItem to="/accounting?tab=credit-notes"     label="Credit Notes"       icon={<RotateCcw       size={13} />} />
+                <SubNavItem to="/accounting?tab=journals"         label="Journal Entries"    icon={<BookOpen        size={13} />} />
+                <SubNavItem to="/accounting?tab=accounts"         label="Chart of Accounts"  icon={<Layers          size={13} />} />
+                <SubNavItem to="/accounting?tab=banks"            label="Bank Accounts"      icon={<Building2       size={13} />} />
+                <SubNavItem to="/accounting?tab=payslips"         label="Payslips & Coins"   icon={<Coins           size={13} />} />
+                <SubNavItem to="/accounting?tab=reports"          label="Reports"            icon={<BarChart2       size={13} />} />
+              </NavSection>
             )}
             {modules.has('inventory') && perms.can('can_view_inventory') && (
               <NavSection label="Inventory" icon={Package} basePath="/inventory" collapsed={collapsed}>

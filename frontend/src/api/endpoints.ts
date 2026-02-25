@@ -88,20 +88,72 @@ export const ROLES = {
 } as const
 
 export const ACCOUNTING = {
+  // ── Chart of Accounts ───────────────────────────────────────────────────
+  ACCOUNTS: '/accounting/accounts/',
+  ACCOUNT_DETAIL: (id: number) => `/accounting/accounts/${id}/`,
+  ACCOUNTS_TRIAL_BALANCE: '/accounting/accounts/trial-balance/',
+
+  // ── Bank Accounts ────────────────────────────────────────────────────────
+  BANK_ACCOUNTS: '/accounting/bank-accounts/',
+  BANK_ACCOUNT_DETAIL: (id: number) => `/accounting/bank-accounts/${id}/`,
+
+  // ── Journal Entries ──────────────────────────────────────────────────────
+  JOURNALS: '/accounting/journals/',
+  JOURNAL_DETAIL: (id: number) => `/accounting/journals/${id}/`,
+  JOURNAL_POST: (id: number) => `/accounting/journals/${id}/post/`,
+
+  // ── Bills ────────────────────────────────────────────────────────────────
+  BILLS: '/accounting/bills/',
+  BILL_DETAIL: (id: number) => `/accounting/bills/${id}/`,
+  BILL_APPROVE: (id: number) => `/accounting/bills/${id}/approve/`,
+  BILL_VOID: (id: number) => `/accounting/bills/${id}/void/`,
+  BILL_MARK_PAID: (id: number) => `/accounting/bills/${id}/mark-paid/`,
+
+  // ── Payments ─────────────────────────────────────────────────────────────
+  PAYMENTS: '/accounting/payments/',
+  PAYMENT_DETAIL: (id: number) => `/accounting/payments/${id}/`,
+
+  // ── Credit Notes ─────────────────────────────────────────────────────────
+  CREDIT_NOTES: '/accounting/credit-notes/',
+  CREDIT_NOTE_DETAIL: (id: number) => `/accounting/credit-notes/${id}/`,
+  CREDIT_NOTE_ISSUE: (id: number) => `/accounting/credit-notes/${id}/issue/`,
+  CREDIT_NOTE_APPLY: (id: number) => `/accounting/credit-notes/${id}/apply/`,
+  CREDIT_NOTE_VOID: (id: number) => `/accounting/credit-notes/${id}/void/`,
+
+  // ── Reports ───────────────────────────────────────────────────────────────
+  REPORT_PL: '/accounting/reports/profit-loss/',
+  REPORT_BALANCE_SHEET: '/accounting/reports/balance-sheet/',
+  REPORT_TRIAL_BALANCE: '/accounting/reports/trial-balance/',
+  REPORT_AGED_RECEIVABLES: '/accounting/reports/aged-receivables/',
+  REPORT_AGED_PAYABLES: '/accounting/reports/aged-payables/',
+  REPORT_VAT: '/accounting/reports/vat-report/',
+  REPORT_CASH_FLOW: '/accounting/reports/cash-flow/',
+
+  // ── Coins ─────────────────────────────────────────────────────────────────
   COINS: '/accounting/coins/',
   COIN_DETAIL: (id: number) => `/accounting/coins/${id}/`,
   COIN_APPROVE: (id: number) => `/accounting/coins/${id}/approve/`,
   COIN_REJECT: (id: number) => `/accounting/coins/${id}/reject/`,
+  COINS_PENDING: '/accounting/coins/pending/',
+  COINS_AWARD: '/accounting/coins/award/',
+  COINS_STAFF_HISTORY: (staffId: number) => `/accounting/coins/staff/${staffId}/`,
+
+  // ── Payslips ──────────────────────────────────────────────────────────────
+  PAYSLIPS: '/accounting/payslips/',
+  PAYSLIP_DETAIL: (id: number) => `/accounting/payslips/${id}/`,
+  PAYSLIP_GENERATE: '/accounting/payslips/generate/',
+  PAYSLIP_ISSUE: (id: number) => `/accounting/payslips/${id}/issue/`,
+  PAYSLIP_MARK_PAID: (id: number) => `/accounting/payslips/${id}/mark-paid/`,
+
+  // ── Invoices ──────────────────────────────────────────────────────────────
   INVOICES: '/accounting/invoices/',
   INVOICE_DETAIL: (id: number) => `/accounting/invoices/${id}/`,
   INVOICE_GENERATE: '/accounting/invoices/generate/',
   INVOICE_GENERATE_FROM_TICKET: '/accounting/invoices/generate-from-ticket/',
   INVOICE_MARK_PAID: (id: number) => `/accounting/invoices/${id}/mark-paid/`,
   INVOICE_VOID: (id: number) => `/accounting/invoices/${id}/void/`,
-  PAYSLIPS: '/accounting/payslips/',
-  COINS_PENDING: '/accounting/coins/pending/',
-  COINS_AWARD: '/accounting/coins/award/',
-  COINS_STAFF_HISTORY: (staffId: number) => `/accounting/coins/staff/${staffId}/`,
+  INVOICE_PDF: (id: number) => `/accounting/invoices/${id}/pdf/`,
+  INVOICE_SEND: (id: number) => `/accounting/invoices/${id}/send/`,
 } as const
 
 export const SETTINGS = '/settings/' as const
