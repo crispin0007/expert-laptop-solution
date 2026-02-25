@@ -99,17 +99,21 @@ services:
         VITE_ROOT_DOMAIN: ${VITE_ROOT_DOMAIN}
     restart: unless-stopped
 
-  nginx:
-    image: nginx:alpine
+  caddy:
+    image: caddy:2-alpine
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
+      - "443:443/udp"  # HTTP/3
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - static_volume:/usr/src/app/staticfiles:ro
-      - media_volume:/usr/src/app/media:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./nginx/Caddyfile:/etc/caddy/Caddyfile:ro
+      - static_volume:/srv/staticfiles:ro
+      - media_volume:/srv/media:ro
+      - caddy_data:/data              # cert storage — must be persistent
+      - caddy_config:/config
+    environment:
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
     depends_on:
       - web
       - frontend
@@ -119,3 +123,5 @@ volumes:
   redis_data:
   static_volume:
   media_volume:
+  caddy_data:
+  caddy_config:

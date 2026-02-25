@@ -1,0 +1,111 @@
+{
+    # Let's Encrypt contact email
+    email {$ADMIN_EMAIL}
+
+    # Disable Caddy admin API (not needed in prod)
+    admin off
+
+    # On-demand TLS: call Django to verify a domain is a registered tenant
+    # before issuing a certificate. This is what makes custom domains automatic.
+    on_demand_tls {
+        ask http://web:8000/internal/verify-domain/
+        interval 2m
+        burst 5
+    }
+}
+
+# ─── HTTP → HTTPS redirect ────────────────────────────────────────────────────
+http:// {
+    redir https://{host}{uri} permanent
+}
+
+# ─── Root domain (super-admin — /admin/ allowed) ─────────────────────────────
+https://bms.techyatra.com.np {
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' wss:; frame-ancestors 'none'"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+    }
+
+    handle_path /static/* {
+        root * /srv/staticfiles
+        file_server
+    }
+
+    handle_path /media/* {
+        root * /srv/media
+        file_server
+    }
+
+    handle /api/* {
+        reverse_proxy web:8000
+    }
+
+    handle /admin/* {
+        reverse_proxy web:8000
+    }
+
+    handle /health/* {
+        reverse_proxy web:8000
+    }
+
+    handle /internal/* {
+        respond 404
+    }
+
+    handle {
+        reverse_proxy frontend:80
+    }
+}
+
+# ─── All tenant subdomains + custom domains (on-demand TLS, /admin/ blocked) ──
+https:// {
+    tls {
+        on_demand
+    }
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' wss:; frame-ancestors 'none'"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+    }
+
+    # Block Django admin panel on all tenant domains
+    handle /admin/* {
+        respond 404
+    }
+
+    handle_path /static/* {
+        root * /srv/staticfiles
+        file_server
+    }
+
+    handle_path /media/* {
+        root * /srv/media
+        file_server
+    }
+
+    handle /api/* {
+        reverse_proxy web:8000
+    }
+
+    handle /health/* {
+        reverse_proxy web:8000
+    }
+
+    handle /internal/* {
+        respond 404
+    }
+
+    handle {
+        reverse_proxy frontend:80
+    }
+}

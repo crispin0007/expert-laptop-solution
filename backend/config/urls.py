@@ -4,7 +4,7 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from core import views as core_views
-from tenants.views import TenantSettingsView
+from tenants.views import TenantSettingsView, verify_domain
 
 
 class MainDomainOnlyAdminSite(AdminSite):
@@ -35,6 +35,10 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/v1/', include('rest_framework.urls')),
     path('health/', core_views.health_check),
+    # Caddy on-demand TLS: checks if a domain should receive a certificate.
+    # This endpoint is only reachable from the internal Docker network (port 8000
+    # is not exposed publicly) so no auth is required.
+    path('internal/verify-domain/', verify_domain, name='verify-domain'),
 
     # Sprint 1
     path('api/v1/accounts/', include('accounts.urls')),

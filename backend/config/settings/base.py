@@ -5,6 +5,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'replace-me')
 
+# Root domain for subdomain resolution and Caddy cert verification
+ROOT_DOMAIN = os.environ.get('ROOT_DOMAIN', 'bms.techyatra.com.np')
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',

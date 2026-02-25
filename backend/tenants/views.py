@@ -1,6 +1,8 @@
 from django.core.cache import cache
 from django.db.models import Count
+from django.http import HttpResponse
 from django.utils import timezone
+from django.views.decorators.http import require_GET
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -429,3 +431,35 @@ class TenantSettingsView(TenantMixin, APIView):
         serializer.save()
         cache.delete(f'tenant_slug_{self.tenant.slug}')
         return Response(serializer.data)
+
+
+@require_GET
+def verify_domain(request):
+    """
+    Called by Caddy on-demand TLS before issuing a certificate for any domain.
+    Returns 200 if the domain is allowed (our root domain, a known subdomain,
+    or a registered tenant custom domain), 403 otherwise.
+
+    This endpoint is ONLY reachable from the internal Docker network (port 8000
+    is never publicly exposed). No authentication is required.
+    """
+    from django.conf import settings
+    domain = request.GET.get('domain', '').strip().lower()
+    if not domain:
+        return HttpResponse(status=400)
+
+    root_domain = getattr(settings, 'ROOT_DOMAIN', '').lower()
+
+    # Allow the root domain itself
+    if domain == root_domain:
+        return HttpResponse(status=200)
+
+    # Allow any subdomain of the root domain (e.g. els.bms.techyatra.com.np)
+    if root_domain and domain.endswith(f'.{root_domain}'):
+        return HttpResponse(status=200)
+
+    # Allow registered tenant custom domains
+    if Tenant.objects.filter(custom_domain=domain, is_active=True).exists():
+        return HttpResponse(status=200)
+
+    return HttpResponse(status=403)
