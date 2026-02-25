@@ -1,6 +1,6 @@
 from rest_framework.routers import DefaultRouter
 from django.urls import path, include
-from .views import TenantViewSet, TenantSettingsView, PlanViewSet, ModuleViewSet
+from .views import TenantViewSet, TenantSettingsView, PlanViewSet, ModuleViewSet, tenant_public_info
 
 # Tenant CRUD + nested member/module actions
 tenant_router = DefaultRouter()
@@ -14,6 +14,7 @@ module_router = DefaultRouter()
 module_router.register(r'', ModuleViewSet, basename='module')
 
 urlpatterns = [
+    path('public-info/', tenant_public_info, name='tenant-public-info'),
     path('', include(tenant_router.urls)),
 ]
 

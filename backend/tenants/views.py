@@ -63,9 +63,19 @@ class TenantViewSet(viewsets.ModelViewSet):
                 pwd = admin_password or secrets.token_urlsafe(12)
                 user.set_password(pwd)
                 user.save()
-                # Attach generated password to response via a custom attribute
-                tenant._admin_password = pwd
-                tenant._admin_email = admin_email
+            else:
+                # User already exists — apply password if explicitly provided
+                if admin_password:
+                    pwd = admin_password
+                    user.set_password(pwd)
+                    user.save(update_fields=['password'])
+                else:
+                    pwd = secrets.token_urlsafe(12)
+                    user.set_password(pwd)
+                    user.save(update_fields=['password'])
+            # Always attach credentials to response so admin knows the password
+            tenant._admin_password = pwd
+            tenant._admin_email = admin_email
             # Link as owner membership
             TenantMembership.objects.get_or_create(
                 user=user,
@@ -201,9 +211,21 @@ class TenantViewSet(viewsets.ModelViewSet):
             pwd = password or secrets.token_urlsafe(12)
             user.set_password(pwd)
             user.save()
-        elif full_name and not user.full_name:
-            user.full_name = full_name
-            user.save(update_fields=['full_name'])
+        else:
+            # User already exists — update fields if provided
+            save_fields = []
+            if password:
+                # Admin explicitly set a password — apply it
+                user.set_password(password)
+                pwd = password
+                save_fields.append('password')
+            else:
+                pwd = None  # existing user, no password change
+            if full_name and not user.full_name:
+                user.full_name = full_name
+                save_fields.append('full_name')
+            if save_fields:
+                user.save(update_fields=save_fields)
 
         membership, mem_created = TenantMembership.objects.get_or_create(
             user=user,
@@ -227,7 +249,7 @@ class TenantViewSet(viewsets.ModelViewSet):
             'join_date': membership.join_date,
             'created_at': membership.created_at,
         }
-        if created:
+        if pwd:
             response_data['generated_password'] = pwd
 
         return Response(response_data, status=status.HTTP_201_CREATED)
@@ -463,3 +485,20 @@ def verify_domain(request):
         return HttpResponse(status=200)
 
     return HttpResponse(status=403)
+
+
+@require_GET
+def tenant_public_info(request):
+    """
+    Returns minimal public info about the current tenant (resolved from the
+    Host header by TenantMiddleware).  No authentication required — used by
+    the login page to display the tenant's company name.
+
+    Returns 200 + JSON  {"name": "...", "slug": "..."} on a tenant domain.
+    Returns 404 when called from the root domain (no tenant context).
+    """
+    from django.http import JsonResponse
+    tenant = getattr(request, 'tenant', None)
+    if tenant is None:
+        return JsonResponse({'detail': 'No tenant context.'}, status=404)
+    return JsonResponse({'name': tenant.name, 'slug': tenant.slug})

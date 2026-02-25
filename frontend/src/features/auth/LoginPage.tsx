@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useState, useEffect, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLogin } from './useLogin'
 import { useAuthStore } from '../../store/authStore'
@@ -9,6 +9,14 @@ export default function LoginPage() {
   const login = useLogin()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [tenantName, setTenantName] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch('/api/v1/tenants/public-info/')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (data?.name) setTenantName(data.name) })
+      .catch(() => {})
+  }, [])
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -34,7 +42,9 @@ export default function LoginPage() {
       <div className="bg-white rounded-2xl shadow-lg p-10 w-full max-w-md">
         {/* Logo / Brand */}
         <div className="mb-8 text-center">
-          <h1 className="text-3xl font-bold text-indigo-600 tracking-tight">TechYatra</h1>
+          <h1 className="text-3xl font-bold text-indigo-600 tracking-tight">
+            {tenantName ?? 'NEXUS BMS'}
+          </h1>
           <p className="text-gray-500 mt-1 text-sm">Sign in to your workspace</p>
         </div>
 
@@ -46,7 +56,7 @@ export default function LoginPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="admin@techyatra.com"
+              placeholder="your@email.com"
               className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
             />
           </div>
@@ -72,10 +82,7 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {/* Dev hint */}
-        <p className="mt-6 text-center text-xs text-gray-400">
-          Super admin: <span className="font-mono">info@techyatra.com.np</span>
-        </p>
+
       </div>
     </div>
   )
