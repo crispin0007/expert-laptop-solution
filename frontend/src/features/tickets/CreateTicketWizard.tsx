@@ -904,6 +904,7 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
     setState(prev => {
       if (prev.title === '' || prev.title === autoTitleRef.current) {
         autoTitleRef.current = generated
+        if (prev.title === generated) return prev  // no-op — prevents infinite re-render loop
         return { ...prev, title: generated }
       }
       return prev

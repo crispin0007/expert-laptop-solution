@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import {
   Ticket as TicketIcon, Plus, Search, Filter, AlertCircle,
@@ -90,6 +90,7 @@ function SLABadge({ breached, deadline }: { breached: boolean; deadline: string 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function TicketListPage() {
+  const navigate = useNavigate()
   const qc = useQueryClient()
 
   const { can } = usePermissions()
@@ -289,15 +290,10 @@ export default function TicketListPage() {
             {filtered.map(ticket => (
               <tr
                 key={ticket.id}
-                className="relative hover:bg-indigo-50 transition-colors cursor-pointer"
+                onClick={() => navigate(`/tickets/${ticket.id}`)}
+                className="hover:bg-indigo-50 transition-colors cursor-pointer"
               >
                 <td className="px-4 py-3.5 font-mono text-indigo-600 font-medium text-xs">
-                  {/* Stretched link covers the entire row */}
-                  <Link
-                    to={`/tickets/${ticket.id}`}
-                    className="absolute inset-0 z-0"
-                    aria-label={ticket.ticket_number}
-                  />
                   {ticket.ticket_number}
                 </td>
                 <td className="px-4 py-3.5 max-w-xs">
