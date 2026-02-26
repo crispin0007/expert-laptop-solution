@@ -1,6 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
+    VehicleViewSet, VehicleLogViewSet,
     TicketViewSet, TicketTypeViewSet, TicketCommentViewSet,
     TicketTransferViewSet, TicketProductViewSet, TicketSLAViewSet,
     TicketAttachmentViewSet, TicketCategoryViewSet, TicketSubCategoryViewSet,
@@ -14,6 +15,8 @@ router.register(r'sla', TicketSLAViewSet, basename='ticket-sla')
 router.register(r'transfers', TicketTransferViewSet, basename='ticket-transfer')
 router.register(r'products', TicketProductViewSet, basename='ticket-product')
 router.register(r'attachments', TicketAttachmentViewSet, basename='ticket-attachment')
+router.register(r'vehicles', VehicleViewSet, basename='vehicle')
+router.register(r'vehicle-logs', VehicleLogViewSet, basename='vehicle-log')
 router.register(r'', TicketViewSet, basename='ticket')
 
 urlpatterns = [

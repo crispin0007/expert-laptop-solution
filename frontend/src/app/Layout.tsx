@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Outlet } from 'react-router-dom'
+import { useState, useRef, useEffect } from 'react'
+import { Outlet, useLocation } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
 import NotificationBell from '../components/NotificationBell'
 import { useAuthStore } from '../store/authStore'
@@ -9,6 +9,13 @@ export default function Layout() {
   const user = useAuthStore(s => s.user)
   const [collapsed, setCollapsed]     = useState(false)
   const [mobileOpen, setMobileOpen]   = useState(false)
+  const mainRef = useRef<HTMLElement>(null)
+  const location = useLocation()
+
+  // Reset scroll to top on every route change
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior })
+  }, [location.pathname])
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -42,7 +49,7 @@ export default function Layout() {
           )}
         </header>
 
-        <main className="flex-1 overflow-auto p-6 md:p-8">
+        <main ref={mainRef} className="flex-1 overflow-auto p-6 md:p-8">
           <Outlet />
         </main>
       </div>

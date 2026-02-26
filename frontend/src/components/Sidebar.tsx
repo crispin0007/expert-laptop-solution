@@ -31,6 +31,12 @@ import {
   FileText,
   CreditCard,
   BookOpen,
+  FilePlus,
+  FileCheck,
+  Banknote,
+  RefreshCcw,
+  Calendar,
+  BookMarked,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { useTenantStore } from '../store/tenantStore'
@@ -107,6 +113,57 @@ function SubNavItem({ to, label, icon }: { to: string; label: string; icon?: Rea
       {icon && <span className="shrink-0 opacity-75">{icon}</span>}
       <span className="truncate">{label}</span>
     </Link>
+  )
+}
+
+// ── Collapsible sub-section (2nd level, lives inside NavSection) ───────────────
+
+function NavSubSection({
+  label,
+  icon,
+  matchTabs,
+  children,
+}: {
+  label: string
+  icon?: React.ReactNode
+  /** Query-string tab values that count as "active" for this group */
+  matchTabs?: string[]
+  children: React.ReactNode
+}) {
+  const location = useLocation()
+  const curP = new URLSearchParams(location.search)
+  const currentTab = curP.get('tab') ?? ''
+  const isOnGroup = matchTabs ? matchTabs.includes(currentTab) : false
+  const [open, setOpen] = useState(isOnGroup)
+
+  useEffect(() => { if (isOnGroup) setOpen(true) }, [isOnGroup])
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+          isOnGroup
+            ? 'text-indigo-300 bg-indigo-950/40'
+            : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/50'
+        }`}
+      >
+        <span className="flex items-center gap-1.5">
+          {icon && <span className="opacity-70">{icon}</span>}
+          <span className="uppercase tracking-wide">{label}</span>
+        </span>
+        <ChevronDown
+          size={11}
+          className={`shrink-0 transition-transform duration-150 ${open ? '' : '-rotate-90'}`}
+        />
+      </button>
+
+      {open && (
+        <div className="mt-0.5 ml-2 pl-2 border-l border-gray-700/50 space-y-0.5 pb-0.5">
+          {children}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -289,32 +346,68 @@ function SidebarContent({
             )}
             {modules.has('accounting') && perms.can('can_view_accounting') && (
               <NavSection label="Accounting" icon={Receipt} basePath="/accounting" collapsed={collapsed}>
-                <SubNavItem to="/accounting"                      label="Dashboard"          icon={<LayoutDashboard size={13} />} />
-                <SubNavItem to="/accounting?tab=invoices"         label="Invoices"           icon={<Receipt         size={13} />} />
-                <SubNavItem to="/accounting?tab=bills"            label="Bills"              icon={<FileText        size={13} />} />
-                <SubNavItem to="/accounting?tab=payments"         label="Payments"           icon={<CreditCard      size={13} />} />
-                <SubNavItem to="/accounting?tab=credit-notes"     label="Credit Notes"       icon={<RotateCcw       size={13} />} />
-                <SubNavItem to="/accounting?tab=journals"         label="Journal Entries"    icon={<BookOpen        size={13} />} />
-                <SubNavItem to="/accounting?tab=accounts"         label="Chart of Accounts"  icon={<Layers          size={13} />} />
-                <SubNavItem to="/accounting?tab=banks"            label="Bank Accounts"      icon={<Building2       size={13} />} />
-                <SubNavItem to="/accounting?tab=payslips"         label="Payslips & Coins"   icon={<Coins           size={13} />} />
-                <SubNavItem to="/accounting?tab=reports"          label="Reports"            icon={<BarChart2       size={13} />} />
+                <SubNavItem to="/accounting" label="Dashboard" icon={<LayoutDashboard size={13} />} />
+
+                <NavSubSection label="Sales" icon={<Receipt size={11} />} matchTabs={['quotations','invoices','credit-notes']}>
+                  <SubNavItem to="/accounting?tab=quotations"   label="Quotations"    icon={<FilePlus  size={13} />} />
+                  <SubNavItem to="/accounting?tab=invoices"     label="Invoices"      icon={<Receipt   size={13} />} />
+                  <SubNavItem to="/accounting?tab=credit-notes" label="Credit Notes"  icon={<RotateCcw size={13} />} />
+                </NavSubSection>
+
+                <NavSubSection label="Purchases" icon={<ShoppingCart size={11} />} matchTabs={['bills','debit-notes','tds']}>
+                  <SubNavItem to="/accounting?tab=bills"        label="Bills"         icon={<FileText  size={13} />} />
+                  <SubNavItem to="/accounting?tab=debit-notes"  label="Debit Notes"   icon={<FileCheck size={13} />} />
+                  <SubNavItem to="/accounting?tab=tds"          label="TDS"           icon={<Banknote  size={13} />} />
+                </NavSubSection>
+
+                <NavSubSection label="Banking" icon={<Building2 size={11} />} matchTabs={['payments','banks','bank-reconciliation']}>
+                  <SubNavItem to="/accounting?tab=payments"            label="Payments"            icon={<CreditCard  size={13} />} />
+                  <SubNavItem to="/accounting?tab=banks"               label="Bank Accounts"       icon={<Building2   size={13} />} />
+                  <SubNavItem to="/accounting?tab=bank-reconciliation" label="Reconciliation"      icon={<CheckSquare size={13} />} />
+                </NavSubSection>
+
+                <NavSubSection label="Ledger" icon={<BookOpen size={11} />} matchTabs={['journals','recurring-journals','accounts']}>
+                  <SubNavItem to="/accounting?tab=journals"           label="Journal Entries"    icon={<BookOpen   size={13} />} />
+                  <SubNavItem to="/accounting?tab=recurring-journals" label="Recurring"          icon={<RefreshCcw size={13} />} />
+                  <SubNavItem to="/accounting?tab=accounts"           label="Chart of Accounts"  icon={<Layers     size={13} />} />
+                </NavSubSection>
+
+                <NavSubSection label="Payroll" icon={<Coins size={11} />} matchTabs={['payslips']}>
+                  <SubNavItem to="/accounting?tab=payslips" label="Payslips & Coins" icon={<Coins size={13} />} />
+                </NavSubSection>
+
+                <NavSubSection label="Reports" icon={<BarChart2 size={11} />} matchTabs={['reports','ledger','day-book']}>
+                  <SubNavItem to="/accounting?tab=reports"   label="Financial Reports" icon={<BarChart2   size={13} />} />
+                  <SubNavItem to="/accounting?tab=ledger"    label="Ledger"            icon={<BookMarked  size={13} />} />
+                  <SubNavItem to="/accounting?tab=day-book"  label="Day Book"          icon={<Calendar    size={13} />} />
+                </NavSubSection>
               </NavSection>
             )}
             {modules.has('inventory') && perms.can('can_view_inventory') && (
               <NavSection label="Inventory" icon={Package} basePath="/inventory" collapsed={collapsed}>
-                <SubNavItem to="/inventory?tab=products"        label="Products"         icon={<Package        size={13} />} />
-                <SubNavItem to="/inventory?tab=movements"       label="Stock Movements"  icon={<ArrowLeftRight size={13} />} />
-                <SubNavItem to="/inventory?tab=low-stock"       label="Low Stock"        icon={<AlertTriangle  size={13} />} />
-                <SubNavItem to="/inventory?tab=categories"      label="Categories"       icon={<Layers         size={13} />} />
-                <SubNavItem to="/inventory?tab=uom"             label="Units of Measure" icon={<Scale          size={13} />} />
-                <SubNavItem to="/inventory?tab=variants"        label="Variants"         icon={<Layers         size={13} />} />
-                <SubNavItem to="/inventory?tab=suppliers"       label="Suppliers"        icon={<Truck          size={13} />} />
-                <SubNavItem to="/inventory?tab=purchase-orders" label="Purchase Orders"  icon={<ShoppingCart   size={13} />} />
-                <SubNavItem to="/inventory?tab=returns"         label="Returns"          icon={<RotateCcw      size={13} />} />
-                <SubNavItem to="/inventory?tab=supplier-catalog" label="Supplier Catalog" icon={<Truck         size={13} />} />
-                <SubNavItem to="/inventory?tab=stock-counts"    label="Stock Counts"     icon={<ClipboardList  size={13} />} />
-                <SubNavItem to="/inventory?tab=reports"         label="Reports"          icon={<BarChart2      size={13} />} />
+                <NavSubSection label="Products" icon={<Package size={11} />} matchTabs={['products','categories','uom','variants']}>
+                  <SubNavItem to="/inventory?tab=products"   label="Products"          icon={<Package size={13} />} />
+                  <SubNavItem to="/inventory?tab=categories" label="Categories"        icon={<Layers  size={13} />} />
+                  <SubNavItem to="/inventory?tab=uom"        label="Units of Measure"  icon={<Scale   size={13} />} />
+                  <SubNavItem to="/inventory?tab=variants"   label="Variants"          icon={<Layers  size={13} />} />
+                </NavSubSection>
+
+                <NavSubSection label="Stock" icon={<ArrowLeftRight size={11} />} matchTabs={['movements','low-stock','stock-counts']}>
+                  <SubNavItem to="/inventory?tab=movements"    label="Movements"      icon={<ArrowLeftRight size={13} />} />
+                  <SubNavItem to="/inventory?tab=low-stock"    label="Low Stock"      icon={<AlertTriangle  size={13} />} />
+                  <SubNavItem to="/inventory?tab=stock-counts" label="Stock Counts"   icon={<ClipboardList  size={13} />} />
+                </NavSubSection>
+
+                <NavSubSection label="Suppliers" icon={<Truck size={11} />} matchTabs={['suppliers','supplier-catalog','purchase-orders','returns']}>
+                  <SubNavItem to="/inventory?tab=suppliers"        label="Suppliers"         icon={<Truck        size={13} />} />
+                  <SubNavItem to="/inventory?tab=supplier-catalog" label="Supplier Catalog"  icon={<Truck        size={13} />} />
+                  <SubNavItem to="/inventory?tab=purchase-orders"  label="Purchase Orders"   icon={<ShoppingCart size={13} />} />
+                  <SubNavItem to="/inventory?tab=returns"          label="Returns"           icon={<RotateCcw    size={13} />} />
+                </NavSubSection>
+
+                <NavSubSection label="Reports" icon={<BarChart2 size={11} />} matchTabs={['reports']}>
+                  <SubNavItem to="/inventory?tab=reports" label="Reports" icon={<BarChart2 size={13} />} />
+                </NavSubSection>
               </NavSection>
             )}
             {perms.can('can_manage_settings') && (

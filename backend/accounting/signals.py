@@ -199,3 +199,77 @@ def handle_tenant_created(sender, instance, created, **kwargs):
         seed_chart_of_accounts(instance)
     except Exception:
         pass
+
+
+# ─── Debit Note: journal on issue ──────────────────────────────────────────────
+
+@receiver(post_save, sender='accounting.DebitNote')
+def handle_debit_note_issued(sender, instance, created, **kwargs):
+    """
+    Issued → reverse the AP and Expense journal entries from the original Bill.
+    Creates: Dr AP / Cr Expense + Cr VAT Recoverable  (mirror of bill_journal).
+    """
+    if created:
+        return
+
+    from accounting.models import JournalEntry
+    from accounting.services.journal_service import create_debit_note_journal
+
+    already_posted = JournalEntry.objects.filter(
+        tenant=instance.tenant,
+        reference_type='debit_note',
+        reference_id=instance.pk,
+        is_posted=True,
+    ).exists()
+
+    if instance.status == 'issued' and not already_posted:
+        try:
+            create_debit_note_journal(instance, created_by=instance.created_by)
+        except Exception:
+            pass
+
+
+# ─── Bill approved: auto-create TDS entry if applicable ──────────────────────────
+
+@receiver(post_save, sender='accounting.Bill')
+def handle_bill_tds(sender, instance, created, **kwargs):
+    """
+    When a bill moves to approved and the supplier has TDS enabled (tracked via
+    a `tds_rate` field on the bill), auto-create a TDSEntry so the tenant
+    remembers to deposit it to IRD.
+    This hook is intentionally lightweight — TDSEntry creation is idempotent.
+    """
+    if created or instance.status != 'approved':
+        return
+
+    # Only act if the bill carries TDS metadata
+    tds_rate = getattr(instance, 'tds_rate', None)
+    if not tds_rate:
+        return
+
+    from accounting.models import TDSEntry
+    from django.utils import timezone
+
+    already = TDSEntry.objects.filter(
+        tenant=instance.tenant,
+        bill=instance,
+    ).exists()
+    if already:
+        return
+
+    now = timezone.localdate()
+    try:
+        TDSEntry.objects.create(
+            tenant=instance.tenant,
+            created_by=instance.created_by,
+            bill=instance,
+            supplier_name=instance.supplier_name or (
+                instance.supplier.name if instance.supplier else ''
+            ),
+            taxable_amount=instance.subtotal,
+            tds_rate=tds_rate,
+            period_month=now.month,
+            period_year=now.year,
+        )
+    except Exception:
+        pass

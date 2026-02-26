@@ -3,6 +3,8 @@ from .models import (
     CoinTransaction, Payslip, Invoice,
     Account, JournalEntry, JournalLine, BankAccount,
     Bill, Payment, CreditNote,
+    Quotation, DebitNote, TDSEntry,
+    BankReconciliation, BankReconciliationLine, RecurringJournal,
 )
 
 
@@ -260,4 +262,110 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'invoice_number', 'vat_rate', 'vat_amount', 'subtotal',
             'total', 'paid_at', 'created_at', 'updated_at',
         )
+
+
+# ─── Quotations ──────────────────────────────────────────────────────────────
+
+class QuotationSerializer(serializers.ModelSerializer):
+    customer_name     = serializers.CharField(source='customer.name', read_only=True, default='')
+    ticket_number     = serializers.CharField(source='ticket.ticket_number', read_only=True, default='')
+    project_name      = serializers.CharField(source='project.name', read_only=True, default='')
+    converted_invoice_number = serializers.CharField(
+        source='converted_invoice.invoice_number', read_only=True, default=''
+    )
+
+    class Meta:
+        model  = Quotation
+        fields = (
+            'id', 'quotation_number',
+            'customer', 'customer_name',
+            'ticket', 'ticket_number',
+            'project', 'project_name',
+            'line_items', 'subtotal', 'discount', 'vat_rate', 'vat_amount', 'total',
+            'status', 'valid_until', 'notes', 'terms',
+            'sent_at', 'accepted_at',
+            'converted_invoice', 'converted_invoice_number',
+            'created_at', 'updated_at',
+        )
+        read_only_fields = (
+            'quotation_number', 'vat_rate', 'vat_amount', 'subtotal', 'total',
+            'sent_at', 'accepted_at', 'converted_invoice', 'created_at', 'updated_at',
+        )
+
+
+# ─── Debit Notes ─────────────────────────────────────────────────────────────
+
+class DebitNoteSerializer(serializers.ModelSerializer):
+    bill_number = serializers.CharField(source='bill.bill_number', read_only=True)
+
+    class Meta:
+        model  = DebitNote
+        fields = (
+            'id', 'debit_note_number',
+            'bill', 'bill_number',
+            'line_items', 'subtotal', 'vat_amount', 'total',
+            'reason', 'status', 'issued_at',
+            'created_at', 'updated_at',
+        )
+        read_only_fields = (
+            'debit_note_number', 'subtotal', 'vat_amount', 'total',
+            'issued_at', 'created_at', 'updated_at',
+        )
+
+
+# ─── TDS ─────────────────────────────────────────────────────────────────────
+
+class TDSEntrySerializer(serializers.ModelSerializer):
+    bill_number = serializers.CharField(source='bill.bill_number', read_only=True, default='')
+
+    class Meta:
+        model  = TDSEntry
+        fields = (
+            'id',
+            'bill', 'bill_number',
+            'supplier_name', 'supplier_pan',
+            'taxable_amount', 'tds_rate', 'tds_amount', 'net_payable',
+            'status', 'period_month', 'period_year',
+            'deposited_at', 'deposit_reference',
+            'created_at',
+        )
+        read_only_fields = ('tds_amount', 'net_payable', 'deposited_at', 'created_at')
+
+
+# ─── Bank Reconciliation ─────────────────────────────────────────────────────
+
+class BankReconciliationLineSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = BankReconciliationLine
+        fields = ('id', 'date', 'description', 'amount', 'is_matched', 'payment')
+
+
+class BankReconciliationSerializer(serializers.ModelSerializer):
+    bank_account_name = serializers.CharField(source='bank_account.name', read_only=True)
+    lines             = BankReconciliationLineSerializer(many=True, read_only=True)
+    difference        = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+
+    class Meta:
+        model  = BankReconciliation
+        fields = (
+            'id', 'bank_account', 'bank_account_name',
+            'statement_date', 'opening_balance', 'closing_balance',
+            'status', 'notes', 'reconciled_at', 'difference',
+            'lines', 'created_at',
+        )
+        read_only_fields = ('reconciled_at', 'created_at')
+
+
+# ─── Recurring Journals ───────────────────────────────────────────────────────
+
+class RecurringJournalSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = RecurringJournal
+        fields = (
+            'id', 'name', 'description',
+            'frequency', 'start_date', 'end_date', 'next_date',
+            'is_active', 'template_lines', 'last_run_at',
+            'created_at', 'updated_at',
+        )
+        read_only_fields = ('last_run_at', 'created_at', 'updated_at')
 

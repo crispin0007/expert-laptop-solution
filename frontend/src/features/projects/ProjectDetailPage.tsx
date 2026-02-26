@@ -7,6 +7,7 @@ import {
   Package, User, Calendar, Flag, X, Paperclip, Download, FileText, Users,
   List, Clock, AlertTriangle, Edit3,
   Phone, BarChart2, Timer, GripVertical, TrendingUp,
+  ShoppingCart, CheckCheck, XCircle, ChevronDown, ChevronUp,
 } from 'lucide-react'
 import apiClient from '../../api/client'
 import { PROJECTS, STAFF, INVENTORY } from '../../api/endpoints'
@@ -77,6 +78,22 @@ interface StaffMember {
   id: number
   full_name: string
   email: string
+}
+
+interface ProductRequest {
+  id: number
+  product: number
+  product_name: string
+  product_sku: string
+  quantity: number
+  note: string
+  status: 'pending' | 'approved' | 'rejected'
+  requested_by: number | null
+  requested_by_name: string | null
+  reviewed_by_name: string | null
+  reviewed_at: string | null
+  rejection_reason: string
+  created_at: string
 }
 
 interface ProjectAttachment {
@@ -527,6 +544,15 @@ export default function ProjectDetailPage() {
   const attachFileRef = useRef<HTMLInputElement>(null)
   const [uploadingAttach, setUploadingAttach] = useState(false)
 
+  // Product request state
+  const [showPRForm, setShowPRForm] = useState(false)
+  const [prProduct, setPrProduct] = useState<Product | null>(null)
+  const [prQty, setPrQty] = useState(1)
+  const [prNote, setPrNote] = useState('')
+  const [prRejectId, setPrRejectId] = useState<number | null>(null)
+  const [prRejectReason, setPrRejectReason] = useState('')
+  const [showPRSection, setShowPRSection] = useState(true)
+
   // Drag state
   const [dragTaskId, setDragTaskId] = useState<number | null>(null)
   const [dragOverCol, setDragOverCol] = useState<string | null>(null)
@@ -578,6 +604,14 @@ export default function ProjectDetailPage() {
     enabled: !!id,
   })
 
+  const { data: productRequests = [] } = useQuery<ProductRequest[]>({
+    queryKey: ['project-product-requests', id],
+    queryFn: () => apiClient.get(PROJECTS.PRODUCT_REQUESTS(projectId)).then(r =>
+      Array.isArray(r.data) ? r.data : r.data.results ?? []
+    ),
+    enabled: !!id,
+  })
+
   // ── Computed stats ───────────────────────────────────────────────────────────
 
   const todoTasks = tasks.filter(t => t.status === 'todo')
@@ -595,6 +629,41 @@ export default function ProjectDetailPage() {
     mutationFn: (status: string) => apiClient.patch(PROJECTS.DETAIL(projectId), { status }),
     onSuccess: () => { toast.success('Status updated'); setEditingStatus(false); qc.invalidateQueries({ queryKey: ['project', id] }) },
     onError: () => toast.error('Failed to update status'),
+  })
+
+  const createPRMutation = useMutation({
+    mutationFn: () => apiClient.post(PROJECTS.PRODUCT_REQUESTS(projectId), {
+      product: prProduct!.id,
+      quantity: prQty,
+      note: prNote,
+    }),
+    onSuccess: () => {
+      toast.success('Product request submitted')
+      setPrProduct(null); setPrQty(1); setPrNote(''); setShowPRForm(false)
+      qc.invalidateQueries({ queryKey: ['project-product-requests', id] })
+    },
+    onError: () => toast.error('Failed to submit request'),
+  })
+
+  const approvePRMutation = useMutation({
+    mutationFn: (reqId: number) => apiClient.post(PROJECTS.PRODUCT_REQUEST_APPROVE(projectId, reqId)),
+    onSuccess: () => {
+      toast.success('Request approved — added to materials')
+      qc.invalidateQueries({ queryKey: ['project-product-requests', id] })
+      qc.invalidateQueries({ queryKey: ['project-products', id] })
+    },
+    onError: () => toast.error('Failed to approve'),
+  })
+
+  const rejectPRMutation = useMutation({
+    mutationFn: ({ reqId, reason }: { reqId: number; reason: string }) =>
+      apiClient.post(PROJECTS.PRODUCT_REQUEST_REJECT(projectId, reqId), { reason }),
+    onSuccess: () => {
+      toast.success('Request rejected')
+      setPrRejectId(null); setPrRejectReason('')
+      qc.invalidateQueries({ queryKey: ['project-product-requests', id] })
+    },
+    onError: () => toast.error('Failed to reject'),
   })
 
   const changeTaskStatusMutation = useMutation({
@@ -1387,7 +1456,7 @@ export default function ProjectDetailPage() {
                 ))}
               </ul>
             )}
-            {canManage && (
+            {canManage ? (
               <div className="space-y-2 pt-2 border-t border-gray-100">
                 <ProductSearchInput onSelect={p => addProductMutation.mutate(p)} />
                 <div className="flex items-center gap-2">
@@ -1399,8 +1468,176 @@ export default function ProjectDetailPage() {
                   />
                 </div>
               </div>
+            ) : (
+              <p className="text-[11px] text-gray-400 italic pt-1 border-t border-gray-50">
+                Use <span className="font-medium text-orange-500">Product Requests</span> below to request materials.
+              </p>
             )}
           </div>
+
+          {/* Product Requests — always visible to staff; visible to managers only when there are pending requests */}
+          {(!canManage || productRequests.some(r => r.status === 'pending')) && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <button
+                onClick={() => setShowPRSection(v => !v)}
+                className="font-semibold text-gray-800 text-sm flex items-center gap-1.5 hover:text-indigo-600 transition"
+              >
+                <ShoppingCart size={13} className="text-orange-400" />
+                Product Requests
+                {productRequests.filter(r => r.status === 'pending').length > 0 && (
+                  <span className="bg-orange-100 text-orange-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                    {productRequests.filter(r => r.status === 'pending').length}
+                  </span>
+                )}
+                {showPRSection ? <ChevronUp size={11} className="text-gray-400 ml-1" /> : <ChevronDown size={11} className="text-gray-400 ml-1" />}
+              </button>
+              {!canManage && (
+                <button
+                  onClick={() => setShowPRForm(v => !v)}
+                  className="flex items-center gap-1 text-xs px-2 py-1 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-100 transition"
+                  title="Request a product"
+                >
+                  <Plus size={9} /> Request
+                </button>
+              )}
+            </div>
+
+            {/* Request form — staff only */}
+            {!canManage && showPRForm && (
+              <div className="mb-3 p-3 bg-orange-50 rounded-xl border border-orange-100 space-y-2">
+                <label className="block text-[11px] font-medium text-gray-500 mb-0.5">Product</label>
+                <ProductSearchInput onSelect={p => setPrProduct(p)} />
+                {prProduct && (
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-orange-700 bg-orange-100 rounded-lg px-2 py-1">
+                    <Package size={11} />
+                    {prProduct.name}
+                    <button onClick={() => setPrProduct(null)} className="ml-auto text-orange-400 hover:text-orange-600"><X size={11} /></button>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500 shrink-0">Qty:</label>
+                  <input
+                    type="number" min={1} value={prQty}
+                    onChange={e => setPrQty(Math.max(1, Number(e.target.value)))}
+                    className="w-16 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-orange-400"
+                  />
+                </div>
+                <textarea
+                  rows={2}
+                  placeholder="Note / reason (optional)"
+                  value={prNote}
+                  onChange={e => setPrNote(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none"
+                />
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => createPRMutation.mutate()}
+                    disabled={!prProduct || createPRMutation.isPending}
+                    className="flex-1 bg-orange-500 text-white py-1.5 rounded-lg text-xs hover:bg-orange-600 disabled:opacity-50 font-medium"
+                  >
+                    {createPRMutation.isPending ? 'Submitting…' : 'Submit Request'}
+                  </button>
+                  <button onClick={() => setShowPRForm(false)} className="px-2 border border-gray-300 rounded-lg text-gray-500 hover:bg-gray-50">
+                    <X size={12} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Request list */}
+            {showPRSection && (
+              <div className="space-y-2">
+                {productRequests.length === 0 ? (
+                  <p className="text-xs text-gray-400 italic">No requests yet</p>
+                ) : (
+                  productRequests.map(req => (
+                    <div
+                      key={req.id}
+                      className={`rounded-xl border p-3 text-xs space-y-1.5 ${
+                        req.status === 'pending' ? 'border-orange-200 bg-orange-50' :
+                        req.status === 'approved' ? 'border-emerald-200 bg-emerald-50' :
+                        'border-red-200 bg-red-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-gray-800 truncate">{req.product_name}</span>
+                        <span className={`shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                          req.status === 'pending' ? 'bg-orange-200 text-orange-700' :
+                          req.status === 'approved' ? 'bg-emerald-200 text-emerald-700' :
+                          'bg-red-200 text-red-600'
+                        }`}>
+                          {req.status}
+                        </span>
+                      </div>
+                      <div className="text-gray-500 flex items-center gap-1.5 flex-wrap">
+                        <span>×{req.quantity}</span>
+                        {req.product_sku && <span className="text-gray-400 font-mono">{req.product_sku}</span>}
+                        {req.requested_by_name && (
+                          <span className="text-gray-400">by {req.requested_by_name}</span>
+                        )}
+                      </div>
+                      {req.note && <p className="text-gray-500 italic">"{req.note}"</p>}
+                      {req.rejection_reason && (
+                        <p className="text-red-500 text-[10px] flex items-center gap-1">
+                          <XCircle size={10} /> {req.rejection_reason}
+                        </p>
+                      )}
+
+                      {/* Manager approve/reject buttons */}
+                      {canManage && req.status === 'pending' && (
+                        <div className="pt-1 space-y-1">
+                          {prRejectId === req.id ? (
+                            <div className="space-y-1">
+                              <input
+                                autoFocus
+                                className="w-full border border-red-300 rounded px-2 py-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-red-400"
+                                placeholder="Reason (optional)"
+                                value={prRejectReason}
+                                onChange={e => setPrRejectReason(e.target.value)}
+                              />
+                              <div className="flex gap-1">
+                                <button
+                                  onClick={() => rejectPRMutation.mutate({ reqId: req.id, reason: prRejectReason })}
+                                  disabled={rejectPRMutation.isPending}
+                                  className="flex-1 text-[11px] bg-red-500 text-white rounded py-1 hover:bg-red-600 disabled:opacity-50 font-medium"
+                                >
+                                  {rejectPRMutation.isPending ? '…' : 'Confirm Reject'}
+                                </button>
+                                <button
+                                  onClick={() => { setPrRejectId(null); setPrRejectReason('') }}
+                                  className="px-2 border border-gray-300 rounded text-gray-500 text-[11px] hover:bg-gray-100"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex gap-1">
+                              <button
+                                onClick={() => approvePRMutation.mutate(req.id)}
+                                disabled={approvePRMutation.isPending}
+                                className="flex-1 flex items-center justify-center gap-1 text-[11px] bg-emerald-500 text-white rounded-lg py-1 hover:bg-emerald-600 disabled:opacity-50 font-medium"
+                              >
+                                <CheckCheck size={11} /> Approve
+                              </button>
+                              <button
+                                onClick={() => { setPrRejectId(req.id); setPrRejectReason('') }}
+                                className="flex-1 flex items-center justify-center gap-1 text-[11px] bg-red-100 text-red-600 rounded-lg py-1 hover:bg-red-200 font-medium"
+                              >
+                                <XCircle size={11} /> Reject
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+          )}
 
           {/* Attachments */}
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">

@@ -163,6 +163,59 @@ class ProjectProduct(TenantModel):
         return f"{self.project.project_number} — {self.product.name} ×{self.quantity_planned}"
 
 
+class ProjectProductRequest(TenantModel):
+    """A staff member's request to use a product on a project.
+
+    Workflow: staff creates (pending) → manager/admin approves or rejects.
+    On approval a ProjectProduct record is upserted automatically.
+    """
+
+    STATUS_PENDING = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_REJECTED, 'Rejected'),
+    ]
+
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name='product_requests',
+    )
+    product = models.ForeignKey(
+        'inventory.Product',
+        on_delete=models.CASCADE,
+        related_name='project_requests',
+    )
+    quantity = models.PositiveIntegerField(default=1)
+    note = models.TextField(blank=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
+
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name='product_requests_made',
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='product_requests_reviewed',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.project.project_number} — {self.product.name} ({self.status})"
+
+
 class ProjectAttachment(TenantModel):
     """Files attached to a project."""
 

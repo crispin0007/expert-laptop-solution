@@ -288,3 +288,95 @@ def seed_chart_of_accounts(tenant, created_by=None):
         created_map[code] = account
 
     return created_map
+
+
+# ─── Debit Note journal (purchase return to supplier) ────────────────────────
+
+def create_debit_note_journal(debit_note, created_by=None):
+    """
+    Issued Debit Note → reverse the original Bill's journal entry.
+    Dr  AP          (reduces what we owe the supplier)
+    Cr  Expense     (reduces the expense we recorded)
+    Cr  VAT Payable (reduces VAT we can reclaim — since goods returned)
+
+    Mirror image of create_bill_journal.
+    """
+    from accounting.models import Account
+    t = debit_note.tenant
+
+    ap_acc      = _get_account(t, '2100')  # Accounts Payable
+    expense_acc = _get_account(t, '5300')  # Other Expenses (or use a lookup)
+    vat_acc     = _get_account(t, '2200')  # VAT Payable
+
+    lines = [
+        (ap_acc,      debit_note.total,       Decimal('0'),       'Debit Note – AP reversal'),
+        (expense_acc, Decimal('0'),            debit_note.subtotal, 'Debit Note – Expense reversal'),
+    ]
+    if debit_note.vat_amount:
+        lines.append(
+            (vat_acc, Decimal('0'), debit_note.vat_amount, 'Debit Note – VAT reversal'),
+        )
+
+    return _make_entry(
+        t, created_by, timezone.localdate(),
+        f"Debit Note {debit_note.debit_note_number}",
+        'debit_note', debit_note.pk, lines,
+    )
+
+
+# ─── Recurring Journal runner ─────────────────────────────────────────────────
+
+def run_recurring_journal(recurring, triggered_by=None):
+    """
+    Create a JournalEntry from a RecurringJournal template, then advance next_date.
+    Raises ValueError if template_lines empty or accounts missing.
+    """
+    from accounting.models import Account, JournalEntry, JournalLine
+    from datetime import date
+    from dateutil.relativedelta import relativedelta
+    import django.utils.timezone as tz
+
+    if not recurring.template_lines:
+        raise ValueError("Template has no lines.")
+
+    t = recurring.tenant
+    entry = JournalEntry(
+        tenant=t,
+        date=date.today(),
+        description=recurring.name,
+        reference_type='manual',
+        created_by=triggered_by,
+    )
+    entry.save()
+
+    for item in recurring.template_lines:
+        code = item.get('account_code', '')
+        try:
+            account = Account.objects.get(tenant=t, code=code)
+        except Account.DoesNotExist:
+            entry.delete()
+            raise ValueError(f"Account code {code!r} not found in Chart of Accounts.")
+        JournalLine.objects.create(
+            entry=entry,
+            account=account,
+            debit=Decimal(str(item.get('debit', '0'))),
+            credit=Decimal(str(item.get('credit', '0'))),
+            description=item.get('description', ''),
+        )
+
+    entry.post()
+
+    # Advance next_date
+    freq = recurring.frequency
+    freq_map = {
+        'daily':   relativedelta(days=1),
+        'weekly':  relativedelta(weeks=1),
+        'monthly': relativedelta(months=1),
+        'yearly':  relativedelta(years=1),
+    }
+    delta = freq_map.get(freq, relativedelta(months=1))
+    recurring.next_date  = recurring.next_date + delta
+    recurring.last_run_at = tz.now()
+    recurring.save(update_fields=['next_date', 'last_run_at'])
+
+    return entry

@@ -4,6 +4,8 @@ from .views import (
     CoinTransactionViewSet, PayslipViewSet, InvoiceViewSet,
     AccountViewSet, BankAccountViewSet, JournalEntryViewSet,
     BillViewSet, PaymentViewSet, CreditNoteViewSet, ReportViewSet,
+    QuotationViewSet, DebitNoteViewSet, TDSEntryViewSet,
+    BankReconciliationViewSet, RecurringJournalViewSet,
 )
 
 router = DefaultRouter()
@@ -19,16 +21,27 @@ router.register(r'journals', JournalEntryViewSet, basename='journal-entry')
 router.register(r'bills', BillViewSet, basename='bill')
 router.register(r'payments', PaymentViewSet, basename='payment')
 router.register(r'credit-notes', CreditNoteViewSet, basename='credit-note')
+router.register(r'debit-notes', DebitNoteViewSet, basename='debit-note')
+
+# Receivables / Pre-sales
+router.register(r'invoices', InvoiceViewSet, basename='invoice')
+router.register(r'quotations', QuotationViewSet, basename='quotation')
 
 # Reports (no model)
 router.register(r'reports', ReportViewSet, basename='report')
 
+# Tax
+router.register(r'tds', TDSEntryViewSet, basename='tds-entry')
+
+# Banking
+router.register(r'bank-reconciliations', BankReconciliationViewSet, basename='bank-reconciliation')
+
+# Automation
+router.register(r'recurring-journals', RecurringJournalViewSet, basename='recurring-journal')
+
 # Coins / payroll
 router.register(r'coins', CoinTransactionViewSet, basename='coin-transaction')
 router.register(r'payslips', PayslipViewSet, basename='payslip')
-
-# Receivables
-router.register(r'invoices', InvoiceViewSet, basename='invoice')
 
 urlpatterns = [path('', include(router.urls))]
 

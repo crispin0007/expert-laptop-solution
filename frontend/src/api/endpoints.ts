@@ -34,12 +34,18 @@ export const TICKETS = {
   SLA_WARNING: '/tickets/sla-warning/',
   ATTACHMENTS: '/tickets/attachments/',
   CLOSE: (id: number) => `/tickets/${id}/close/`,
+  VEHICLES: '/tickets/vehicles/',
+  VEHICLE_DETAIL: (id: number) => `/tickets/vehicles/${id}/`,
+  VEHICLE_LOGS: '/tickets/vehicle-logs/',
+  VEHICLE_LOG_DETAIL: (id: number) => `/tickets/vehicle-logs/${id}/`,
+  VEHICLE_TICKET_LOGS: (ticketId: number) => `/tickets/vehicle-logs/?ticket=${ticketId}`,
 } as const
 
 export const CUSTOMERS = {
   LIST: '/customers/',
   DETAIL: (id: number) => `/customers/${id}/`,
   CONTACTS: (id: number) => `/customers/${id}/contacts/`,
+  GEO_OVERVIEW: '/customers/geo-overview/',
 } as const
 
 export const PROJECTS = {
@@ -55,6 +61,10 @@ export const PROJECTS = {
   PROJECT_PRODUCT_DETAIL: (projectId: number, ppId: number) => `/projects/${projectId}/project-products/${ppId}/`,
   ATTACHMENTS: (id: number) => `/projects/${id}/attachments/`,
   ATTACHMENT_DETAIL: (projectId: number, attachId: number) => `/projects/${projectId}/attachments/${attachId}/`,
+  PRODUCT_REQUESTS: (id: number) => `/projects/${id}/product-requests/`,
+  PRODUCT_REQUEST_DETAIL: (projectId: number, reqId: number) => `/projects/${projectId}/product-requests/${reqId}/`,
+  PRODUCT_REQUEST_APPROVE: (projectId: number, reqId: number) => `/projects/${projectId}/product-requests/${reqId}/approve/`,
+  PRODUCT_REQUEST_REJECT: (projectId: number, reqId: number) => `/projects/${projectId}/product-requests/${reqId}/reject/`,
 } as const
 
 export const NOTIFICATIONS = {

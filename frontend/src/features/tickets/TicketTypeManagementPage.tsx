@@ -3,6 +3,7 @@
  *
  * Tab 1: Ticket Types — create / edit / deactivate types (name, SLA hours, color, icon, requires_product).
  * Tab 2: Categories — create / edit / delete categories with inline subcategory management.
+ * Tab 3: Vehicles — register tenant vehicles with billing rate per km.
  */
 import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -10,6 +11,7 @@ import toast from 'react-hot-toast'
 import {
   Tag, FolderOpen, Plus, Pencil, Trash2, Check, X, ChevronDown, ChevronRight,
   Clock, Package, ToggleLeft, ToggleRight, Palette, Smile,
+  Car, Fuel, Gauge, Route,
 } from 'lucide-react'
 import apiClient from '../../api/client'
 import { TICKETS } from '../../api/endpoints'
@@ -57,6 +59,42 @@ interface TicketCategory {
   subcategories: SubCategory[]
 }
 
+// ── Vehicle types ─────────────────────────────────────────────────────────────
+
+interface Vehicle {
+  id: number
+  name: string
+  plate_number: string
+  type: string
+  fuel_type: string
+  rate_per_km: string
+  notes: string
+  is_active: boolean
+}
+
+const VEHICLE_TYPES = [
+  { value: 'car',       label: 'Car' },
+  { value: 'motorbike', label: 'Motorbike' },
+  { value: 'van',       label: 'Van' },
+  { value: 'truck',     label: 'Truck' },
+  { value: 'other',     label: 'Other' },
+]
+
+const FUEL_TYPES = [
+  { value: 'petrol',   label: 'Petrol' },
+  { value: 'diesel',   label: 'Diesel' },
+  { value: 'electric', label: 'Electric' },
+  { value: 'hybrid',   label: 'Hybrid' },
+]
+
+const VEHICLE_TYPE_ICONS: Record<string, React.ReactNode> = {
+  car:       <Car size={14} />,
+  motorbike: <Route size={14} />,
+  van:       <Car size={14} />,
+  truck:     <Car size={14} />,
+  other:     <Car size={14} />,
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316']
@@ -85,7 +123,7 @@ function ColorPicker({ value, onChange }: { value: string; onChange: (c: string)
   )
 }
 
-// ── Ticket Types Tab ──────────────────────────────────────────────────────────
+// ── Ticket Types Tab ─────────────────────────────────────────────────────────────
 
 function TicketTypesTab() {
   const qc = useQueryClient()
@@ -616,9 +654,259 @@ function CategoriesTab() {
   )
 }
 
+// ── Vehicles Tab ─────────────────────────────────────────────────────────────
+
+const VEHICLE_INIT = { name: '', plate_number: '', type: 'car', fuel_type: 'petrol', rate_per_km: '', notes: '' }
+
+function VehiclesTab() {
+  const qc = useQueryClient()
+  const [showForm, setShowForm] = useState(false)
+  const [editId, setEditId] = useState<number | null>(null)
+  const [form, setForm] = useState({ ...VEHICLE_INIT })
+  const [expandedNotes, setExpandedNotes] = useState<number | null>(null)
+
+  const { data: vehicles = [], isLoading } = useQuery<Vehicle[]>({
+    queryKey: ['vehicles'],
+    queryFn: () => apiClient.get(TICKETS.VEHICLES).then(r =>
+      Array.isArray(r.data) ? r.data : (r.data.results ?? r.data.data ?? [])
+    ),
+  })
+
+  const upsertMutation = useMutation({
+    mutationFn: () =>
+      editId
+        ? apiClient.patch(TICKETS.VEHICLE_DETAIL(editId), form)
+        : apiClient.post(TICKETS.VEHICLES, form),
+    onSuccess: () => {
+      toast.success(editId ? 'Vehicle updated' : 'Vehicle added')
+      qc.invalidateQueries({ queryKey: ['vehicles'] })
+      setShowForm(false)
+      setEditId(null)
+      setForm({ ...VEHICLE_INIT })
+    },
+    onError: (err: unknown) => toast.error(apiErrorMessage(err, 'Failed to save vehicle')),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => apiClient.delete(TICKETS.VEHICLE_DETAIL(id)),
+    onSuccess: () => { toast.success('Vehicle removed'); qc.invalidateQueries({ queryKey: ['vehicles'] }) },
+    onError: () => toast.error('Failed to delete vehicle'),
+  })
+
+  const toggleActive = useMutation({
+    mutationFn: ({ id, is_active }: { id: number; is_active: boolean }) =>
+      apiClient.patch(TICKETS.VEHICLE_DETAIL(id), { is_active }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vehicles'] }),
+    onError: () => toast.error('Failed to update vehicle'),
+  })
+
+  const startEdit = (v: Vehicle) => {
+    setEditId(v.id)
+    setForm({ name: v.name, plate_number: v.plate_number, type: v.type, fuel_type: v.fuel_type, rate_per_km: v.rate_per_km, notes: v.notes })
+    setShowForm(true)
+  }
+
+  const handleCancel = () => { setShowForm(false); setEditId(null); setForm({ ...VEHICLE_INIT }) }
+
+  return (
+    <div>
+      {/* Header row */}
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <p className="text-sm font-medium text-slate-700">Fleet Registry</p>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {vehicles.length} vehicle{vehicles.length !== 1 ? 's' : ''} registered.
+            Rate per km is used to auto-calculate billing on trip logs.
+          </p>
+        </div>
+        {!showForm && (
+          <button
+            onClick={() => { setShowForm(true); setEditId(null); setForm({ ...VEHICLE_INIT }) }}
+            className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 shadow-sm"
+          >
+            <Plus size={15} /> Add Vehicle
+          </button>
+        )}
+      </div>
+
+      {/* Add / Edit form */}
+      {showForm && (
+        <div className="mb-6 p-5 bg-slate-50 border border-slate-200 rounded-2xl">
+          <h3 className="text-sm font-semibold text-slate-800 mb-4 flex items-center gap-2">
+            <Car size={15} className="text-indigo-500" />
+            {editId ? 'Edit vehicle' : 'Add new vehicle'}
+          </h3>
+          <div className="grid grid-cols-2 gap-3">
+            {/* Name */}
+            <div className="col-span-2 sm:col-span-1">
+              <label className="text-xs font-medium text-slate-600 block mb-1">Vehicle Name *</label>
+              <input
+                autoFocus
+                value={form.name}
+                onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
+                placeholder="e.g. Company Hilux"
+                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            {/* Plate */}
+            <div className="col-span-2 sm:col-span-1">
+              <label className="text-xs font-medium text-slate-600 block mb-1">Plate Number</label>
+              <input
+                value={form.plate_number}
+                onChange={e => setForm(p => ({ ...p, plate_number: e.target.value }))}
+                placeholder="e.g. BA 1 KHA 2345"
+                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            {/* Type */}
+            <div>
+              <label className="text-xs font-medium text-slate-600 block mb-1">Vehicle Type</label>
+              <select
+                value={form.type}
+                onChange={e => setForm(p => ({ ...p, type: e.target.value }))}
+                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                {VEHICLE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </div>
+            {/* Fuel */}
+            <div>
+              <label className="text-xs font-medium text-slate-600 block mb-1">Fuel Type</label>
+              <select
+                value={form.fuel_type}
+                onChange={e => setForm(p => ({ ...p, fuel_type: e.target.value }))}
+                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                {FUEL_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </div>
+            {/* Rate per km */}
+            <div className="col-span-2 sm:col-span-1">
+              <label className="text-xs font-medium text-slate-600 block mb-1">Billing Rate / km</label>
+              <div className="relative">
+                <Gauge size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={form.rate_per_km}
+                  onChange={e => setForm(p => ({ ...p, rate_per_km: e.target.value }))}
+                  placeholder="0.00"
+                  className="w-full pl-8 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-0.5">Amount charged per km (in tenant currency)</p>
+            </div>
+            {/* Notes */}
+            <div className="col-span-2 sm:col-span-1">
+              <label className="text-xs font-medium text-slate-600 block mb-1">Notes</label>
+              <input
+                value={form.notes}
+                onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
+                placeholder="Optional notes"
+                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+          <div className="flex gap-2 mt-4">
+            <button
+              onClick={() => upsertMutation.mutate()}
+              disabled={!form.name.trim() || upsertMutation.isPending}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {upsertMutation.isPending ? 'Saving…' : <><Check size={13} /> {editId ? 'Update' : 'Add Vehicle'}</>}
+            </button>
+            <button onClick={handleCancel} className="px-4 py-2 text-sm text-slate-600 border border-slate-300 rounded-xl hover:bg-white">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Vehicle list */}
+      {isLoading && <p className="text-sm text-slate-400 py-6 text-center">Loading vehicles…</p>}
+      {!isLoading && vehicles.length === 0 && (
+        <div className="text-center py-12 text-slate-400">
+          <Car size={32} className="mx-auto mb-2 opacity-30" />
+          <p className="text-sm">No vehicles registered yet.</p>
+          <p className="text-xs mt-1">Add your first vehicle to start recording trip consumption.</p>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {vehicles.map(v => (
+          <div
+            key={v.id}
+            className={`border rounded-xl p-4 transition-all ${
+              v.is_active ? 'border-slate-200 bg-white' : 'border-slate-100 bg-slate-50 opacity-60'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              {/* Icon */}
+              <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-500 flex items-center justify-center flex-shrink-0">
+                {VEHICLE_TYPE_ICONS[v.type] ?? <Car size={14} />}
+              </div>
+
+              {/* Info */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-sm text-slate-900">{v.name}</span>
+                  {v.plate_number && (
+                    <span className="text-xs font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">{v.plate_number}</span>
+                  )}
+                  {!v.is_active && (
+                    <span className="text-[10px] bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded-full font-medium">Inactive</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 mt-1 text-xs text-slate-500 flex-wrap">
+                  <span className="flex items-center gap-1">
+                    <Car size={10} /> {VEHICLE_TYPES.find(t => t.value === v.type)?.label ?? v.type}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Fuel size={10} /> {FUEL_TYPES.find(t => t.value === v.fuel_type)?.label ?? v.fuel_type}
+                  </span>
+                  <span className="flex items-center gap-1 font-medium text-indigo-600">
+                    <Gauge size={10} /> Rs {parseFloat(v.rate_per_km || '0').toFixed(2)} / km
+                  </span>
+                </div>
+                {v.notes && (
+                  <p className="text-xs text-slate-400 mt-1 truncate">{v.notes}</p>
+                )}
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <button
+                  onClick={() => toggleActive.mutate({ id: v.id, is_active: !v.is_active })}
+                  title={v.is_active ? 'Deactivate' : 'Activate'}
+                  className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600"
+                >
+                  {v.is_active ? <ToggleRight size={16} className="text-emerald-500" /> : <ToggleLeft size={16} />}
+                </button>
+                <button
+                  onClick={() => startEdit(v)}
+                  className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-indigo-600"
+                >
+                  <Pencil size={14} />
+                </button>
+                <button
+                  onClick={() => { if (confirm(`Delete "${v.name}"?`)) deleteMutation.mutate(v.id) }}
+                  className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'types' | 'categories'
+type Tab = 'types' | 'categories' | 'vehicles'
 
 export default function TicketTypeManagementPage() {
   const [tab, setTab] = useState<Tab>('types')
@@ -628,14 +916,15 @@ export default function TicketTypeManagementPage() {
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-slate-900">Ticket Settings</h1>
-        <p className="text-slate-500 mt-1">Manage ticket types, categories, and subcategories for your workspace.</p>
+        <p className="text-slate-500 mt-1">Manage ticket types, categories, subcategories, and registered vehicles.</p>
       </div>
 
       {/* Tabs */}
       <div className="flex gap-1 bg-slate-100 rounded-xl p-1 mb-6 w-fit">
-        {([
-          { key: 'types', label: 'Ticket Types', icon: Tag },
-          { key: 'categories', label: 'Categories', icon: FolderOpen },
+        {([  
+          { key: 'types',      label: 'Ticket Types', icon: Tag },
+          { key: 'categories', label: 'Categories',   icon: FolderOpen },
+          { key: 'vehicles',   label: 'Vehicles',     icon: Car },
         ] as { key: Tab; label: string; icon: React.FC<{ size?: number }> }[]).map(({ key, label, icon: Icon }) => (
           <button
             key={key}
@@ -654,7 +943,9 @@ export default function TicketTypeManagementPage() {
 
       {/* Tab content */}
       <div className="bg-white rounded-2xl border border-slate-200 p-6">
-        {tab === 'types' ? <TicketTypesTab /> : <CategoriesTab />}
+        {tab === 'types'      && <TicketTypesTab />}
+        {tab === 'categories' && <CategoriesTab />}
+        {tab === 'vehicles'   && <VehiclesTab />}
       </div>
     </div>
   )

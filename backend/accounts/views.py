@@ -326,7 +326,12 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
 
     def list(self, request):
         self.ensure_tenant()
-        users = self._get_tenant_staff(self.tenant)
+        dept_id = request.query_params.get('department')
+        memberships = TenantMembership.objects.filter(tenant=self.tenant)
+        if dept_id:
+            memberships = memberships.filter(department_id=dept_id)
+        member_ids = memberships.values_list('user_id', flat=True)
+        users = User.objects.filter(id__in=member_ids)
         serializer = StaffSerializer(users, many=True, context={'tenant': self.tenant, 'request': request})
         return Response(serializer.data)
 

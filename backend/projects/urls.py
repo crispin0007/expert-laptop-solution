@@ -1,6 +1,6 @@
 from rest_framework.routers import DefaultRouter
 from django.urls import path, include
-from .views import ProjectViewSet, ProjectMilestoneViewSet, ProjectTaskViewSet, ProjectProductViewSet, ProjectAttachmentViewSet
+from .views import ProjectViewSet, ProjectMilestoneViewSet, ProjectTaskViewSet, ProjectProductViewSet, ProjectAttachmentViewSet, ProjectProductRequestViewSet
 
 router = DefaultRouter()
 router.register(r'', ProjectViewSet, basename='project')
@@ -29,6 +29,15 @@ urlpatterns = [
         path('<int:pk>/', ProjectProductViewSet.as_view({
             'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy',
         })),
+    ])),
+    # Nested: /api/v1/projects/<project_pk>/product-requests/
+    path('<int:project_pk>/product-requests/', include([
+        path('', ProjectProductRequestViewSet.as_view({'get': 'list', 'post': 'create'})),
+        path('<int:pk>/', ProjectProductRequestViewSet.as_view({
+            'get': 'retrieve', 'delete': 'destroy',
+        })),
+        path('<int:pk>/approve/', ProjectProductRequestViewSet.as_view({'post': 'approve'})),
+        path('<int:pk>/reject/', ProjectProductRequestViewSet.as_view({'post': 'reject'})),
     ])),
     # Nested: /api/v1/projects/<project_pk>/attachments/
     path('<int:project_pk>/attachments/', include([

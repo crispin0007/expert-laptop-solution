@@ -170,6 +170,13 @@ class Ticket(TenantModel):
         related_name='team_tickets',
     )
 
+    # Vehicles dispatched for this ticket (can be multiple)
+    vehicles = models.ManyToManyField(
+        'tickets.Vehicle',
+        blank=True,
+        related_name='tickets',
+    )
+
     # Linked to a parent ticket for sub-tasks / escalations
     parent_ticket = models.ForeignKey(
         'self',
@@ -368,3 +375,98 @@ class TicketProduct(TenantModel):
     def __str__(self):
         return f"{self.quantity}x {self.product_id} on Ticket {self.ticket_id}"
 
+
+
+# ── Vehicle Registry ──────────────────────────────────────────────────────────
+
+class Vehicle(TenantModel):
+    """
+    Tenant-owned vehicle used for field visits attached to tickets.
+    Admins maintain the fleet here; rate_per_km drives billing in VehicleLog.
+    """
+
+    TYPE_CAR       = 'car'
+    TYPE_MOTORBIKE = 'motorbike'
+    TYPE_VAN       = 'van'
+    TYPE_TRUCK     = 'truck'
+    TYPE_OTHER     = 'other'
+    TYPE_CHOICES = [
+        (TYPE_CAR,       'Car'),
+        (TYPE_MOTORBIKE, 'Motorbike'),
+        (TYPE_VAN,       'Van'),
+        (TYPE_TRUCK,     'Truck'),
+        (TYPE_OTHER,     'Other'),
+    ]
+
+    FUEL_PETROL   = 'petrol'
+    FUEL_DIESEL   = 'diesel'
+    FUEL_ELECTRIC = 'electric'
+    FUEL_HYBRID   = 'hybrid'
+    FUEL_CHOICES = [
+        (FUEL_PETROL,   'Petrol'),
+        (FUEL_DIESEL,   'Diesel'),
+        (FUEL_ELECTRIC, 'Electric'),
+        (FUEL_HYBRID,   'Hybrid'),
+    ]
+
+    name         = models.CharField(max_length=128, help_text='e.g. Company Hilux')
+    plate_number = models.CharField(max_length=32, blank=True, help_text='License plate')
+    type         = models.CharField(max_length=16, choices=TYPE_CHOICES, default=TYPE_CAR)
+    fuel_type    = models.CharField(max_length=16, choices=FUEL_CHOICES, default=FUEL_PETROL)
+    rate_per_km  = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text='Billing rate per km in tenant currency',
+    )
+    notes     = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return f"{self.name} ({self.plate_number})" if self.plate_number else self.name
+
+
+class VehicleLog(TenantModel):
+    """
+    One record per vehicle trip, optionally linked to a ticket.
+    billing_amount = distance_km x vehicle.rate_per_km
+    """
+
+    vehicle = models.ForeignKey(
+        Vehicle, on_delete=models.PROTECT, related_name='logs',
+    )
+    ticket = models.ForeignKey(
+        Ticket, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='vehicle_logs',
+    )
+    driven_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='vehicle_logs',
+    )
+    date           = models.DateField()
+    odometer_start = models.DecimalField(max_digits=10, decimal_places=1)
+    odometer_end   = models.DecimalField(max_digits=10, decimal_places=1)
+    fuel_liters    = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    fuel_cost      = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text='Actual fuel money spent',
+    )
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-date', '-created_at']
+
+    @property
+    def distance_km(self):
+        return float(max(self.odometer_end - self.odometer_start, 0))
+
+    @property
+    def billing_amount(self):
+        return round(self.distance_km * float(self.vehicle.rate_per_km), 2)
+
+    def __str__(self):
+        return f"{self.vehicle} on {self.date} ({self.distance_km} km)"

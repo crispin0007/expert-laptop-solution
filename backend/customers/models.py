@@ -9,13 +9,45 @@ class Customer(TenantModel):
     TYPE_ORGANIZATION = 'organization'
     TYPE_CHOICES = [(TYPE_INDIVIDUAL, 'Individual'), (TYPE_ORGANIZATION, 'Organization')]
 
+    # Nepal's seven provinces (official 2022 names)
+    PROVINCE_KOSHI         = 'koshi'
+    PROVINCE_MADHESH       = 'madhesh'
+    PROVINCE_BAGMATI       = 'bagmati'
+    PROVINCE_GANDAKI       = 'gandaki'
+    PROVINCE_LUMBINI       = 'lumbini'
+    PROVINCE_KARNALI       = 'karnali'
+    PROVINCE_SUDURPASHCHIM = 'sudurpashchim'
+    PROVINCE_CHOICES = [
+        (PROVINCE_KOSHI,         'Koshi'),
+        (PROVINCE_MADHESH,       'Madhesh'),
+        (PROVINCE_BAGMATI,       'Bagmati'),
+        (PROVINCE_GANDAKI,       'Gandaki'),
+        (PROVINCE_LUMBINI,       'Lumbini'),
+        (PROVINCE_KARNALI,       'Karnali'),
+        (PROVINCE_SUDURPASHCHIM, 'Sudurpashchim'),
+    ]
+
     type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_INDIVIDUAL)
     name = models.CharField(max_length=255)
     # Auto-generated human-readable reference, e.g. CUS-0001 (per tenant)
     customer_number = models.CharField(max_length=32, blank=True, db_index=True)
-    email = models.EmailField(blank=True)
+    email = models.EmailField(blank=True)      # optional
     phone = models.CharField(max_length=32, blank=True)
-    address = models.TextField(blank=True)
+
+    # ── Nepal hierarchical address ────────────────────────────────────────────
+    province     = models.CharField(
+        max_length=32, blank=True, choices=PROVINCE_CHOICES,
+        help_text='One of Nepal\'s 7 provinces',
+    )
+    district     = models.CharField(max_length=128, blank=True, help_text='e.g. Kathmandu')
+    municipality = models.CharField(
+        max_length=255, blank=True,
+        help_text='Municipality / Sub-Metropolitan / Metropolitan / Rural Municipality',
+    )
+    ward_no      = models.CharField(max_length=8, blank=True, help_text='Ward number')
+    street       = models.CharField(max_length=255, blank=True, help_text='Tole / Street / Landmark')
+    # ─────────────────────────────────────────────────────────────────────────
+
     vat_number = models.CharField(max_length=64, blank=True)
     pan_number = models.CharField(max_length=64, blank=True)
     notes = models.TextField(blank=True)

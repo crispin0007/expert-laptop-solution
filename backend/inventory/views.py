@@ -317,7 +317,16 @@ class PurchaseOrderViewSet(TenantMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(tenant=self.tenant, created_by=self.request.user)
 
-    @action(detail=True, methods=['post'], url_path='receive')
+    def create(self, request, *args, **kwargs):
+        """Return the full read serializer (with id) after creating a PO."""
+        write_ser = PurchaseOrderWriteSerializer(
+            data=request.data,
+            context=self.get_serializer_context(),
+        )
+        write_ser.is_valid(raise_exception=True)
+        po = write_ser.save(tenant=self.tenant, created_by=self.request.user)
+        return Response(PurchaseOrderSerializer(po, context=self.get_serializer_context()).data,
+                        status=status.HTTP_201_CREATED)
     def receive(self, request, pk=None):
         """
         Body: { "lines": [{"item_id": 1, "quantity_received": 5}], "notes": "" }

@@ -2,12 +2,29 @@ from django.utils import timezone
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from .models import (
+    Vehicle, VehicleLog,
     Ticket, TicketType, TicketComment, TicketTransfer,
     TicketProduct, TicketSLA, TicketTimeline, TicketAttachment,
     TicketCategory, TicketSubCategory,
 )
 
 User = get_user_model()
+
+
+def _user_display_name(user) -> str:
+    """Best available display name. Priority: full_name -> first+last -> username -> email local-part."""
+    if not user:
+        return ''
+    if user.full_name:
+        return user.full_name
+    composed = f"{user.first_name} {user.last_name}".strip()
+    if composed:
+        return composed
+    if user.username and user.username != user.email:
+        return user.username
+    # Last resort: email local part (before @) - friendlier than full email
+    local = user.email.split('@')[0] if user.email and '@' in user.email else user.email
+    return local or user.email
 
 
 # ── TicketCategory ────────────────────────────────────────────────────────────
@@ -60,14 +77,16 @@ class TicketSerializer(serializers.ModelSerializer):
     customer_phone     = serializers.CharField(source='customer.phone',           read_only=True, default='')
     customer_email     = serializers.CharField(source='customer.email',           read_only=True, default='')
     department_name    = serializers.CharField(source='department.name',          read_only=True, default='')
-    assigned_to_name   = serializers.CharField(source='assigned_to.full_name',    read_only=True, default='')
-    created_by_name    = serializers.CharField(source='created_by.full_name',     read_only=True, default='')
+    assigned_to_name   = serializers.SerializerMethodField()
+    created_by_name    = serializers.SerializerMethodField()
     category_name      = serializers.CharField(source='category.name',            read_only=True, default='')
     subcategory_name   = serializers.CharField(source='subcategory.name',         read_only=True, default='')
     sla_breached       = serializers.SerializerMethodField()
     sla_breach_at      = serializers.SerializerMethodField()
     team_members       = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
     team_member_names  = serializers.SerializerMethodField()
+    vehicles           = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
+    vehicle_names      = serializers.SerializerMethodField()
 
     class Meta:
         model = Ticket
@@ -82,6 +101,7 @@ class TicketSerializer(serializers.ModelSerializer):
             'status', 'priority',
             'assigned_to', 'assigned_to_name',
             'team_members', 'team_member_names',
+            'vehicles', 'vehicle_names',
             'created_by', 'created_by_name',
             'parent_ticket',
             'sla_deadline', 'sla_breached', 'sla_breach_at',
@@ -93,6 +113,16 @@ class TicketSerializer(serializers.ModelSerializer):
             'ticket_number', 'created_by', 'resolved_at', 'closed_at',
             'is_deleted', 'created_at', 'updated_at',
         )
+
+    @staticmethod
+    def _user_display_name(user):
+        return _user_display_name(user)
+
+    def get_assigned_to_name(self, obj):
+        return self._user_display_name(obj.assigned_to)
+
+    def get_created_by_name(self, obj):
+        return self._user_display_name(obj.created_by)
 
     def get_sla_breached(self, obj):
         try:
@@ -107,7 +137,10 @@ class TicketSerializer(serializers.ModelSerializer):
             return None
 
     def get_team_member_names(self, obj):
-        return [u.full_name or u.email for u in obj.team_members.all()]
+        return [self._user_display_name(u) for u in obj.team_members.all()]
+
+    def get_vehicle_names(self, obj):
+        return [{'id': v.id, 'name': v.name, 'plate_number': v.plate_number} for v in obj.vehicles.all()]
 
 
 # ── Ticket (create / update) ──────────────────────────────────────────────────
@@ -119,6 +152,13 @@ class TicketCreateSerializer(serializers.ModelSerializer):
         queryset=User.objects.all(),
         required=False,
     )
+    vehicles = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=Vehicle.objects.all(),
+        required=False,
+    )
+    # Title is optional — auto-generated from category+subcategory if omitted
+    title = serializers.CharField(required=False, allow_blank=True, max_length=255)
 
     class Meta:
         model = Ticket
@@ -126,13 +166,31 @@ class TicketCreateSerializer(serializers.ModelSerializer):
             'ticket_type', 'customer', 'department',
             'category', 'subcategory',
             'title', 'description', 'contact_phone', 'priority',
-            'assigned_to', 'parent_ticket', 'team_members',
+            'assigned_to', 'parent_ticket', 'team_members', 'vehicles',
         )
+
+    def _build_auto_title(self, validated_data):
+        """Build a title from category + subcategory if not supplied."""
+        category    = validated_data.get('category')
+        subcategory = validated_data.get('subcategory')
+        if category and subcategory:
+            return f"{category.name} — {subcategory.name}"
+        if category:
+            return f"{category.name} Request"
+        ticket_type = validated_data.get('ticket_type')
+        if ticket_type:
+            return f"{ticket_type.name} Ticket"
+        return "Support Request"
 
     def create(self, validated_data):
         tenant = self.context['tenant']
         user   = self.context['request'].user
         team_members = validated_data.pop('team_members', [])
+        vehicles     = validated_data.pop('vehicles', [])
+
+        # Auto-generate title when not provided or left blank
+        if not validated_data.get('title', '').strip():
+            validated_data['title'] = self._build_auto_title(validated_data)
 
         ticket_type = validated_data.get('ticket_type')
         sla_hours   = ticket_type.default_sla_hours if ticket_type else 24
@@ -159,12 +217,14 @@ class TicketCreateSerializer(serializers.ModelSerializer):
             tenant=tenant,
             ticket=ticket,
             event_type=TicketTimeline.EVENT_CREATED,
-            description=f"Ticket created by {user.full_name or user.email}",
+            description=f"Ticket created by {_user_display_name(user)}",
             actor=user,
             created_by=user,
         )
         if team_members:
             ticket.team_members.set(team_members)
+        if vehicles:
+            ticket.vehicles.set(vehicles)
         return ticket
 
     def update(self, instance, validated_data):
@@ -194,9 +254,12 @@ class TicketSLASerializer(serializers.ModelSerializer):
 # ── Comment ───────────────────────────────────────────────────────────────────
 
 class TicketCommentSerializer(serializers.ModelSerializer):
-    author_name   = serializers.CharField(source='author.full_name', read_only=True, default='')
+    author_name   = serializers.SerializerMethodField()
     author_email  = serializers.CharField(source='author.email',     read_only=True, default='')
     attachments   = serializers.JSONField(source='attachment_files', default=list)
+
+    def get_author_name(self, obj):
+        return _user_display_name(obj.author)
 
     class Meta:
         model = TicketComment
@@ -212,7 +275,10 @@ class TicketCommentSerializer(serializers.ModelSerializer):
 class TicketTransferSerializer(serializers.ModelSerializer):
     from_department_name = serializers.CharField(source='from_department.name', read_only=True, default='')
     to_department_name   = serializers.CharField(source='to_department.name',   read_only=True, default='')
-    transferred_by_name  = serializers.CharField(source='transferred_by.full_name', read_only=True, default='')
+    transferred_by_name  = serializers.SerializerMethodField()
+
+    def get_transferred_by_name(self, obj):
+        return _user_display_name(obj.transferred_by)
 
     class Meta:
         model = TicketTransfer
@@ -261,8 +327,11 @@ class TicketProductSerializer(serializers.ModelSerializer):
 # ── Timeline ──────────────────────────────────────────────────────────────────
 
 class TicketTimelineSerializer(serializers.ModelSerializer):
-    actor_name  = serializers.CharField(source='actor.full_name', read_only=True, default='')
+    actor_name  = serializers.SerializerMethodField()
     actor_email = serializers.CharField(source='actor.email',     read_only=True, default='')
+
+    def get_actor_name(self, obj):
+        return _user_display_name(obj.actor)
 
     class Meta:
         model = TicketTimeline
@@ -277,8 +346,11 @@ class TicketTimelineSerializer(serializers.ModelSerializer):
 # ── Attachment ────────────────────────────────────────────────────────────────
 
 class TicketAttachmentSerializer(serializers.ModelSerializer):
-    uploaded_by_name = serializers.CharField(source='uploaded_by.full_name', read_only=True, default='')
+    uploaded_by_name = serializers.SerializerMethodField()
     url = serializers.SerializerMethodField()
+
+    def get_uploaded_by_name(self, obj):
+        return _user_display_name(obj.uploaded_by)
 
     class Meta:
         model = TicketAttachment
@@ -308,3 +380,49 @@ class TicketAttachmentSerializer(serializers.ModelSerializer):
             attrs.setdefault('file_name', f.name)
             attrs.setdefault('file_size', f.size)
         return attrs
+
+
+# ── Vehicle serializers ───────────────────────────────────────────────────────
+
+class VehicleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Vehicle
+        fields = (
+            'id', 'name', 'plate_number', 'type', 'fuel_type',
+            'rate_per_km', 'notes', 'is_active',
+            'created_at', 'updated_at',
+        )
+        read_only_fields = ('id', 'created_at', 'updated_at')
+
+
+class VehicleLogSerializer(serializers.ModelSerializer):
+    vehicle_name   = serializers.CharField(source='vehicle.name', read_only=True)
+    ticket_number  = serializers.CharField(source='ticket.ticket_number', read_only=True, default='')
+    driven_by_name = serializers.SerializerMethodField()
+    distance_km    = serializers.SerializerMethodField()
+    billing_amount = serializers.SerializerMethodField()
+
+    def get_driven_by_name(self, obj):
+        return _user_display_name(obj.driven_by)
+
+    class Meta:
+        model = VehicleLog
+        fields = (
+            'id',
+            'vehicle', 'vehicle_name',
+            'ticket', 'ticket_number',
+            'driven_by', 'driven_by_name',
+            'date',
+            'odometer_start', 'odometer_end',
+            'distance_km', 'billing_amount',
+            'fuel_liters', 'fuel_cost',
+            'notes',
+            'created_at',
+        )
+        read_only_fields = ('id', 'created_at')
+
+    def get_distance_km(self, obj):
+        return obj.distance_km
+
+    def get_billing_amount(self, obj):
+        return obj.billing_amount

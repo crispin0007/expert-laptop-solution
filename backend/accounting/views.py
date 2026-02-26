@@ -15,11 +15,16 @@ from .models import (
     CoinTransaction, Payslip, Invoice,
     Account, JournalEntry, BankAccount,
     Bill, Payment, CreditNote,
+    Quotation, DebitNote, TDSEntry,
+    BankReconciliation, BankReconciliationLine, RecurringJournal,
 )
 from .serializers import (
     CoinTransactionSerializer, PayslipSerializer, InvoiceSerializer,
     AccountSerializer, JournalEntrySerializer, JournalEntryWriteSerializer,
     BankAccountSerializer, BillSerializer, PaymentSerializer, CreditNoteSerializer,
+    QuotationSerializer, DebitNoteSerializer, TDSEntrySerializer,
+    BankReconciliationSerializer, BankReconciliationLineSerializer,
+    RecurringJournalSerializer,
 )
 
 
@@ -131,6 +136,20 @@ class JournalEntryViewSet(TenantMixin, viewsets.ModelViewSet):
             reference_type=JournalEntry.REF_MANUAL,
         )
 
+    def create(self, request, *args, **kwargs):
+        """Return the full read serializer (with id) after creating a journal entry."""
+        write_serializer = JournalEntryWriteSerializer(
+            data=request.data,
+            context=self.get_serializer_context(),
+        )
+        write_serializer.is_valid(raise_exception=True)
+        entry = write_serializer.save(
+            tenant=self.tenant,
+            created_by=self.request.user,
+            reference_type=JournalEntry.REF_MANUAL,
+        )
+        return Response(JournalEntrySerializer(entry).data, status=status.HTTP_201_CREATED)
+
     def update(self, request, *args, **kwargs):
         if self.get_object().is_posted:
             return Response({'detail': 'Posted entries cannot be edited.'}, status=400)
@@ -187,8 +206,15 @@ class BillViewSet(TenantMixin, viewsets.ModelViewSet):
     def _compute_and_save(self, serializer):
         from .services.invoice_service import compute_invoice_totals
         t = self.tenant
-        line_items = serializer.validated_data.get('line_items', [])
-        discount   = serializer.validated_data.get('discount', Decimal('0'))
+        existing   = serializer.instance
+        line_items = serializer.validated_data.get(
+            'line_items',
+            existing.line_items if existing else [],
+        )
+        discount = serializer.validated_data.get(
+            'discount',
+            existing.discount if existing else Decimal('0'),
+        )
         vat_rate   = t.vat_rate if t.vat_enabled else Decimal('0')
         subtotal, vat_amount, total = compute_invoice_totals(line_items, discount, vat_rate)
         serializer.save(
@@ -463,6 +489,33 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
             return Response({'detail': str(e)}, status=400)
         return Response(cash_flow(self.tenant, df, dt))
 
+    @action(detail=False, methods=['get'], url_path='ledger')
+    def ledger(self, request):
+        """GET ?account_code=1001&date_from=YYYY-MM-DD&date_to=YYYY-MM-DD"""
+        from .services.report_service import ledger_report
+        self.ensure_tenant()
+        account_code = request.query_params.get('account_code', '')
+        if not account_code:
+            return Response({'detail': 'account_code is required.'}, status=400)
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as e:
+            return Response({'detail': str(e)}, status=400)
+        return Response(ledger_report(self.tenant, account_code, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='day-book')
+    def day_book(self, request):
+        """GET ?date=YYYY-MM-DD (defaults to today)"""
+        from .services.report_service import day_book
+        from datetime import date
+        self.ensure_tenant()
+        raw = request.query_params.get('date', str(date.today()))
+        try:
+            d = date.fromisoformat(raw)
+        except ValueError as e:
+            return Response({'detail': str(e)}, status=400)
+        return Response(day_book(self.tenant, d))
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Coins
@@ -735,6 +788,16 @@ class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         self._apply_vat_and_totals(serializer)
 
+    @action(detail=True, methods=['post'], url_path='issue')
+    def issue(self, request, pk=None):
+        """POST /invoices/{id}/issue/ — move draft invoice to issued status."""
+        inv = self.get_object()
+        if inv.status != Invoice.STATUS_DRAFT:
+            return Response({'detail': 'Only draft invoices can be issued.'}, status=400)
+        inv.status = Invoice.STATUS_ISSUED
+        inv.save(update_fields=['status'])
+        return Response(InvoiceSerializer(inv).data)
+
     @action(detail=False, methods=['post'], url_path='generate')
     def generate(self, request):
         s = self.get_serializer(data=request.data)
@@ -807,3 +870,377 @@ class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
         except Exception as e:
             return Response({'detail': f'Email failed: {e}'}, status=500)
         return Response({'detail': 'Invoice sent successfully.'})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Quotations
+# ─────────────────────────────────────────────────────────────────────────────
+
+class QuotationViewSet(TenantMixin, viewsets.ModelViewSet):
+    """
+    Pre-sales estimates / proforma invoices.
+
+    POST /quotations/{id}/send/     — mark as sent
+    POST /quotations/{id}/accept/   — mark as accepted
+    POST /quotations/{id}/decline/  — mark as declined
+    POST /quotations/{id}/convert/  — convert accepted quotation to an Invoice
+    """
+
+    queryset         = Quotation.objects.all()
+    serializer_class = QuotationSerializer
+    required_module  = 'accounting'
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = Quotation.objects.filter(tenant=self.tenant).select_related('customer')
+        if s := self.request.query_params.get('status'):
+            qs = qs.filter(status=s)
+        if cid := self.request.query_params.get('customer'):
+            qs = qs.filter(customer_id=cid)
+        return qs.order_by('-created_at')
+
+    def _compute_and_save(self, serializer):
+        from .services.invoice_service import compute_invoice_totals
+        t = self.tenant
+        existing   = serializer.instance
+        line_items = serializer.validated_data.get(
+            'line_items',
+            existing.line_items if existing else [],
+        )
+        discount = serializer.validated_data.get(
+            'discount',
+            existing.discount if existing else Decimal('0'),
+        )
+        vat_rate   = t.vat_rate if t.vat_enabled else Decimal('0')
+        subtotal, vat_amount, total = compute_invoice_totals(line_items, discount, vat_rate)
+        serializer.save(
+            tenant=t, created_by=self.request.user,
+            subtotal=subtotal, vat_rate=vat_rate, vat_amount=vat_amount, total=total,
+        )
+
+    def perform_create(self, serializer):
+        self._compute_and_save(serializer)
+
+    def perform_update(self, serializer):
+        self._compute_and_save(serializer)
+
+    @action(detail=True, methods=['post'], url_path='send')
+    def send(self, request, pk=None):
+        quo = self.get_object()
+        if quo.status != Quotation.STATUS_DRAFT:
+            return Response({'detail': 'Only draft quotations can be sent.'}, status=400)
+        quo.status  = Quotation.STATUS_SENT
+        quo.sent_at = timezone.now()
+        quo.save(update_fields=['status', 'sent_at'])
+        return Response(QuotationSerializer(quo).data)
+
+    @action(detail=True, methods=['post'], url_path='accept')
+    def accept(self, request, pk=None):
+        quo = self.get_object()
+        if quo.status not in (Quotation.STATUS_SENT, Quotation.STATUS_DRAFT):
+            return Response({'detail': 'Quotation cannot be accepted in its current state.'}, status=400)
+        quo.status      = Quotation.STATUS_ACCEPTED
+        quo.accepted_at = timezone.now()
+        quo.save(update_fields=['status', 'accepted_at'])
+        return Response(QuotationSerializer(quo).data)
+
+    @action(detail=True, methods=['post'], url_path='decline')
+    def decline(self, request, pk=None):
+        quo = self.get_object()
+        if quo.status in (Quotation.STATUS_DECLINED, Quotation.STATUS_EXPIRED):
+            return Response({'detail': 'Already declined/expired.'}, status=400)
+        quo.status = Quotation.STATUS_DECLINED
+        quo.save(update_fields=['status'])
+        return Response(QuotationSerializer(quo).data)
+
+    @action(detail=True, methods=['post'], url_path='convert')
+    def convert(self, request, pk=None):
+        """Convert an accepted quotation into a full Invoice."""
+        quo = self.get_object()
+        if quo.status != Quotation.STATUS_ACCEPTED:
+            return Response({'detail': 'Quotation must be accepted before converting.'}, status=400)
+        if quo.converted_invoice_id:
+            return Response({'detail': 'Already converted.'}, status=400)
+
+        from .services.invoice_service import compute_invoice_totals
+        t = self.tenant
+        vat_rate = t.vat_rate if t.vat_enabled else Decimal('0')
+        subtotal, vat_amount, total = compute_invoice_totals(
+            quo.line_items, quo.discount, vat_rate,
+        )
+        invoice = Invoice.objects.create(
+            tenant=t, created_by=request.user,
+            customer=quo.customer, ticket=quo.ticket, project=quo.project,
+            line_items=quo.line_items,
+            subtotal=subtotal, discount=quo.discount,
+            vat_rate=vat_rate, vat_amount=vat_amount, total=total,
+            status=Invoice.STATUS_DRAFT,
+            notes=quo.notes,
+            payment_terms=30,
+        )
+        quo.converted_invoice = invoice
+        quo.save(update_fields=['converted_invoice'])
+        return Response(QuotationSerializer(quo).data, status=201)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Debit Notes
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DebitNoteViewSet(TenantMixin, viewsets.ModelViewSet):
+    """
+    Purchase returns to supplier.
+
+    POST /debit-notes/{id}/issue/ — issue the debit note (creates reversal journal)
+    POST /debit-notes/{id}/void/  — void
+    """
+
+    queryset         = DebitNote.objects.all()
+    serializer_class = DebitNoteSerializer
+    required_module  = 'accounting'
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = DebitNote.objects.filter(tenant=self.tenant).select_related('bill')
+        if s := self.request.query_params.get('status'):
+            qs = qs.filter(status=s)
+        return qs.order_by('-created_at')
+
+    def _compute_totals(self, serializer):
+        from .services.invoice_service import compute_invoice_totals
+        branch = serializer.validated_data.get('bill')
+        vat_rate = self.tenant.vat_rate if self.tenant.vat_enabled else Decimal('0')
+        line_items = serializer.validated_data.get('line_items', [])
+        subtotal, vat_amount, total = compute_invoice_totals(line_items, Decimal('0'), vat_rate)
+        serializer.save(tenant=self.tenant, created_by=self.request.user,
+                        subtotal=subtotal, vat_amount=vat_amount, total=total)
+
+    def perform_create(self, serializer):
+        self._compute_totals(serializer)
+
+    @action(detail=True, methods=['post'], url_path='issue')
+    def issue(self, request, pk=None):
+        dn = self.get_object()
+        if dn.status != DebitNote.STATUS_DRAFT:
+            return Response({'detail': 'Only draft debit notes can be issued.'}, status=400)
+        dn.status    = DebitNote.STATUS_ISSUED
+        dn.issued_at = timezone.now()
+        dn.save(update_fields=['status', 'issued_at'])
+        # Signal in signals.py will create the reversal journal entry
+        return Response(DebitNoteSerializer(dn).data)
+
+    @action(detail=True, methods=['post'], url_path='void')
+    def void(self, request, pk=None):
+        dn = self.get_object()
+        if dn.status == DebitNote.STATUS_VOID:
+            return Response({'detail': 'Already voided.'}, status=400)
+        dn.status = DebitNote.STATUS_VOID
+        dn.save(update_fields=['status'])
+        return Response(DebitNoteSerializer(dn).data)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TDS Entries
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TDSEntryViewSet(TenantMixin, viewsets.ModelViewSet):
+    """
+    Nepal TDS management.  Track deductions and deposits to IRD.
+
+    POST /tds/{id}/mark-deposited/ — record that amount was deposited to IRD
+    GET  /tds/summary/             — monthly TDS summary for a fiscal year
+    """
+
+    queryset         = TDSEntry.objects.all()
+    serializer_class = TDSEntrySerializer
+    required_module  = 'accounting'
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve', 'summary'):
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = TDSEntry.objects.filter(tenant=self.tenant)
+        if s := self.request.query_params.get('status'):
+            qs = qs.filter(status=s)
+        if y := self.request.query_params.get('year'):
+            qs = qs.filter(period_year=y)
+        if m := self.request.query_params.get('month'):
+            qs = qs.filter(period_month=m)
+        return qs.order_by('-created_at')
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.tenant, created_by=self.request.user)
+
+    @action(detail=True, methods=['post'], url_path='mark-deposited')
+    def mark_deposited(self, request, pk=None):
+        entry = self.get_object()
+        if entry.status == TDSEntry.STATUS_DEPOSITED:
+            return Response({'detail': 'Already deposited.'}, status=400)
+        entry.status           = TDSEntry.STATUS_DEPOSITED
+        entry.deposited_at     = timezone.now()
+        entry.deposit_reference = request.data.get('deposit_reference', '')
+        entry.save(update_fields=['status', 'deposited_at', 'deposit_reference'])
+        return Response(TDSEntrySerializer(entry).data)
+
+    @action(detail=False, methods=['get'], url_path='summary')
+    def summary(self, request):
+        """Monthly TDS totals for a fiscal year. GET ?year=2081"""
+        from django.db.models import Sum
+        self.ensure_tenant()
+        year = request.query_params.get('year')
+        qs   = TDSEntry.objects.filter(tenant=self.tenant)
+        if year:
+            qs = qs.filter(period_year=year)
+        rows = (
+            qs.values('period_year', 'period_month', 'status')
+            .annotate(total_tds=Sum('tds_amount'), total_taxable=Sum('taxable_amount'))
+            .order_by('period_year', 'period_month')
+        )
+        return Response(list(rows))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bank Reconciliation
+# ─────────────────────────────────────────────────────────────────────────────
+
+class BankReconciliationViewSet(TenantMixin, viewsets.ModelViewSet):
+    """
+    Bank statement reconciliation against system Payment records.
+
+    POST /bank-reconciliations/{id}/add-line/      — add a bank statement line
+    POST /bank-reconciliations/{id}/match-line/    — match a line to a Payment
+    POST /bank-reconciliations/{id}/unmatch-line/  — unmatch a line
+    POST /bank-reconciliations/{id}/reconcile/     — finalize (requires difference == 0)
+    """
+
+    queryset         = BankReconciliation.objects.all()
+    serializer_class = BankReconciliationSerializer
+    required_module  = 'accounting'
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = BankReconciliation.objects.filter(tenant=self.tenant).select_related('bank_account')
+        if bid := self.request.query_params.get('bank_account'):
+            qs = qs.filter(bank_account_id=bid)
+        return qs.order_by('-statement_date')
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.tenant, created_by=self.request.user)
+
+    @action(detail=True, methods=['post'], url_path='add-line')
+    def add_line(self, request, pk=None):
+        rec = self.get_object()
+        if rec.status == BankReconciliation.STATUS_RECONCILED:
+            return Response({'detail': 'Reconciliation is locked.'}, status=400)
+        ser = BankReconciliationLineSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        ser.save(reconciliation=rec)
+        return Response(ser.data, status=201)
+
+    @action(detail=True, methods=['post'], url_path='match-line')
+    def match_line(self, request, pk=None):
+        """Body: {"line_id": int, "payment_id": int}"""
+        rec = self.get_object()
+        try:
+            line    = rec.lines.get(pk=request.data['line_id'])
+            payment = Payment.objects.get(pk=request.data['payment_id'], tenant=self.tenant)
+        except (BankReconciliationLine.DoesNotExist, Payment.DoesNotExist, KeyError):
+            return Response({'detail': 'Line or payment not found.'}, status=404)
+        line.is_matched = True
+        line.payment    = payment
+        line.save(update_fields=['is_matched', 'payment'])
+        return Response(BankReconciliationLineSerializer(line).data)
+
+    @action(detail=True, methods=['post'], url_path='unmatch-line')
+    def unmatch_line(self, request, pk=None):
+        rec = self.get_object()
+        try:
+            line = rec.lines.get(pk=request.data['line_id'])
+        except (BankReconciliationLine.DoesNotExist, KeyError):
+            return Response({'detail': 'Line not found.'}, status=404)
+        line.is_matched = False
+        line.payment    = None
+        line.save(update_fields=['is_matched', 'payment'])
+        return Response(BankReconciliationLineSerializer(line).data)
+
+    @action(detail=True, methods=['post'], url_path='reconcile')
+    def reconcile(self, request, pk=None):
+        """Lock the reconciliation. Fails if difference != 0."""
+        rec = self.get_object()
+        if rec.status == BankReconciliation.STATUS_RECONCILED:
+            return Response({'detail': 'Already reconciled.'}, status=400)
+        if rec.difference != 0:
+            return Response(
+                {'detail': f'Unmatched difference of {rec.difference}. All lines must be matched.'},
+                status=400,
+            )
+        rec.status        = BankReconciliation.STATUS_RECONCILED
+        rec.reconciled_at = timezone.now()
+        rec.save(update_fields=['status', 'reconciled_at'])
+        return Response(BankReconciliationSerializer(rec).data)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Recurring Journals
+# ─────────────────────────────────────────────────────────────────────────────
+
+class RecurringJournalViewSet(TenantMixin, viewsets.ModelViewSet):
+    """
+    Recurring journal entry templates.
+
+    POST /recurring-journals/{id}/run/ — manually trigger one run now
+    """
+
+    queryset         = RecurringJournal.objects.all()
+    serializer_class = RecurringJournalSerializer
+    required_module  = 'accounting'
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = RecurringJournal.objects.filter(tenant=self.tenant)
+        if request_active := self.request.query_params.get('active'):
+            qs = qs.filter(is_active=request_active.lower() == 'true')
+        return qs.order_by('next_date')
+
+    def perform_create(self, serializer):
+        obj = serializer.save(tenant=self.tenant, created_by=self.request.user)
+        # Ensure next_date defaults to start_date if not provided
+        if not obj.next_date:
+            obj.next_date = obj.start_date
+            obj.save(update_fields=['next_date'])
+
+    @action(detail=True, methods=['post'], url_path='run')
+    def run_now(self, request, pk=None):
+        """Manually execute this recurring template right now."""
+        from .services.journal_service import run_recurring_journal
+        rec = self.get_object()
+        try:
+            entry = run_recurring_journal(rec, triggered_by=request.user)
+        except Exception as e:
+            return Response({'detail': str(e)}, status=400)
+        from .serializers import JournalEntrySerializer
+        return Response(JournalEntrySerializer(entry).data, status=201)
+

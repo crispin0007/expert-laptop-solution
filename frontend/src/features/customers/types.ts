@@ -5,7 +5,13 @@ export interface Customer {
   name: string
   email: string
   phone: string
-  address: string
+  // Nepal hierarchical address
+  province: string
+  district: string
+  municipality: string
+  ward_no: string
+  street: string
+  full_address: string   // read-only, assembled by API
   vat_number: string
   pan_number: string
   notes: string

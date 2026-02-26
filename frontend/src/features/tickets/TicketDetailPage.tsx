@@ -7,6 +7,7 @@ import {
   ArrowLeft, Send, UserCheck, ArrowRightLeft, AlertCircle,
   Clock, CheckCircle2, CircleDot, Loader2, Lock, MessageSquare,
   Package, Plus, Trash2, FileText, Coins, Paperclip, Users, X, Download, Phone,
+  Car, MapPin,
 } from 'lucide-react'
 import apiClient from '../../api/client'
 import { TICKETS, ACCOUNTING, INVENTORY, DEPARTMENTS } from '../../api/endpoints'
@@ -40,6 +41,8 @@ interface TicketDetail {
   resolved_at: string | null
   closed_at: string | null
   created_at: string
+  vehicles: number[]
+  vehicle_names: Array<{ id: number; name: string; plate_number: string }>
 }
 
 interface TicketAttachment {
@@ -74,6 +77,7 @@ interface TimelineEvent {
 interface StaffUser {
   id: number
   full_name: string
+  display_name: string
   email: string
 }
 
@@ -99,6 +103,35 @@ interface Product {
   unit_price: string
   is_service: boolean
   is_active: boolean
+}
+
+interface Vehicle {
+  id: number
+  name: string
+  plate_number: string
+  type: string
+  fuel_type: string
+  rate_per_km: string
+  is_active: boolean
+}
+
+interface VehicleLog {
+  id: number
+  vehicle: number
+  vehicle_name: string
+  ticket: number | null
+  ticket_number: string
+  driven_by: number | null
+  driven_by_name: string
+  date: string
+  odometer_start: string
+  odometer_end: string
+  distance_km: number
+  billing_amount: number
+  fuel_liters: string | null
+  fuel_cost: string | null
+  notes: string
+  created_at: string
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -203,7 +236,7 @@ function AssignModal({
           >
             <option value="">— Unassigned —</option>
             {staff.map(s => (
-              <option key={s.id} value={s.id}>{s.full_name || s.email}</option>
+              <option key={s.id} value={s.id}>{s.display_name || s.full_name || s.email}</option>
             ))}
           </select>
         </div>
@@ -220,7 +253,7 @@ function AssignModal({
                   onChange={() => toggleTeamMember(s.id)}
                   className="rounded text-indigo-600"
                 />
-                <span className="text-sm text-gray-700">{s.full_name || s.email}</span>
+                <span className="text-sm text-gray-700">{s.display_name || s.full_name || s.email}</span>
               </label>
             ))}
           </div>
@@ -535,6 +568,454 @@ function TicketProductsPanel({
   )
 }
 
+// ── Vehicle Section (dispatched vehicles + trip logs) ───────────────────────
+
+/**
+ * Unified vehicle panel for a ticket:
+ *  - TOP: Dispatched Vehicles — the fleet M2M assigned to this ticket
+ *    (set during wizard, editable here via PATCH /tickets/{id}/)
+ *  - BOTTOM: Trip Logs — VehicleLog records for actual trips
+ *    (odometer, distance, billing; logged after the trip)
+ */
+function TicketVehicleSection({
+  ticket,
+  ticketId,
+}: { ticket: TicketDetail; ticketId: number }) {
+  const qc = useQueryClient()
+  const isClosed = ['closed', 'cancelled'].includes(ticket.status)
+
+  // ── Dispatched vehicle editing ────────────────────────────────────────────
+  const [editingDispatch, setEditingDispatch] = useState(false)
+  const [pendingVehicles, setPendingVehicles] = useState<number[]>([])
+
+  // ── Trip-log form ─────────────────────────────────────────────────────────
+  const [showLogForm, setShowLogForm] = useState(false)
+  const [logVehicleId, setLogVehicleId] = useState<number | ''>('')
+  const [logDate, setLogDate] = useState(new Date().toISOString().slice(0, 10))
+  const [odoStart, setOdoStart] = useState<number | ''>('')
+  const [odoEnd, setOdoEnd] = useState<number | ''>('')
+  const [fuelLiters, setFuelLiters] = useState<number | ''>('')
+  const [fuelCost, setFuelCost] = useState<number | ''>('')
+  const [logNotes, setLogNotes] = useState('')
+
+  // ── Queries ───────────────────────────────────────────────────────────────
+  const { data: allVehicles = [] } = useQuery<Vehicle[]>({
+    queryKey: ['vehicles-active'],
+    queryFn: () =>
+      apiClient.get(TICKETS.VEHICLES, { params: { is_active: true, page_size: 100 } }).then(r =>
+        Array.isArray(r.data) ? r.data : (r.data.results ?? r.data.data ?? [])
+      ),
+  })
+
+  const { data: logs = [] } = useQuery<VehicleLog[]>({
+    queryKey: ['ticket-vehicle-logs', ticketId],
+    queryFn: () =>
+      apiClient.get(TICKETS.VEHICLE_TICKET_LOGS(ticketId)).then(r =>
+        Array.isArray(r.data) ? r.data : (r.data.results ?? r.data.data ?? [])
+      ),
+    enabled: !!ticketId,
+  })
+
+  // ── Dispatch mutation — PATCH ticket's vehicles M2M ───────────────────────
+  const dispatchMutation = useMutation({
+    mutationFn: () => apiClient.patch(TICKETS.DETAIL(ticketId), { vehicles: pendingVehicles }),
+    onSuccess: () => {
+      toast.success('Dispatched vehicles updated')
+      setEditingDispatch(false)
+      qc.invalidateQueries({ queryKey: ['ticket', String(ticketId)] })
+    },
+    onError: () => toast.error('Failed to update vehicles'),
+  })
+
+  function openDispatchEdit() {
+    setPendingVehicles(ticket.vehicles ?? [])
+    setEditingDispatch(true)
+  }
+  function togglePending(id: number) {
+    setPendingVehicles(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id])
+  }
+
+  // ── Trip-log mutations ────────────────────────────────────────────────────
+  function resetLogForm() {
+    // Default to first dispatched vehicle when there's exactly one
+    setLogVehicleId(ticket.vehicles?.length === 1 ? ticket.vehicles[0] : '')
+    setLogDate(new Date().toISOString().slice(0, 10))
+    setOdoStart('')
+    setOdoEnd('')
+    setFuelLiters('')
+    setFuelCost('')
+    setLogNotes('')
+    setShowLogForm(false)
+  }
+
+  const addLogMutation = useMutation({
+    mutationFn: () =>
+      apiClient.post(TICKETS.VEHICLE_LOGS, {
+        vehicle: logVehicleId,
+        ticket: ticketId,
+        date: logDate,
+        odometer_start: odoStart,
+        odometer_end: odoEnd,
+        ...(fuelLiters !== '' ? { fuel_liters: fuelLiters } : {}),
+        ...(fuelCost !== '' ? { fuel_cost: fuelCost } : {}),
+        notes: logNotes,
+      }),
+    onSuccess: () => {
+      toast.success('Trip log saved')
+      resetLogForm()
+      qc.invalidateQueries({ queryKey: ['ticket-vehicle-logs', ticketId] })
+    },
+    onError: () => toast.error('Failed to save trip log'),
+  })
+
+  const removeLogMutation = useMutation({
+    mutationFn: (logId: number) => apiClient.delete(TICKETS.VEHICLE_LOG_DETAIL(logId)),
+    onSuccess: () => {
+      toast.success('Log removed')
+      qc.invalidateQueries({ queryKey: ['ticket-vehicle-logs', ticketId] })
+    },
+    onError: () => toast.error('Failed to remove log'),
+  })
+
+  // ── Derived ───────────────────────────────────────────────────────────────
+  const dispatchedVehicles = ticket.vehicle_names ?? []
+  const totalBilling = logs.reduce((s, l) => s + l.billing_amount, 0)
+  const selectedLogVehicle = allVehicles.find(v => v.id === logVehicleId)
+  const previewKm =
+    odoEnd !== '' && odoStart !== ''
+      ? Math.max(Number(odoEnd) - Number(odoStart), 0)
+      : null
+  const previewBilling =
+    previewKm !== null && selectedLogVehicle
+      ? (previewKm * parseFloat(selectedLogVehicle.rate_per_km)).toFixed(2)
+      : null
+
+  // For the log form: show dispatched vehicles first (in a group), then the rest
+  const dispatchedIds = new Set(ticket.vehicles ?? [])
+  const logVehicleOptions = [
+    ...allVehicles.filter(v => dispatchedIds.has(v.id)),
+    ...allVehicles.filter(v => !dispatchedIds.has(v.id)),
+  ]
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      {/* ── Section header ─────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+        <h2 className="font-semibold text-gray-800 flex items-center gap-2">
+          <Car size={16} className="text-sky-500" /> Vehicles
+        </h2>
+      </div>
+
+      {/* ── Part 1: Dispatched Vehicles ─────────────────────────────────────── */}
+      <div className="px-6 py-4 border-b border-gray-100">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Dispatched</p>
+          {!isClosed && !editingDispatch && (
+            <button
+              onClick={openDispatchEdit}
+              className="text-xs text-sky-600 hover:text-sky-800 underline"
+            >
+              Edit
+            </button>
+          )}
+        </div>
+
+        {!editingDispatch ? (
+          // Display mode
+          dispatchedVehicles.length === 0 ? (
+            <p className="text-sm text-gray-400 italic">No vehicles dispatched for this ticket.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {dispatchedVehicles.map(v => (
+                <span
+                  key={v.id}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-sky-50 border border-sky-200 text-sky-800 text-xs font-medium rounded-full"
+                >
+                  <Car size={11} />
+                  {v.name}
+                  {v.plate_number && (
+                    <span className="text-sky-500 font-normal">· {v.plate_number}</span>
+                  )}
+                </span>
+              ))}
+            </div>
+          )
+        ) : (
+          // Edit mode — multi-toggle picker
+          <div className="space-y-2">
+            {allVehicles.length === 0 ? (
+              <p className="text-xs text-gray-400 italic">No active vehicles registered.</p>
+            ) : (
+              <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-48 overflow-y-auto">
+                {allVehicles.map(v => {
+                  const sel = pendingVehicles.includes(v.id)
+                  return (
+                    <button
+                      key={v.id}
+                      type="button"
+                      onClick={() => togglePending(v.id)}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${
+                        sel ? 'bg-sky-50' : 'bg-white hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs ${
+                        sel ? 'bg-sky-600 text-white' : 'bg-gray-200 text-gray-500'
+                      }`}>
+                        {sel ? '✓' : <Car size={11} />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <span className={`text-sm font-medium ${ sel ? 'text-sky-800' : 'text-gray-700'}`}>
+                          {v.name}
+                        </span>
+                        {v.plate_number && (
+                          <span className="ml-1.5 text-xs text-gray-400">{v.plate_number}</span>
+                        )}
+                      </div>
+                      <span className="text-xs text-gray-400">{v.type} · Rs.{v.rate_per_km}/km</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => dispatchMutation.mutate()}
+                disabled={dispatchMutation.isPending}
+                className="flex items-center gap-1.5 px-4 py-1.5 text-sm bg-sky-600 text-white rounded-lg hover:bg-sky-700 disabled:opacity-50 transition"
+              >
+                {dispatchMutation.isPending && <Loader2 size={12} className="animate-spin" />}
+                Save
+              </button>
+              <button
+                onClick={() => setEditingDispatch(false)}
+                className="px-4 py-1.5 text-sm border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Part 2: Trip Logs ───────────────────────────────────────────────── */}
+      <div className="px-6 py-4">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Trip Logs</p>
+          {!isClosed && !showLogForm && (
+            <button
+              onClick={() => {
+                // Pre-fill vehicle when only one is dispatched
+                setLogVehicleId(ticket.vehicles?.length === 1 ? ticket.vehicles[0] : '')
+                setShowLogForm(true)
+              }}
+              className="flex items-center gap-1 text-xs text-sky-600 hover:text-sky-800 underline"
+            >
+              <Plus size={11} /> Log Trip
+            </button>
+          )}
+        </div>
+
+        {/* Log list */}
+        {logs.length === 0 && !showLogForm && (
+          <p className="text-sm text-gray-400 italic">No trip logs recorded yet.</p>
+        )}
+        {logs.length > 0 && (
+          <div className="divide-y divide-gray-100 mb-3">
+            {logs.map(log => (
+              <div key={log.id} className="py-3 flex items-start gap-3">
+                {/* Vehicle colour dot */}
+                <div className="w-7 h-7 rounded-full bg-sky-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <Car size={12} className="text-sky-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                    <span className="text-sm font-medium text-gray-800">{log.vehicle_name}</span>
+                    <span className="text-xs text-gray-400">{log.date}</span>
+                    {log.driven_by_name && (
+                      <span className="text-xs text-gray-500">· {log.driven_by_name}</span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-500">
+                    <span className="flex items-center gap-1">
+                      <MapPin size={10} /> {log.distance_km.toFixed(1)} km
+                    </span>
+                    <span className="font-medium text-gray-700">Rs. {log.billing_amount.toFixed(2)}</span>
+                    {log.fuel_liters && <span>Fuel {log.fuel_liters} L</span>}
+                    {log.fuel_cost && <span>Fuel cost Rs. {parseFloat(log.fuel_cost).toFixed(2)}</span>}
+                    <span className="text-gray-300">Odo {log.odometer_start}→{log.odometer_end}</span>
+                  </div>
+                  {log.notes && (
+                    <p className="text-xs text-gray-400 mt-0.5 italic">{log.notes}</p>
+                  )}
+                </div>
+                {!isClosed && (
+                  <button
+                    onClick={() => removeLogMutation.mutate(log.id)}
+                    disabled={removeLogMutation.isPending}
+                    className="text-red-400 hover:text-red-600 transition flex-shrink-0 mt-0.5"
+                    title="Remove log"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                )}
+              </div>
+            ))}
+            {/* Total */}
+            <div className="flex items-center justify-between pt-2.5 text-sm font-semibold text-gray-800">
+              <span>Total Trip Billing</span>
+              <span>Rs. {totalBilling.toFixed(2)}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Add trip-log form */}
+        {showLogForm && !isClosed && (
+          <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 space-y-3">
+            <p className="text-xs font-semibold text-gray-600">New Trip Log</p>
+            <div className="grid grid-cols-2 gap-3">
+              {/* Vehicle — dispatched ones listed first */}
+              <div className="col-span-2">
+                <label className="block text-xs text-gray-500 mb-1">
+                  Vehicle <span className="text-red-400">*</span>
+                  {dispatchedVehicles.length > 0 && (
+                    <span className="ml-1 text-sky-500">(dispatched first)</span>
+                  )}
+                </label>
+                <select
+                  value={logVehicleId}
+                  onChange={e => setLogVehicleId(e.target.value ? Number(e.target.value) : '')}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                >
+                  <option value="">— Select vehicle —</option>
+                  {dispatchedIds.size > 0 && (
+                    <optgroup label="Dispatched for this ticket">
+                      {logVehicleOptions
+                        .filter(v => dispatchedIds.has(v.id))
+                        .map(v => (
+                          <option key={v.id} value={v.id}>
+                            {v.name}{v.plate_number ? ` (${v.plate_number})` : ''} · Rs.{v.rate_per_km}/km
+                          </option>
+                        ))}
+                    </optgroup>
+                  )}
+                  {logVehicleOptions.filter(v => !dispatchedIds.has(v.id)).length > 0 && (
+                    <optgroup label="Other vehicles">
+                      {logVehicleOptions
+                        .filter(v => !dispatchedIds.has(v.id))
+                        .map(v => (
+                          <option key={v.id} value={v.id}>
+                            {v.name}{v.plate_number ? ` (${v.plate_number})` : ''} · Rs.{v.rate_per_km}/km
+                          </option>
+                        ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
+
+              {/* Date */}
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Date <span className="text-red-400">*</span></label>
+                <input
+                  type="date"
+                  value={logDate}
+                  onChange={e => setLogDate(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+
+              {/* Odometer Start */}
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Odo Start (km) <span className="text-red-400">*</span></label>
+                <input
+                  type="number" min={0} step={0.1}
+                  value={odoStart}
+                  onChange={e => setOdoStart(e.target.value === '' ? '' : Number(e.target.value))}
+                  placeholder="e.g. 12000"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+
+              {/* Odometer End */}
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Odo End (km) <span className="text-red-400">*</span></label>
+                <input
+                  type="number" min={0} step={0.1}
+                  value={odoEnd}
+                  onChange={e => setOdoEnd(e.target.value === '' ? '' : Number(e.target.value))}
+                  placeholder="e.g. 12045"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+
+              {/* Live preview */}
+              {previewKm !== null && (
+                <div className="col-span-2 flex items-center gap-3 bg-sky-50 rounded-lg px-3 py-2 text-xs text-sky-700 font-medium">
+                  <MapPin size={11} />
+                  {previewKm.toFixed(1)} km
+                  {previewBilling !== null && <> · Rs. {previewBilling} billing</>}
+                </div>
+              )}
+
+              {/* Fuel */}
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Fuel (L)</label>
+                <input
+                  type="number" min={0} step={0.1}
+                  value={fuelLiters}
+                  onChange={e => setFuelLiters(e.target.value === '' ? '' : Number(e.target.value))}
+                  placeholder="optional"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+
+              {/* Fuel cost */}
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Fuel Cost (Rs.)</label>
+                <input
+                  type="number" min={0} step={0.01}
+                  value={fuelCost}
+                  onChange={e => setFuelCost(e.target.value === '' ? '' : Number(e.target.value))}
+                  placeholder="optional"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+
+              {/* Notes */}
+              <div className="col-span-2">
+                <label className="block text-xs text-gray-500 mb-1">Notes</label>
+                <textarea
+                  rows={2}
+                  value={logNotes}
+                  onChange={e => setLogNotes(e.target.value)}
+                  placeholder="Optional trip notes…"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => addLogMutation.mutate()}
+                disabled={!logVehicleId || odoStart === '' || odoEnd === '' || !logDate || addLogMutation.isPending}
+                className="flex items-center gap-1.5 px-4 py-1.5 text-sm bg-sky-600 text-white rounded-lg hover:bg-sky-700 disabled:opacity-50 transition"
+              >
+                {addLogMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                Save Log
+              </button>
+              <button
+                onClick={resetLogForm}
+                className="px-4 py-1.5 text-sm border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Close Ticket Modal ───────────────────────────────────────────────────────
 
 function CloseTicketModal({ ticketId, open, onClose, onDone }: {
@@ -768,53 +1249,108 @@ export default function TicketDetailPage() {
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* Back */}
-      <Link
-        to="/tickets"
-        className="inline-flex items-center gap-1 text-sm text-indigo-500 hover:text-indigo-700 mb-5"
-      >
-        <ArrowLeft size={15} /> Back to Tickets
-      </Link>
+    <div className="-mx-6 md:-mx-8 -mt-6 md:-mt-8 flex flex-col bg-gray-50">
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      {/* ── Top bar ──────────────────────────────────────────────────────────── */}
+      <div className="flex-shrink-0 sticky top-0 z-10 bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4">
+        <Link
+          to="/tickets"
+          className="inline-flex items-center gap-1 text-sm text-indigo-500 hover:text-indigo-700"
+        >
+          <ArrowLeft size={15} /> Tickets
+        </Link>
+        <span className="text-gray-300">/</span>
+        <span className="font-mono text-xs text-indigo-400">{ticket.ticket_number}</span>
+        <h1 className="text-sm font-semibold text-gray-900 truncate flex-1">{ticket.title}</h1>
 
-        {/* ── Left: Main content ─────────────────────────────────────────── */}
-        <div className="xl:col-span-2 space-y-5">
+        {/* Status + priority badges */}
+        <span className={`flex-shrink-0 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[ticket.status]}`}>
+          {STATUS_LABELS[ticket.status] ?? ticket.status}
+        </span>
+        <span className={`flex-shrink-0 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${PRIORITY_COLORS[ticket.priority]}`}>
+          {ticket.priority}
+        </span>
+        {ticket.sla_breached && (
+          <span className="flex-shrink-0 flex items-center gap-1 text-xs font-medium text-red-600 bg-red-50 px-2 py-0.5 rounded-full">
+            <AlertCircle size={11} /> SLA Breached
+          </span>
+        )}
 
-          {/* Header card */}
-          <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-            <div className="flex items-start justify-between gap-4 mb-4">
-              <div>
-                <p className="text-indigo-500 font-mono text-xs mb-1">{ticket.ticket_number}</p>
-                <h1 className="text-xl font-bold text-gray-900">{ticket.title}</h1>
+        {/* Action buttons */}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {managerView ? (
+            <>
+              <div className="flex items-center gap-1">
+                <select
+                  value={newStatus || ticket.status}
+                  onChange={e => setNewStatus(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  {Object.entries(STATUS_LABELS)
+                    .filter(([v]) => v !== 'closed')
+                    .map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+                <button
+                  onClick={() => statusMutation.mutate(newStatus || ticket.status)}
+                  disabled={statusMutation.isPending || !newStatus || newStatus === ticket.status}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition"
+                >
+                  {statusMutation.isPending && <Loader2 size={11} className="animate-spin" />}
+                  Update
+                </button>
               </div>
-              {ticket.sla_breached && (
-                <span className="flex items-center gap-1 text-xs font-medium text-red-600 bg-red-50 px-2 py-1 rounded-full flex-shrink-0">
-                  <AlertCircle size={12} /> SLA Breached
-                </span>
+              {ticket.status === 'resolved' && (
+                <button
+                  onClick={() => setShowCloseModal(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition"
+                >
+                  <Coins size={13} /> Close &amp; Award Coins
+                </button>
               )}
-            </div>
+            </>
+          ) : (
+            ticket.assigned_to === user?.id &&
+              ['in_progress', 'pending_customer'].includes(ticket.status) ? (
+              <button
+                onClick={() => statusMutation.mutate('resolved')}
+                disabled={statusMutation.isPending}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition"
+              >
+                {statusMutation.isPending ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={13} />}
+                Mark Resolved
+              </button>
+            ) : null
+          )}
+          <button
+            onClick={() => setShowAssign(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-green-300 text-green-700 rounded-lg hover:bg-green-50 transition"
+          >
+            <UserCheck size={13} /> Assign
+          </button>
+          <button
+            onClick={() => setShowTransfer(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-purple-300 text-purple-700 rounded-lg hover:bg-purple-50 transition"
+          >
+            <ArrowRightLeft size={13} /> Transfer
+          </button>
+        </div>
+      </div>
 
+      {/* ── Body: two panes ──────────────────────────────────────────────────── */}
+      <div className="flex gap-0 items-start">
+
+        {/* ── Left: scrollable details ──────────────────────────────────────── */}
+        <div className="flex-1 p-6 space-y-5 min-w-0 pb-10">
+
+          {/* Info card */}
+          <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
             {ticket.description && (
-              <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed mb-4">
+              <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed mb-4 pb-4 border-b border-gray-100">
                 {ticket.description}
               </p>
             )}
-
-            {/* Meta grid */}
             <dl className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
               {[
-                { label: 'Status', value: (
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[ticket.status]}`}>
-                    {STATUS_LABELS[ticket.status] ?? ticket.status}
-                  </span>
-                )},
-                { label: 'Priority', value: (
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium capitalize ${PRIORITY_COLORS[ticket.priority]}`}>
-                    {ticket.priority}
-                  </span>
-                )},
                 { label: 'Type', value: ticket.ticket_type_name || '—' },
                 { label: 'Customer', value: ticket.customer_name || '—' },
                 { label: 'Department', value: ticket.department_name || '—' },
@@ -832,7 +1368,6 @@ export default function TicketDetailPage() {
                   <dd className="text-gray-800 font-medium text-xs">{item.value}</dd>
                 </div>
               ))}
-              {/* Team Members — full-width */}
               {(ticket.team_member_names?.length ?? 0) > 0 && (
                 <div className="col-span-2 sm:col-span-3 bg-gray-50 rounded-lg p-3">
                   <dt className="text-xs text-gray-400 mb-1.5 flex items-center gap-1"><Users size={11} /> Team Members</dt>
@@ -844,134 +1379,41 @@ export default function TicketDetailPage() {
                 </div>
               )}
             </dl>
-
-            {/* Action bar */}
-            <div className="flex flex-wrap gap-2 mt-5 pt-4 border-t border-gray-100">
-              {managerView ? (
-                /* ── Manager actions ──────────────────────────── */
-                <>
-                  <div className="flex items-center gap-1.5">
-                    <select
-                      value={newStatus || ticket.status}
-                      onChange={e => setNewStatus(e.target.value)}
-                      className="border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
-                      {Object.entries(STATUS_LABELS)
-                        .filter(([v]) => v !== 'closed')
-                        .map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                    </select>
-                    <button
-                      onClick={() => statusMutation.mutate(newStatus || ticket.status)}
-                      disabled={statusMutation.isPending || !newStatus || newStatus === ticket.status}
-                      className="flex items-center gap-1 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition"
-                    >
-                      {statusMutation.isPending && <Loader2 size={11} className="animate-spin" />}
-                      Update
-                    </button>
-                  </div>
-                  {ticket.status === 'resolved' && (
-                    <button
-                      onClick={() => setShowCloseModal(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition"
-                    >
-                      <Coins size={13} /> Close &amp; Award Coins
-                    </button>
-                  )}
-                </>
-              ) : (
-                /* ── Staff actions ────────────────────────────── */
-                <>
-                  {ticket.assigned_to === user?.id &&
-                    ['in_progress', 'pending_customer'].includes(ticket.status) ? (
-                    <button
-                      onClick={() => statusMutation.mutate('resolved')}
-                      disabled={statusMutation.isPending}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition"
-                    >
-                      {statusMutation.isPending
-                        ? <Loader2 size={11} className="animate-spin" />
-                        : <CheckCircle2 size={13} />}
-                      Mark as Resolved
-                    </button>
-                  ) : (
-                    <span className="text-xs text-gray-400 self-center">
-                      {['resolved', 'closed', 'cancelled'].includes(ticket.status)
-                        ? `Ticket is ${STATUS_LABELS[ticket.status] ?? ticket.status}`
-                        : 'Ticket not assigned to you'}
-                    </span>
-                  )}
-                </>
-              )}
-
-              <button
-                onClick={() => setShowAssign(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-green-300 text-green-700 rounded-lg hover:bg-green-50 transition"
-              >
-                <UserCheck size={13} /> Assign
-              </button>
-
-              <button
-                onClick={() => setShowTransfer(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-purple-300 text-purple-700 rounded-lg hover:bg-purple-50 transition"
-              >
-                <ArrowRightLeft size={13} /> Transfer
-              </button>
-            </div>
           </div>
 
           {/* Products & Parts */}
           <TicketProductsPanel ticketId={ticketId} ticketStatus={ticket.status} />
 
+          {/* Vehicles */}
+          <TicketVehicleSection ticket={ticket} ticketId={ticketId} />
+
           {/* Attachments */}
-          <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+          <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
             <h2 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
-              <Paperclip size={16} className="text-gray-400" /> Attachments
+              <Paperclip size={15} className="text-gray-400" /> Attachments
               <button
                 onClick={() => attachFileRef.current?.click()}
                 disabled={uploadingAttach}
                 className="ml-auto flex items-center gap-1.5 px-3 py-1 text-xs bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 disabled:opacity-50"
               >
-                {uploadingAttach
-                  ? <Loader2 size={11} className="animate-spin" />
-                  : <Plus size={11} />
-                }
+                {uploadingAttach ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
                 {uploadingAttach ? 'Uploading…' : 'Upload'}
               </button>
             </h2>
-            <input
-              ref={attachFileRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={e => handleAttachmentUpload(e.target.files)}
-            />
-            {attachments.length === 0 && (
-              <p className="text-sm text-gray-400">No attachments yet.</p>
-            )}
+            <input ref={attachFileRef} type="file" multiple className="hidden" onChange={e => handleAttachmentUpload(e.target.files)} />
+            {attachments.length === 0 && <p className="text-sm text-gray-400">No attachments yet.</p>}
             <div className="space-y-2">
               {attachments.map(a => (
                 <div key={a.id} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-lg">
                   <FileText size={15} className="text-gray-400 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-gray-700 truncate">{a.file_name}</p>
-                    <p className="text-xs text-gray-400">
-                      {a.file_size ? `${(a.file_size / 1024).toFixed(1)} KB · ` : ''}{a.uploaded_by_name}
-                    </p>
+                    <p className="text-xs text-gray-400">{a.file_size ? `${(a.file_size / 1024).toFixed(1)} KB · ` : ''}{a.uploaded_by_name}</p>
                   </div>
-                  <a
-                    href={a.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-indigo-500 hover:text-indigo-700 p-1"
-                    title="Download"
-                  >
+                  <a href={a.url} target="_blank" rel="noreferrer" className="text-indigo-500 hover:text-indigo-700 p-1" title="Download">
                     <Download size={14} />
                   </a>
-                  <button
-                    onClick={() => deleteAttachment(a.id)}
-                    className="text-red-400 hover:text-red-600 p-1"
-                    title="Remove"
-                  >
+                  <button onClick={() => deleteAttachment(a.id)} className="text-red-400 hover:text-red-600 p-1" title="Remove">
                     <X size={14} />
                   </button>
                 </div>
@@ -979,144 +1421,15 @@ export default function TicketDetailPage() {
             </div>
           </div>
 
-          {/* Comments */}
-          <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+          {/* Timeline */}
+          <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
             <h2 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <MessageSquare size={16} className="text-gray-400" /> Comments
+              <Clock size={15} className="text-gray-400" /> Activity Timeline
             </h2>
-
-            <div className="space-y-3 mb-5 max-h-80 overflow-y-auto pr-1">
-              {commentsLoading && <p className="text-sm text-gray-400">Loading comments…</p>}
-              {!commentsLoading && comments.length === 0 && (
-                <p className="text-sm text-gray-400">No comments yet.</p>
-              )}
-              {comments.map(c => (
-                <div
-                  key={c.id}
-                  className={`rounded-xl p-3.5 text-sm ${
-                    c.is_internal
-                      ? 'bg-amber-50 border border-amber-200'
-                      : 'bg-gray-50 border border-gray-100'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <span className="font-medium text-gray-800 text-xs">
-                      {c.author_name || c.author_email || 'Unknown'}
-                    </span>
-                    {c.is_internal && (
-                      <span className="flex items-center gap-0.5 text-xs text-amber-600 font-medium">
-                        <Lock size={10} /> Internal
-                      </span>
-                    )}
-                    <span className="text-xs text-gray-400 ml-auto">
-                      {formatDateTime(c.created_at)}
-                    </span>
-                  </div>
-                  <p className="text-gray-700 whitespace-pre-wrap">{c.body}</p>
-                  {c.attachments && c.attachments.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {c.attachments.map((att, i) => (
-                        <a
-                          key={i}
-                          href={att.file_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="flex items-center gap-1 text-xs text-indigo-600 underline hover:text-indigo-800"
-                        >
-                          <Paperclip size={10} /> {att.file_name || 'attachment'}
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {/* Add comment */}
-            <div className="space-y-2 border-t border-gray-100 pt-4">
-              <textarea
-                value={commentBody}
-                onChange={e => setCommentBody(e.target.value)}
-                rows={3}
-                placeholder="Write a comment…"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-              {/* Attached files preview */}
-              <input
-                ref={commentFileRef}
-                type="file"
-                multiple
-                className="hidden"
-                onChange={e => {
-                  setCommentFiles(prev => [...prev, ...Array.from(e.target.files ?? [])])
-                  e.target.value = ''
-                }}
-              />
-              {commentFiles.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {commentFiles.map((f, i) => (
-                    <span
-                      key={i}
-                      className="flex items-center gap-1 text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full"
-                    >
-                      <Paperclip size={10} /> {f.name}
-                      <button
-                        onClick={() => setCommentFiles(p => p.filter((_, j) => j !== i))}
-                        className="ml-0.5 hover:text-red-500"
-                      >
-                        <X size={10} />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={isInternal}
-                      onChange={e => setIsInternal(e.target.checked)}
-                      className="rounded text-indigo-600"
-                    />
-                    <Lock size={11} /> Internal
-                  </label>
-                  <button
-                    onClick={() => commentFileRef.current?.click()}
-                    className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"
-                    title="Attach file"
-                  >
-                    <Paperclip size={11} /> Attach
-                  </button>
-                </div>
-                <button
-                  onClick={() => commentMutation.mutate()}
-                  disabled={!commentBody.trim() || commentMutation.isPending}
-                  className="flex items-center gap-1.5 px-4 py-1.5 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition"
-                >
-                  {commentMutation.isPending
-                    ? <Loader2 size={13} className="animate-spin" />
-                    : <Send size={13} />
-                  }
-                  {commentMutation.isPending ? 'Sending…' : 'Send'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* ── Right: Timeline sidebar ────────────────────────────────────── */}
-        <div className="xl:col-span-1">
-          <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm sticky top-6">
-            <h2 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <Clock size={15} className="text-gray-400" /> Timeline
-            </h2>
-
             {timelineLoading && <p className="text-sm text-gray-400">Loading…</p>}
-
             <div className="relative">
               <div className="absolute left-3.5 top-0 bottom-0 w-px bg-gray-200" />
-              <ol className="space-y-4 max-h-[600px] overflow-y-auto pr-1">
+              <ol className="space-y-4">
                 {timeline.map(event => (
                   <li key={event.id} className="flex gap-3 relative">
                     <div className="w-7 h-7 rounded-full bg-white border border-gray-200 flex items-center justify-center flex-shrink-0 z-10">
@@ -1125,9 +1438,7 @@ export default function TicketDetailPage() {
                     <div className="flex-1 pt-0.5 pb-4">
                       <p className="text-xs text-gray-700 leading-snug">{event.description}</p>
                       <p className="text-xs text-gray-400 mt-0.5">
-                        {event.actor_name && (
-                          <span className="font-medium text-gray-500">{event.actor_name} · </span>
-                        )}
+                        {event.actor_name && <span className="font-medium text-gray-500">{event.actor_name} · </span>}
                         {formatDateTime(event.created_at)}
                       </p>
                     </div>
@@ -1137,6 +1448,165 @@ export default function TicketDetailPage() {
                   <li className="text-sm text-gray-400 pl-10">No events yet.</li>
                 )}
               </ol>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Right: Comments pane ──────────────────────────────────────────── */}
+        <div className="w-96 flex-shrink-0 flex flex-col bg-white border-l border-gray-200 sticky top-[46px]" style={{ height: 'calc(100vh - 92px)' }}>
+
+          {/* Pane header */}
+          <div className="flex-shrink-0 px-5 py-3.5 border-b border-gray-100 flex items-center gap-2">
+            <MessageSquare size={15} className="text-indigo-400" />
+            <span className="font-semibold text-gray-800 text-sm">Comments</span>
+            {comments.length > 0 && (
+              <span className="ml-auto text-xs bg-indigo-100 text-indigo-600 font-medium px-2 py-0.5 rounded-full">
+                {comments.length}
+              </span>
+            )}
+          </div>
+
+          {/* Comment list — scrollable */}
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 min-h-0">
+            {commentsLoading && <p className="text-sm text-gray-400 text-center py-8">Loading comments…</p>}
+            {!commentsLoading && comments.length === 0 && (
+              <div className="flex flex-col items-center justify-center h-full text-center py-16">
+                <MessageSquare size={32} className="text-gray-200 mb-3" />
+                <p className="text-sm text-gray-400">No comments yet.</p>
+                <p className="text-xs text-gray-300 mt-1">Start the conversation below.</p>
+              </div>
+            )}
+            {comments.map(c => (
+              <div
+                key={c.id}
+                className={`rounded-xl p-3.5 text-sm ${
+                  c.is_internal
+                    ? 'bg-amber-50 border border-amber-200'
+                    : 'bg-gray-50 border border-gray-100'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="w-6 h-6 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                    <span className="text-xs font-bold text-indigo-600">
+                      {(c.author_name || c.author_email || 'U').charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                  <span className="font-medium text-gray-800 text-xs truncate">
+                    {c.author_name || c.author_email || 'Unknown'}
+                  </span>
+                  {c.is_internal && (
+                    <span className="flex items-center gap-0.5 text-xs text-amber-600 font-medium flex-shrink-0">
+                      <Lock size={9} /> Internal
+                    </span>
+                  )}
+                  <span className="text-xs text-gray-400 ml-auto flex-shrink-0 text-right">
+                    {formatDateTime(c.created_at)}
+                  </span>
+                </div>
+                <p className="text-gray-700 whitespace-pre-wrap text-sm leading-relaxed">{c.body}</p>
+                {c.attachments && c.attachments.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {c.attachments.map((att, i) => (
+                      <a
+                        key={i}
+                        href={att.file_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 text-xs text-indigo-600 underline hover:text-indigo-800"
+                      >
+                        <Paperclip size={10} /> {att.file_name || 'attachment'}
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Compose box — pinned at bottom */}
+          <div className="flex-shrink-0 border-t border-gray-200 bg-white p-4 space-y-2.5">
+            {/* Internal toggle strip */}
+            {isInternal && (
+              <div className="flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg">
+                <Lock size={11} /> This comment is internal only
+              </div>
+            )}
+            <textarea
+              value={commentBody}
+              onChange={e => setCommentBody(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && commentBody.trim()) {
+                  e.preventDefault()
+                  commentMutation.mutate()
+                }
+              }}
+              rows={3}
+              placeholder="Write a comment… (⌘+Enter to send)"
+              className={`w-full border rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 transition ${
+                isInternal
+                  ? 'border-amber-300 bg-amber-50/50 focus:ring-amber-400'
+                  : 'border-gray-300 focus:ring-indigo-500'
+              }`}
+            />
+            {/* Attached files preview */}
+            <input
+              ref={commentFileRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={e => {
+                setCommentFiles(prev => [...prev, ...Array.from(e.target.files ?? [])])
+                e.target.value = ''
+              }}
+            />
+            {commentFiles.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {commentFiles.map((f, i) => (
+                  <span
+                    key={i}
+                    className="flex items-center gap-1 text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full"
+                  >
+                    <Paperclip size={10} /> {f.name}
+                    <button
+                      onClick={() => setCommentFiles(p => p.filter((_, j) => j !== i))}
+                      className="ml-0.5 hover:text-red-500"
+                    >
+                      <X size={10} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={isInternal}
+                    onChange={e => setIsInternal(e.target.checked)}
+                    className="rounded text-amber-500 border-gray-300"
+                  />
+                  <Lock size={10} /> Internal
+                </label>
+                <button
+                  onClick={() => commentFileRef.current?.click()}
+                  className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"
+                  title="Attach file"
+                >
+                  <Paperclip size={11} /> Attach
+                </button>
+              </div>
+              <button
+                onClick={() => commentMutation.mutate()}
+                disabled={!commentBody.trim() || commentMutation.isPending}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition font-medium"
+              >
+                {commentMutation.isPending
+                  ? <Loader2 size={13} className="animate-spin" />
+                  : <Send size={13} />
+                }
+                {commentMutation.isPending ? 'Sending…' : 'Send'}
+              </button>
             </div>
           </div>
         </div>

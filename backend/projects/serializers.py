@@ -1,6 +1,6 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from .models import Project, ProjectMilestone, ProjectTask, ProjectProduct, ProjectAttachment
+from .models import Project, ProjectMilestone, ProjectTask, ProjectProduct, ProjectAttachment, ProjectProductRequest
 
 User = get_user_model()
 
@@ -97,6 +97,39 @@ class ProjectSerializer(serializers.ModelSerializer):
         if team_members is not None:
             instance.team_members.set(team_members)
         return instance
+
+
+class ProjectProductRequestSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    product_sku = serializers.CharField(source='product.sku', read_only=True)
+    requested_by_name = serializers.SerializerMethodField()
+    reviewed_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProjectProductRequest
+        fields = (
+            'id', 'project', 'product', 'product_name', 'product_sku',
+            'quantity', 'note', 'status',
+            'requested_by', 'requested_by_name',
+            'reviewed_by', 'reviewed_by_name', 'reviewed_at',
+            'rejection_reason', 'created_at',
+        )
+        read_only_fields = (
+            'project', 'status', 'requested_by', 'requested_by_name',
+            'reviewed_by', 'reviewed_by_name', 'reviewed_at',
+            'rejection_reason', 'created_at',
+            'product_name', 'product_sku',
+        )
+
+    def get_requested_by_name(self, obj):
+        if obj.requested_by:
+            return obj.requested_by.get_full_name() or obj.requested_by.email
+        return None
+
+    def get_reviewed_by_name(self, obj):
+        if obj.reviewed_by:
+            return obj.reviewed_by.get_full_name() or obj.reviewed_by.email
+        return None
 
 
 class ProjectAttachmentSerializer(serializers.ModelSerializer):

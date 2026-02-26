@@ -75,7 +75,7 @@ def generate_pdf_bytes(invoice):
         from weasyprint import HTML
         from django.template.loader import render_to_string
     except ImportError:
-        return b"%PDF stub — install weasyprint"
+        return b"%PDF stub - install weasyprint"
 
     html_string = render_to_string(
         'accounting/invoice_pdf.html',

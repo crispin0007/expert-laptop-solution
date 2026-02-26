@@ -8,19 +8,52 @@ class CustomerContactSerializer(serializers.ModelSerializer):
         fields = ('id', 'name', 'email', 'phone', 'designation', 'is_primary')
 
 
+class CustomerMinimalSerializer(serializers.ModelSerializer):
+    """
+    Lean read-only serializer for dropdowns / search-as-you-type.
+    Used when ?minimal=true is passed on the list endpoint.
+    """
+    class Meta:
+        model = Customer
+        fields = ('id', 'customer_number', 'name', 'phone', 'email', 'type')
+
+
 class CustomerSerializer(serializers.ModelSerializer):
     contacts = CustomerContactSerializer(many=True, read_only=True)
     created_by_name = serializers.CharField(source='created_by.full_name', read_only=True, default='')
+    # Convenience read-only: human-readable full address string
+    full_address = serializers.SerializerMethodField()
 
     class Meta:
         model = Customer
         fields = (
-            'id', 'customer_number', 'type', 'name', 'email', 'phone', 'address',
+            'id', 'customer_number', 'type', 'name', 'email', 'phone',
+            # Nepal address hierarchy
+            'province', 'district', 'municipality', 'ward_no', 'street',
+            'full_address',
             'vat_number', 'pan_number', 'notes', 'is_active', 'is_deleted',
             'created_by', 'created_by_name', 'contacts',
             'created_at', 'updated_at',
         )
-        read_only_fields = ('id', 'customer_number', 'is_deleted', 'created_by', 'created_by_name', 'created_at', 'updated_at')
+        read_only_fields = (
+            'id', 'customer_number', 'is_deleted', 'created_by',
+            'created_by_name', 'full_address', 'created_at', 'updated_at',
+        )
+
+    def get_full_address(self, obj):
+        """Assemble a single-line address string from the hierarchy parts."""
+        parts = []
+        if obj.street:
+            parts.append(obj.street)
+        if obj.ward_no:
+            parts.append(f"Ward {obj.ward_no}")
+        if obj.municipality:
+            parts.append(obj.municipality)
+        if obj.district:
+            parts.append(obj.district)
+        if obj.province:
+            parts.append(obj.get_province_display())
+        return ', '.join(parts) if parts else ''
 
     def _check_unique(self, qs, email, phone):
         """Return field-level errors for duplicate email/phone."""
@@ -38,11 +71,15 @@ class CustomerSerializer(serializers.ModelSerializer):
 
         errors = {}
 
-        # ── Required fields ──────────────────────────────────────────────────
-        required_all = ['name', 'email', 'phone', 'address']
-        for f in required_all:
-            if not attrs.get(f, '').strip():
-                errors[f] = f'{f.replace("_", " ").capitalize()} is required.'
+        # ── Required fields (name and phone mandatory; email optional) ────────
+        required_fields = ['name', 'phone']
+        for f in required_fields:
+            if self.partial:
+                if f in attrs and not str(attrs.get(f, '')).strip():
+                    errors[f] = f'{f.replace("_", " ").capitalize()} is required.'
+            else:
+                if not str(attrs.get(f, '')).strip():
+                    errors[f] = f'{f.replace("_", " ").capitalize()} is required.'
 
         # Required for organizations: pan_number or vat_number
         if customer_type == Customer.TYPE_ORGANIZATION:
@@ -56,13 +93,11 @@ class CustomerSerializer(serializers.ModelSerializer):
         email = attrs.get('email', '').strip()
         phone = attrs.get('phone', '').strip()
 
-        # Build base queryset — handle NULL tenant correctly (NULL != NULL in SQL)
         if tenant is not None:
             qs = Customer.objects.filter(tenant=tenant, is_deleted=False)
         else:
             qs = Customer.objects.filter(tenant__isnull=True, is_deleted=False)
 
-        # On update, exclude the current instance
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
 

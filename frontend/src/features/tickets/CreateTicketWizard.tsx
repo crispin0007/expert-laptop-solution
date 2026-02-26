@@ -7,12 +7,12 @@
  * Step 4 — Details (title, description, priority, dept, assignee)
  * Step 5 — Review & Submit
  */
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import {
   X, ChevronLeft, ChevronRight, Check, Loader2, Search, Plus,
-  Headphones, Wrench, FolderKanban, Tag, UserPlus, AlertTriangle,
+  Headphones, Wrench, FolderKanban, Tag, UserPlus, AlertTriangle, Car,
 } from 'lucide-react'
 import apiClient from '../../api/client'
 import { TICKETS, CUSTOMERS, DEPARTMENTS, STAFF } from '../../api/endpoints'
@@ -61,13 +61,24 @@ interface StaffUser {
   email: string
 }
 
+interface Vehicle {
+  id: number
+  name: string
+  plate_number: string
+  type: string
+  fuel_type: string
+  rate_per_km: string
+  is_active: boolean
+}
+
 interface WizardState {
   ticket_type: number | null
   category: number | null
   subcategory: number | null
   customer: number | null
   department: number | null
-  assigned_to: number | null
+  team_members: number[]        // multi-staff; first entry used as assigned_to
+  vehicles: number[]            // vehicles dispatched for this ticket
   title: string
   description: string
   priority: 'low' | 'medium' | 'high' | 'critical'
@@ -380,10 +391,14 @@ function Step3Customer({
 
   const filtered = useMemo(
     () =>
-      customers.filter(c =>
-        c.name.toLowerCase().includes(search.toLowerCase()) ||
-        c.email?.toLowerCase().includes(search.toLowerCase())
-      ),
+      customers.filter(c => {
+        const q = search.toLowerCase()
+        return (
+          c.name.toLowerCase().includes(q) ||
+          c.email?.toLowerCase().includes(q) ||
+          c.phone?.includes(q)
+        )
+      }),
     [customers, search]
   )
 
@@ -504,13 +519,35 @@ function Step4Details({
   state,
   departments,
   staff,
+  vehicles,
+  autoTitle,
   onChange,
 }: {
   state: WizardState
   departments: Department[]
   staff: StaffUser[]
+  vehicles: Vehicle[]
+  autoTitle: string
   onChange: (partial: Partial<WizardState>) => void
 }) {
+  const toggleStaff = (id: number) => {
+    const current = state.team_members
+    onChange({
+      team_members: current.includes(id)
+        ? current.filter(x => x !== id)
+        : [...current, id],
+    })
+  }
+
+  const toggleVehicle = (id: number) => {
+    const current = state.vehicles
+    onChange({
+      vehicles: current.includes(id)
+        ? current.filter(x => x !== id)
+        : [...current, id],
+    })
+  }
+
   return (
     <div>
       <h2 className="text-lg font-semibold text-slate-800 mb-1">Ticket details</h2>
@@ -519,12 +556,28 @@ function Step4Details({
       <div className="space-y-4">
         {/* Title */}
         <div>
-          <label className="text-xs font-medium text-slate-600 block mb-1">Title *</label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-xs font-medium text-slate-600">Title *</label>
+            {autoTitle && state.title === autoTitle && (
+              <span className="text-[10px] bg-indigo-50 text-indigo-500 border border-indigo-200 px-1.5 py-0.5 rounded-full font-medium">
+                auto-generated
+              </span>
+            )}
+            {autoTitle && state.title !== autoTitle && state.title !== '' && (
+              <button
+                type="button"
+                onClick={() => onChange({ title: autoTitle })}
+                className="text-[10px] text-indigo-500 hover:text-indigo-700 underline"
+              >
+                ↻ Reset to auto
+              </button>
+            )}
+          </div>
           <input
             autoFocus
             value={state.title}
             onChange={e => onChange({ title: e.target.value })}
-            placeholder="Brief description of the issue…"
+            placeholder={autoTitle || 'Brief description of the issue…'}
             className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
         </div>
@@ -533,7 +586,7 @@ function Step4Details({
         <div>
           <label className="text-xs font-medium text-slate-600 block mb-1">Description</label>
           <textarea
-            rows={4}
+            rows={3}
             value={state.description}
             onChange={e => onChange({ description: e.target.value })}
             placeholder="Steps to reproduce, expected behavior, error messages…"
@@ -562,30 +615,125 @@ function Step4Details({
           </div>
         </div>
 
-        {/* Department + Assignee */}
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs font-medium text-slate-600 block mb-1">Department</label>
-            <select
-              value={state.department ?? ''}
-              onChange={e => onChange({ department: e.target.value ? parseInt(e.target.value) : null })}
-              className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="">— None —</option>
-              {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-slate-600 block mb-1">Assign to</label>
-            <select
-              value={state.assigned_to ?? ''}
-              onChange={e => onChange({ assigned_to: e.target.value ? parseInt(e.target.value) : null })}
-              className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="">— Unassigned —</option>
-              {staff.map(s => <option key={s.id} value={s.id}>{s.full_name || s.email}</option>)}
-            </select>
-          </div>
+        {/* Department */}
+        <div>
+          <label className="text-xs font-medium text-slate-600 block mb-1">Department</label>
+          <select
+            value={state.department ?? ''}
+            onChange={e => {
+              onChange({
+                department: e.target.value ? parseInt(e.target.value) : null,
+                team_members: [], // reset staff selection when dept changes
+              })
+            }}
+            className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="">— None —</option>
+            {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </div>
+
+        {/* Assign Staff — multi-select */}
+        <div>
+          <label className="text-xs font-medium text-slate-600 block mb-1">
+            Assign Staff
+            {state.department && <span className="ml-1 text-indigo-500 font-normal">(filtered by department)</span>}
+            {state.team_members.length > 0 && (
+              <span className="ml-2 bg-indigo-100 text-indigo-700 text-[10px] font-semibold px-1.5 py-0.5 rounded-full">
+                {state.team_members.length} selected
+              </span>
+            )}
+          </label>
+
+          {staff.length === 0 ? (
+            <p className="text-xs text-slate-400 italic py-2">
+              {state.department ? 'No staff in this department.' : 'No staff available.'}
+            </p>
+          ) : (
+            <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100 max-h-44 overflow-y-auto">
+              {staff.map(s => {
+                const selected = state.team_members.includes(s.id)
+                const isLead = state.team_members[0] === s.id
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => toggleStaff(s.id)}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${
+                      selected ? 'bg-indigo-50' : 'bg-white hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                      selected ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'
+                    }`}>
+                      {selected ? <Check size={12} /> : (s.full_name || s.email).charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className={`text-sm font-medium truncate ${
+                        selected ? 'text-indigo-700' : 'text-slate-700'
+                      }`}>{s.full_name || s.email}</div>
+                      {s.full_name && <div className="text-xs text-slate-400 truncate">{s.email}</div>}
+                    </div>
+                    {isLead && (
+                      <span className="text-[10px] font-semibold bg-indigo-600 text-white px-1.5 py-0.5 rounded-full shrink-0">Lead</span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          {state.team_members.length > 0 && (
+            <p className="text-[11px] text-slate-400 mt-1.5">
+              First selected staff is the lead assignee.
+            </p>
+          )}
+        </div>
+
+        {/* Vehicles */}
+        <div>
+          <label className="text-xs font-medium text-slate-600 block mb-1">
+            Vehicles Dispatched
+            {state.vehicles.length > 0 && (
+              <span className="ml-2 bg-amber-100 text-amber-700 text-[10px] font-semibold px-1.5 py-0.5 rounded-full">
+                {state.vehicles.length} selected
+              </span>
+            )}
+          </label>
+          {vehicles.filter(v => v.is_active).length === 0 ? (
+            <p className="text-xs text-slate-400 italic py-2">
+              No vehicles registered. Add vehicles in Ticket Settings.
+            </p>
+          ) : (
+            <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100 max-h-44 overflow-y-auto">
+              {vehicles.filter(v => v.is_active).map(v => {
+                const sel = state.vehicles.includes(v.id)
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => toggleVehicle(v.id)}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${
+                      sel ? 'bg-amber-50' : 'bg-white hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${
+                      sel ? 'bg-amber-500 text-white' : 'bg-slate-200 text-slate-500'
+                    }`}>
+                      {sel ? <Check size={12} /> : <Car size={13} />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className={`text-sm font-medium truncate ${sel ? 'text-amber-800' : 'text-slate-700'}`}>
+                        {v.name}
+                      </div>
+                      <div className="text-xs text-slate-400 truncate">
+                        {v.plate_number} &middot; {v.type} &middot; Rs {v.rate_per_km}/km
+                      </div>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {/* Contact Phone */}
@@ -613,6 +761,7 @@ function Step5Review({
   customers,
   departments,
   staff,
+  vehicles,
 }: {
   state: WizardState
   types: TicketType[]
@@ -620,13 +769,19 @@ function Step5Review({
   customers: Customer[]
   departments: Department[]
   staff: StaffUser[]
+  vehicles: Vehicle[]
 }) {
   const type = types.find(t => t.id === state.ticket_type)
   const cat = categories.find(c => c.id === state.category)
   const sub = cat?.subcategories.find(s => s.id === state.subcategory)
   const customer = customers.find(c => c.id === state.customer)
   const dept = departments.find(d => d.id === state.department)
-  const assignee = staff.find(s => s.id === state.assigned_to)
+  const assignedStaff = state.team_members
+    .map(id => staff.find(s => s.id === id))
+    .filter(Boolean) as StaffUser[]
+  const assignedVehicles = state.vehicles
+    .map(id => vehicles.find(v => v.id === id))
+    .filter(Boolean) as Vehicle[]
 
   const rows: [string, string][] = [
     ['Ticket Type', type?.name ?? '—'],
@@ -634,7 +789,12 @@ function Step5Review({
     ['Customer', customer?.name ?? '—'],
     ['Priority', state.priority.charAt(0).toUpperCase() + state.priority.slice(1)],
     ['Department', dept?.name ?? '—'],
-    ['Assigned to', assignee?.full_name ?? assignee?.email ?? '—'],
+    ['Assigned Staff', assignedStaff.length > 0
+      ? assignedStaff.map((s, i) => `${s.full_name || s.email}${i === 0 ? ' (lead)' : ''}`).join(', ')
+      : '—'],
+    ['Vehicles', assignedVehicles.length > 0
+      ? assignedVehicles.map(v => `${v.name} (${v.plate_number})`).join(', ')
+      : '—'],
   ]
 
   return (
@@ -674,7 +834,8 @@ const INIT: WizardState = {
   subcategory: null,
   customer: null,
   department: null,
-  assigned_to: null,
+  team_members: [],
+  vehicles: [],
   title: '',
   description: '',
   priority: 'medium',
@@ -686,6 +847,8 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
   const [state, setState] = useState<WizardState>(INIT)
   const [customerCache, setCustomerCache] = useState<Customer[]>([])
   const qc = useQueryClient()
+  // Tracks the last auto-generated title so manual edits aren't overwritten
+  const autoTitleRef = useRef('')
 
   const update = (partial: Partial<WizardState>) => setState(prev => ({ ...prev, ...partial }))
 
@@ -724,6 +887,29 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
     return [...allCustomers, ...customerCache.filter(c => !ids.has(c.id))]
   }, [allCustomers, customerCache])
 
+  // ── Auto-title ─────────────────────────────────────────────────────────────
+  // Builds "Category — Subcategory · Customer Name" from current selections.
+  // Only overwrites the title if it's empty or still matches the previous auto value.
+  useEffect(() => {
+    const cat = categories.find(c => c.id === state.category)
+    const sub = cat?.subcategories.find(s => s.id === state.subcategory)
+    const customer = customers.find(c => c.id === state.customer)
+
+    const parts: string[] = []
+    if (cat) parts.push(sub ? `${cat.name} — ${sub.name}` : cat.name)
+    if (customer) parts.push(customer.name)
+    const generated = parts.join(' · ')
+
+    // Only update if the field is still empty or holds the previous auto-value
+    setState(prev => {
+      if (prev.title === '' || prev.title === autoTitleRef.current) {
+        autoTitleRef.current = generated
+        return { ...prev, title: generated }
+      }
+      return prev
+    })
+  }, [state.category, state.subcategory, state.customer, categories, customers])
+
   const { data: departments = [] } = useQuery<Department[]>({
     queryKey: ['departments'],
     queryFn: () =>
@@ -734,9 +920,22 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
   })
 
   const { data: staff = [] } = useQuery<StaffUser[]>({
-    queryKey: ['staff-list'],
+    queryKey: ['staff-list', state.department],
+    queryFn: () => {
+      const url = state.department
+        ? `${STAFF.LIST}?department=${state.department}`
+        : STAFF.LIST
+      return apiClient.get(url).then(r =>
+        Array.isArray(r.data) ? r.data : (r.data.results ?? r.data.data ?? [])
+      )
+    },
+    enabled: open && step === 3,
+  })
+
+  const { data: vehiclesList = [] } = useQuery<Vehicle[]>({
+    queryKey: ['vehicles'],
     queryFn: () =>
-      apiClient.get(STAFF.LIST).then(r =>
+      apiClient.get(TICKETS.VEHICLES).then(r =>
         Array.isArray(r.data) ? r.data : (r.data.results ?? r.data.data ?? [])
       ),
     enabled: open && step === 3,
@@ -756,8 +955,15 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
       if (state.subcategory) payload.subcategory = state.subcategory
       if (state.customer) payload.customer = state.customer
       if (state.department) payload.department = state.department
-      if (state.assigned_to) payload.assigned_to = state.assigned_to
       if (state.contact_phone) payload.contact_phone = state.contact_phone
+      // First selected staff member is the lead assignee; all go into team_members
+      if (state.team_members.length > 0) {
+        payload.assigned_to = state.team_members[0]
+        payload.team_members = state.team_members
+      }
+      if (state.vehicles.length > 0) {
+        payload.vehicles = state.vehicles
+      }
       return apiClient.post(TICKETS.LIST, payload)
     },
     onSuccess: () => {
@@ -850,6 +1056,8 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
               state={state}
               departments={departments}
               staff={staff}
+              vehicles={vehiclesList}
+              autoTitle={autoTitleRef.current}
               onChange={update}
             />
           )}
@@ -861,6 +1069,7 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
               customers={customers}
               departments={departments}
               staff={staff}
+              vehicles={vehiclesList}
             />
           )}
         </div>

@@ -15,6 +15,7 @@ from rest_framework.response import Response
 from core.mixins import TenantMixin
 from core.permissions import make_role_permission, ALL_ROLES, STAFF_ROLES, MANAGER_ROLES, ADMIN_ROLES
 from .models import (
+    Vehicle, VehicleLog,
     Ticket, TicketType, TicketComment, TicketTransfer,
     TicketProduct, TicketSLA, TicketTimeline, TicketAttachment,
     TicketCategory, TicketSubCategory,
@@ -208,6 +209,17 @@ class TicketViewSet(TenantMixin, viewsets.ModelViewSet):
         ctx['tenant'] = self.tenant
         return ctx
 
+    def create(self, request, *args, **kwargs):
+        """Override to return the full TicketSerializer (with id) after creation."""
+        write_serializer = TicketCreateSerializer(
+            data=request.data,
+            context=self.get_serializer_context(),
+        )
+        write_serializer.is_valid(raise_exception=True)
+        ticket = write_serializer.save()
+        read_serializer = TicketSerializer(ticket, context=self.get_serializer_context())
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED)
+
     def perform_create(self, serializer):
         # TicketCreateSerializer.create() handles tenant + SLA + timeline
         serializer.save()
@@ -239,51 +251,119 @@ class TicketViewSet(TenantMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='assign')
     def assign(self, request, pk=None):
-        """POST /api/v1/tickets/{id}/assign/ — assign ticket to a staff member."""
+        """
+        POST /api/v1/tickets/{id}/assign/
+
+        Body fields (at least one required):
+          user_id          : int       — primary assignee (sets assigned_to)
+          team_member_ids  : [int, …]  — co-assignees (replaces team_members list)
+
+        Passing both at once is supported and recommended.
+        """
         ticket = self.get_object()
-        user_id = request.data.get('user_id')
-        if not user_id:
+        user_id         = request.data.get('user_id')
+        team_member_ids = request.data.get('team_member_ids') or []
+
+        if not user_id and not team_member_ids:
             return Response(
-                {'success': False, 'errors': ['user_id is required.']},
+                {'success': False, 'errors': ['Provide user_id (primary) and/or team_member_ids (co-assignees).']},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        try:
-            assignee = User.objects.get(pk=user_id)
-        except User.DoesNotExist:
-            return Response(
-                {'success': False, 'errors': ['User not found.']},
-                status=status.HTTP_404_NOT_FOUND,
+        # ── primary assignee ──────────────────────────────────────────────────
+        if user_id:
+            try:
+                assignee = User.objects.get(pk=user_id)
+            except User.DoesNotExist:
+                return Response(
+                    {'success': False, 'errors': [f'User {user_id} not found.']},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            old_assignee = ticket.assigned_to
+            ticket.assigned_to = assignee
+            if ticket.status == Ticket.STATUS_OPEN:
+                ticket.status = Ticket.STATUS_IN_PROGRESS
+            ticket.save(update_fields=['assigned_to', 'status', 'updated_at'])
+
+            TicketTimeline.objects.create(
+                tenant=ticket.tenant,
+                ticket=ticket,
+                event_type=TicketTimeline.EVENT_ASSIGNED,
+                description=f"Assigned to {assignee.get_full_name() or assignee.email}",
+                actor=request.user,
+                created_by=request.user,
+                metadata={
+                    'from': old_assignee.pk if old_assignee else None,
+                    'to': assignee.pk,
+                },
             )
 
-        old_assignee = ticket.assigned_to
-        ticket.assigned_to = assignee
-        if ticket.status == Ticket.STATUS_OPEN:
-            ticket.status = Ticket.STATUS_IN_PROGRESS
-        ticket.save(update_fields=['assigned_to', 'status', 'updated_at'])
+            # Async email notification to primary assignee
+            try:
+                from notifications.tasks import task_send_ticket_assigned
+                task_send_ticket_assigned.delay(ticket_id=ticket.pk, assignee_id=assignee.pk)
+            except Exception:
+                from notifications.email import send_ticket_assigned
+                send_ticket_assigned(ticket, assignee)
 
-        TicketTimeline.objects.create(
-            tenant=ticket.tenant,
-            ticket=ticket,
-            event_type=TicketTimeline.EVENT_ASSIGNED,
-            description=f"Assigned to {assignee.get_full_name() or assignee.email}",
-            actor=request.user,
-            created_by=request.user,
-            metadata={
-                'from': old_assignee.pk if old_assignee else None,
-                'to': assignee.pk,
-            },
-        )
-
-        # Async email notification
-        try:
-            from notifications.tasks import task_send_ticket_assigned
-            task_send_ticket_assigned.delay(ticket_id=ticket.pk, assignee_id=assignee.pk)
-        except Exception:
-            from notifications.email import send_ticket_assigned
-            send_ticket_assigned(ticket, assignee)
+        # ── co-assignees (team members) ────────────────────────────────────────
+        if team_member_ids:
+            team_qs = User.objects.filter(pk__in=team_member_ids)
+            found_ids = set(team_qs.values_list('pk', flat=True))
+            missing   = [i for i in team_member_ids if i not in found_ids]
+            if missing:
+                return Response(
+                    {'success': False, 'errors': [f'Users not found: {missing}']},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            ticket.team_members.set(team_qs)
+            names = [u.get_full_name() or u.email for u in team_qs]
+            TicketTimeline.objects.create(
+                tenant=ticket.tenant,
+                ticket=ticket,
+                event_type=TicketTimeline.EVENT_ASSIGNED,
+                description=f"Co-assignees updated: {', '.join(names)}",
+                actor=request.user,
+                created_by=request.user,
+                metadata={'team_member_ids': list(found_ids)},
+            )
 
         return Response({'success': True, 'data': TicketSerializer(ticket, context=self.get_serializer_context()).data})
+
+    @action(detail=False, methods=['get'], url_path='suggest-title')
+    def suggest_title(self, request):
+        """
+        GET /api/v1/tickets/suggest-title/?category=<id>&subcategory=<id>
+
+        Returns a suggested ticket title string based on the selected
+        category / subcategory.  Useful for auto-populating the title
+        field on the create form before the user can customise it.
+        """
+        from .models import TicketCategory, TicketSubCategory
+        cat_id  = request.query_params.get('category')
+        sub_id  = request.query_params.get('subcategory')
+
+        cat_name = sub_name = ''
+        if cat_id:
+            try:
+                cat_name = TicketCategory.objects.get(pk=cat_id, tenant=self.tenant).name
+            except TicketCategory.DoesNotExist:
+                pass
+        if sub_id:
+            try:
+                sub_name = TicketSubCategory.objects.get(pk=sub_id, tenant=self.tenant).name
+            except TicketSubCategory.DoesNotExist:
+                pass
+
+        if cat_name and sub_name:
+            title = f"{cat_name} — {sub_name}"
+        elif cat_name:
+            title = f"{cat_name} Request"
+        else:
+            title = "Support Request"
+
+        return Response({'title': title})
 
     @action(detail=True, methods=['post'], url_path='transfer')
     def transfer(self, request, pk=None):
@@ -816,3 +896,65 @@ class TicketAttachmentViewSet(TenantMixin, viewsets.ModelViewSet):
             serializer.save(tenant=self.tenant, uploaded_by=self.request.user, created_by=self.request.user, ticket=ticket)
         else:
             serializer.save(tenant=self.tenant, uploaded_by=self.request.user, created_by=self.request.user)
+
+
+# ── Vehicle ViewSets ──────────────────────────────────────────────────────────
+
+class VehicleViewSet(TenantMixin, viewsets.ModelViewSet):
+    """
+    CRUD for the tenant vehicle fleet.
+    GET/POST   /api/v1/tickets/vehicles/
+    GET/PATCH/DELETE /api/v1/tickets/vehicles/{id}/
+    Permissions: read = all staff; write = manager+
+    """
+    required_module = 'tickets'
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        return Vehicle.objects.filter(tenant=self.tenant)
+
+    def get_serializer_class(self):
+        from .serializers import VehicleSerializer
+        return VehicleSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.tenant, created_by=self.request.user)
+
+
+class VehicleLogViewSet(TenantMixin, viewsets.ModelViewSet):
+    """
+    Trip logs per vehicle. Optionally linked to a ticket.
+    GET/POST   /api/v1/tickets/vehicle-logs/
+    GET/PATCH/DELETE /api/v1/tickets/vehicle-logs/{id}/
+    """
+    required_module = 'tickets'
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = VehicleLog.objects.filter(tenant=self.tenant).select_related(
+            'vehicle', 'ticket', 'driven_by',
+        )
+        vehicle_id = self.request.query_params.get('vehicle')
+        ticket_id  = self.request.query_params.get('ticket')
+        if vehicle_id:
+            qs = qs.filter(vehicle_id=vehicle_id)
+        if ticket_id:
+            qs = qs.filter(ticket_id=ticket_id)
+        return qs
+
+    def get_serializer_class(self):
+        from .serializers import VehicleLogSerializer
+        return VehicleLogSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.tenant, created_by=self.request.user)

@@ -7,7 +7,7 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,                          // listen on all interfaces (0.0.0.0)
-    allowedHosts: ['192.168.100.100'],   // Barrier testing PC
+    allowedHosts: ['192.168.100.100', '.localhost'],  // Barrier PC + all *.localhost subdomains (pro.localhost, etc.)
     proxy: {
       '/api': {
         target: 'http://localhost:8000',

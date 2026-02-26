@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
 import Layout from './Layout'
 import ProtectedRoute from '../features/auth/ProtectedRoute'
 import SuperAdminRoute from '../features/admin/SuperAdminRoute'
@@ -34,6 +34,12 @@ import TenantManagementPage from '../features/admin/TenantManagementPage'
 import PlanManagementPage from '../features/admin/PlanManagementPage'
 import SettingsPage from '../features/settings/SettingsPage'
 
+// Force TicketDetailPage to fully remount when navigating between tickets
+function KeyedTicketDetail() {
+  const { id } = useParams()
+  return <TicketDetailPage key={id} />
+}
+
 export default function Router() {
   return (
     <BrowserRouter>
@@ -63,7 +69,7 @@ export default function Router() {
             path="tickets/:id"
             element={
               <ModuleGuard module="tickets">
-                <TicketDetailPage />
+                <KeyedTicketDetail />
               </ModuleGuard>
             }
           />

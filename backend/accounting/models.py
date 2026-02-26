@@ -41,9 +41,13 @@ class Account(TenantModel):
         on_delete=models.SET_NULL,
         related_name='children',
     )
-    description = models.TextField(blank=True)
-    is_system   = models.BooleanField(default=False)   # seeded accounts, not deletable
-    is_active   = models.BooleanField(default=True)
+    description     = models.TextField(blank=True)
+    is_system       = models.BooleanField(default=False)   # seeded accounts, not deletable
+    is_active       = models.BooleanField(default=True)
+    opening_balance = models.DecimalField(
+        max_digits=14, decimal_places=2, default=0,
+        help_text='Opening balance for migration from another system.',
+    )
 
     class Meta:
         ordering = ['code']
@@ -591,3 +595,291 @@ class CreditNote(TenantModel):
             except (ValueError, IndexError):                seq = 1
             self.credit_note_number = f"CN-{seq:05d}"
         super().save(*args, **kwargs)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Quotations / Proforma Invoices
+# ─────────────────────────────────────────────────────────────────────────────
+
+class Quotation(TenantModel):
+    """
+    Pre-sales estimate / proforma invoice sent to a customer before work begins.
+    Lifecycle: draft → sent → accepted | declined | expired
+    An accepted Quotation can be converted to a full Invoice.
+    """
+
+    STATUS_DRAFT    = 'draft'
+    STATUS_SENT     = 'sent'
+    STATUS_ACCEPTED = 'accepted'
+    STATUS_DECLINED = 'declined'
+    STATUS_EXPIRED  = 'expired'
+
+    STATUS_CHOICES = [
+        (STATUS_DRAFT,    'Draft'),
+        (STATUS_SENT,     'Sent'),
+        (STATUS_ACCEPTED, 'Accepted'),
+        (STATUS_DECLINED, 'Declined'),
+        (STATUS_EXPIRED,  'Expired'),
+    ]
+
+    quotation_number = models.CharField(max_length=32, blank=True, db_index=True)
+    customer = models.ForeignKey(
+        'customers.Customer', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='quotations',
+    )
+    ticket = models.ForeignKey(
+        'tickets.Ticket', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='quotations',
+    )
+    project = models.ForeignKey(
+        'projects.Project', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='quotations',
+    )
+    line_items  = models.JSONField(default=list)
+    subtotal    = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    discount    = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    vat_rate    = models.DecimalField(max_digits=5,  decimal_places=4, default=0)
+    vat_amount  = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    total       = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    status      = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    valid_until = models.DateField(null=True, blank=True)
+    notes       = models.TextField(blank=True)
+    terms       = models.TextField(blank=True)
+    sent_at     = models.DateTimeField(null=True, blank=True)
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    # Populated when accepted quotation is converted to an invoice
+    converted_invoice = models.OneToOneField(
+        Invoice, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='source_quotation',
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"QUO {self.quotation_number or self.pk}"
+
+    def save(self, *args, **kwargs):
+        if not self.quotation_number and self.tenant_id:
+            last = (
+                Quotation.objects.filter(tenant_id=self.tenant_id)
+                .order_by('-created_at')
+                .values_list('quotation_number', flat=True)
+                .first()
+            )
+            try:
+                seq = int(str(last).split('-')[-1]) + 1 if last else 1
+            except (ValueError, IndexError):
+                seq = 1
+            self.quotation_number = f"QUO-{seq:05d}"
+        super().save(*args, **kwargs)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Debit Notes  (purchase / supplier returns)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DebitNote(TenantModel):
+    """
+    Raised against an approved Bill when goods/services are returned to supplier.
+    Mirrors CreditNote but sits on the purchase (AP) side.
+    Lifecycle: draft → issued → applied | void
+    """
+
+    STATUS_DRAFT   = 'draft'
+    STATUS_ISSUED  = 'issued'
+    STATUS_APPLIED = 'applied'
+    STATUS_VOID    = 'void'
+
+    STATUS_CHOICES = [
+        (STATUS_DRAFT,   'Draft'),
+        (STATUS_ISSUED,  'Issued'),
+        (STATUS_APPLIED, 'Applied'),
+        (STATUS_VOID,    'Void'),
+    ]
+
+    debit_note_number = models.CharField(max_length=32, blank=True, db_index=True)
+    bill = models.ForeignKey(
+        Bill, on_delete=models.PROTECT, related_name='debit_notes',
+    )
+    line_items = models.JSONField(default=list)
+    subtotal   = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    vat_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    total      = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    reason     = models.TextField(blank=True)
+    status     = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    issued_at  = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"DN {self.debit_note_number or self.pk}"
+
+    def save(self, *args, **kwargs):
+        if not self.debit_note_number and self.tenant_id:
+            last = (
+                DebitNote.objects.filter(tenant_id=self.tenant_id)
+                .order_by('-created_at')
+                .values_list('debit_note_number', flat=True)
+                .first()
+            )
+            try:
+                seq = int(str(last).split('-')[-1]) + 1 if last else 1
+            except (ValueError, IndexError):
+                seq = 1
+            self.debit_note_number = f"DN-{seq:05d}"
+        super().save(*args, **kwargs)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TDS — Tax Deducted at Source  (Nepal)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TDSEntry(TenantModel):
+    """
+    Nepal mandatory: TDS is deducted from supplier payments above NPR 3,000.
+    The tenant deducts the tax and deposits it to IRD on the supplier's behalf.
+    Common rates: 1.5% goods, 10% professional/service, 15% rent/commission.
+    """
+
+    STATUS_PENDING   = 'pending'
+    STATUS_DEPOSITED = 'deposited'
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING,   'Pending Deposit'),
+        (STATUS_DEPOSITED, 'Deposited to IRD'),
+    ]
+
+    bill              = models.ForeignKey(
+        Bill, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='tds_entries',
+    )
+    supplier_name     = models.CharField(max_length=200, blank=True)
+    supplier_pan      = models.CharField(max_length=20, blank=True, help_text="Supplier PAN number for IRD")
+    taxable_amount    = models.DecimalField(max_digits=14, decimal_places=2)
+    tds_rate          = models.DecimalField(max_digits=6,  decimal_places=4, help_text="e.g. 0.10 for 10%")
+    tds_amount        = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    net_payable       = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    status            = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    period_month      = models.PositiveIntegerField(help_text="Nepali month (1–12)")
+    period_year       = models.PositiveIntegerField(help_text="Nepali fiscal year, e.g. 2081")
+    deposited_at      = models.DateTimeField(null=True, blank=True)
+    deposit_reference = models.CharField(max_length=64, blank=True, help_text="IRD deposit receipt number")
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'TDS Entry'
+        verbose_name_plural = 'TDS Entries'
+
+    def __str__(self):
+        return f"TDS {self.tds_amount} ({self.supplier_name})"
+
+    def save(self, *args, **kwargs):
+        self.tds_amount  = (self.taxable_amount * self.tds_rate).quantize(Decimal('0.01'))
+        self.net_payable = self.taxable_amount - self.tds_amount
+        super().save(*args, **kwargs)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bank Reconciliation
+# ─────────────────────────────────────────────────────────────────────────────
+
+class BankReconciliation(TenantModel):
+    """
+    Links system Payment records to a real bank statement for a period.
+    Bookkeeper imports statement lines and matches them one-to-one.
+    Status: draft → reconciled (locked when balanced).
+    """
+
+    STATUS_DRAFT      = 'draft'
+    STATUS_RECONCILED = 'reconciled'
+
+    STATUS_CHOICES = [
+        (STATUS_DRAFT,      'Draft'),
+        (STATUS_RECONCILED, 'Reconciled'),
+    ]
+
+    bank_account    = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='reconciliations')
+    statement_date  = models.DateField()
+    opening_balance = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    closing_balance = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    status          = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    notes           = models.TextField(blank=True)
+    reconciled_at   = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-statement_date']
+        unique_together = ('tenant', 'bank_account', 'statement_date')
+
+    def __str__(self):
+        return f"Rec {self.bank_account} {self.statement_date}"
+
+    @property
+    def difference(self):
+        """Unmatched amount. Zero = fully reconciled."""
+        from django.db.models import Sum
+        matched = self.lines.filter(is_matched=True).aggregate(t=Sum('amount'))['t'] or Decimal('0')
+        return (self.closing_balance - self.opening_balance) - matched
+
+
+class BankReconciliationLine(models.Model):
+    """One row from an imported bank statement, optionally matched to a Payment."""
+
+    reconciliation = models.ForeignKey(BankReconciliation, on_delete=models.CASCADE, related_name='lines')
+    date           = models.DateField()
+    description    = models.CharField(max_length=255)
+    amount         = models.DecimalField(max_digits=14, decimal_places=2)   # positive=inflow, negative=outflow
+    is_matched     = models.BooleanField(default=False)
+    payment        = models.ForeignKey(
+        Payment, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='reconciliation_lines',
+    )
+
+    class Meta:
+        ordering = ['date']
+
+    def __str__(self):
+        return f"{self.date} {self.description} {self.amount}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Recurring Journal Templates
+# ─────────────────────────────────────────────────────────────────────────────
+
+class RecurringJournal(TenantModel):
+    """
+    Template for auto-repeating journal entries (rent, subscriptions, etc.).
+    A Celery task fires daily, checks next_date, creates a JournalEntry from
+    the template_lines, then advances next_date by the chosen frequency.
+    """
+
+    FREQ_DAILY   = 'daily'
+    FREQ_WEEKLY  = 'weekly'
+    FREQ_MONTHLY = 'monthly'
+    FREQ_YEARLY  = 'yearly'
+
+    FREQ_CHOICES = [
+        (FREQ_DAILY,   'Daily'),
+        (FREQ_WEEKLY,  'Weekly'),
+        (FREQ_MONTHLY, 'Monthly'),
+        (FREQ_YEARLY,  'Yearly'),
+    ]
+
+    name        = models.CharField(max_length=120)
+    description = models.TextField(blank=True)
+    frequency   = models.CharField(max_length=16, choices=FREQ_CHOICES, default=FREQ_MONTHLY)
+    start_date  = models.DateField()
+    end_date    = models.DateField(null=True, blank=True)
+    next_date   = models.DateField()
+    is_active   = models.BooleanField(default=True)
+    # Each dict: {"account_code": str, "debit": "0.00", "credit": "0.00", "description": str}
+    template_lines = models.JSONField(default=list)
+    last_run_at    = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['next_date']
+
+    def __str__(self):
+        return f"{self.name} ({self.frequency})"
+

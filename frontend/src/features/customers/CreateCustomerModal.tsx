@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import Modal from '../../components/Modal'
 import apiClient from '../../api/client'
+import NepalAddressFields, { type NepalAddressValue } from './NepalAddressFields'
 
 interface Props {
   open: boolean
@@ -10,24 +11,32 @@ interface Props {
 }
 
 const CUSTOMER_TYPES = [
-  { value: 'individual', label: 'Individual' },
+  { value: 'individual',   label: 'Individual'   },
   { value: 'organization', label: 'Organization' },
 ]
 
+const EMPTY_ADDRESS: NepalAddressValue = {
+  province:     '',
+  district:     '',
+  municipality: '',
+  ward_no:      '',
+  street:       '',
+}
+
 const EMPTY_FORM = {
-  type: 'individual',
-  name: '',
-  email: '',
-  phone: '',
-  address: '',
+  type:       'individual',
+  name:       '',
+  email:      '',
+  phone:      '',
   tax_number: '',   // maps to pan_number on submit
-  notes: '',
+  notes:      '',
 }
 
 export default function CreateCustomerModal({ open, onClose }: Props) {
   const qc = useQueryClient()
-  const [form, setForm] = useState(EMPTY_FORM)
-  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [form, setForm]       = useState(EMPTY_FORM)
+  const [address, setAddress] = useState<NepalAddressValue>(EMPTY_ADDRESS)
+  const [errors, setErrors]   = useState<Record<string, string>>({})
 
   const isOrg = form.type === 'organization'
 
@@ -42,6 +51,7 @@ export default function CreateCustomerModal({ open, onClose }: Props) {
       toast.success('Customer created')
       qc.invalidateQueries({ queryKey: ['customers'] })
       setForm(EMPTY_FORM)
+      setAddress(EMPTY_ADDRESS)
       setErrors({})
       onClose()
     },
@@ -64,10 +74,8 @@ export default function CreateCustomerModal({ open, onClose }: Props) {
 
   function validate() {
     const errs: Record<string, string> = {}
-    if (!form.name.trim())    errs.name    = 'Name is required'
-    if (!form.email.trim())   errs.email   = 'Email is required'
-    if (!form.phone.trim())   errs.phone   = 'Phone is required'
-    if (!form.address.trim()) errs.address = 'Address is required'
+    if (!form.name.trim())  errs.name  = 'Name is required'
+    if (!form.phone.trim()) errs.phone = 'Phone is required'
     if (isOrg && !form.tax_number.trim()) errs.tax_number = 'PAN / VAT number is required for organizations'
     return errs
   }
@@ -79,20 +87,25 @@ export default function CreateCustomerModal({ open, onClose }: Props) {
     setErrors({})
 
     const payload: Record<string, string> = {
-      type: form.type,
-      name: form.name.trim(),
-      email: form.email.trim(),
+      type:  form.type,
+      name:  form.name.trim(),
       phone: form.phone.trim(),
-      address: form.address.trim(),
     }
-    if (form.tax_number.trim()) payload.pan_number = form.tax_number.trim()
-    if (form.notes.trim())      payload.notes      = form.notes.trim()
+    if (form.email.trim())           payload.email        = form.email.trim()
+    if (address.province)            payload.province     = address.province
+    if (address.district.trim())     payload.district     = address.district.trim()
+    if (address.municipality.trim()) payload.municipality = address.municipality.trim()
+    if (address.ward_no.trim())      payload.ward_no      = address.ward_no.trim()
+    if (address.street.trim())       payload.street       = address.street.trim()
+    if (form.tax_number.trim())      payload.pan_number   = form.tax_number.trim()
+    if (form.notes.trim())           payload.notes        = form.notes.trim()
 
     mutation.mutate(payload)
   }
 
   function handleClose() {
     setForm(EMPTY_FORM)
+    setAddress(EMPTY_ADDRESS)
     setErrors({})
     onClose()
   }
@@ -132,13 +145,15 @@ export default function CreateCustomerModal({ open, onClose }: Props) {
           {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name}</p>}
         </div>
 
-        {/* Email + Phone */}
+        {/* Email (optional) + Phone (required) */}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Email <span className="text-red-500">*</span>
+              Email
+              <span className="ml-1 text-xs font-normal text-gray-400">(optional)</span>
             </label>
             <input type="email" value={form.email} onChange={field('email')}
+              placeholder="e.g. ram@example.com"
               className={inputCls(errors.email)} />
             {errors.email && <p className="text-xs text-red-500 mt-1">{errors.email}</p>}
           </div>
@@ -147,19 +162,23 @@ export default function CreateCustomerModal({ open, onClose }: Props) {
               Phone <span className="text-red-500">*</span>
             </label>
             <input type="tel" value={form.phone} onChange={field('phone')}
+              placeholder="e.g. 9841000000"
               className={inputCls(errors.phone)} />
             {errors.phone && <p className="text-xs text-red-500 mt-1">{errors.phone}</p>}
           </div>
         </div>
 
-        {/* Address */}
+        {/* Nepal hierarchical address */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Address <span className="text-red-500">*</span>
-          </label>
-          <input type="text" value={form.address} onChange={field('address')}
-            className={inputCls(errors.address)} />
-          {errors.address && <p className="text-xs text-red-500 mt-1">{errors.address}</p>}
+          <p className="text-sm font-medium text-gray-700 mb-2">
+            Address
+            <span className="ml-1 text-xs font-normal text-gray-400">(optional)</span>
+          </p>
+          <NepalAddressFields
+            value={address}
+            onChange={setAddress}
+            errors={errors as any}
+          />
         </div>
 
         {/* PAN / VAT — organization only */}

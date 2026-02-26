@@ -173,13 +173,32 @@ class StaffMembershipSerializer(serializers.ModelSerializer):
         )
 
 
+def _user_display_name(user) -> str:
+    """Best available display name for a user (mirrors tickets/serializers.py helper)."""
+    if not user:
+        return ''
+    if user.full_name:
+        return user.full_name
+    composed = f"{user.first_name} {user.last_name}".strip()
+    if composed:
+        return composed
+    if user.username and user.username != user.email:
+        return user.username
+    local = user.email.split('@')[0] if user.email and '@' in user.email else user.email
+    return local or user.email
+
+
 class StaffSerializer(serializers.ModelSerializer):
     """Read serializer — user profile + their membership in the current tenant."""
     membership = serializers.SerializerMethodField()
+    display_name = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ('id', 'email', 'full_name', 'phone', 'avatar', 'is_active', 'date_joined', 'membership')
+        fields = ('id', 'email', 'full_name', 'display_name', 'phone', 'avatar', 'is_active', 'date_joined', 'membership')
+
+    def get_display_name(self, user):
+        return _user_display_name(user)
 
     def get_membership(self, user):
         tenant = self.context.get('tenant')

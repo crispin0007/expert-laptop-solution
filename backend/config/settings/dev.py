@@ -7,6 +7,10 @@ ALLOWED_HOSTS = ['*']
 # Development-specific settings
 INSTALLED_APPS += []
 
+# Disable throttling in dev — no rate limits during local testing
+REST_FRAMEWORK['DEFAULT_THROTTLE_CLASSES'] = []
+REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {}
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

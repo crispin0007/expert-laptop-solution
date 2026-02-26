@@ -24,7 +24,17 @@ class RoleSerializer(serializers.ModelSerializer):
         """
         Reject any permission keys that are not in the canonical PERMISSION_MAP.
         This prevents typos and keeps the permissions dict clean.
+
+        Accepts either:
+          - a dict  → { "tickets.view": true, ... }
+          - a list  → ["tickets.view", ...] (convenience form; coerced to dict of True)
         """
+        if isinstance(value, list):
+            value = {k: True for k in value}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError(
+                'permissions must be a JSON object (dict) or a list of permission key strings.'
+            )
         unknown = set(value.keys()) - set(PERMISSION_MAP.keys())
         if unknown:
             raise serializers.ValidationError(

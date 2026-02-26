@@ -6,6 +6,7 @@ import { ArrowLeft, Building2, User, Pencil, Save, X } from 'lucide-react'
 import apiClient from '../../api/client'
 import type { Customer } from './types'
 import CustomerContactsTab from './CustomerContactsTab'
+import NepalAddressFields, { type NepalAddressValue } from './NepalAddressFields'
 
 const TABS = ['Info', 'Contacts'] as const
 type Tab = (typeof TABS)[number]
@@ -125,13 +126,16 @@ export default function CustomerDetailPage() {
         <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
           <div className="grid grid-cols-2 gap-4">
             {([
+              { label: 'Email', key: 'email' as keyof Customer, type: 'email', optional: true },
               { label: 'Phone', key: 'phone' as keyof Customer, type: 'tel' },
-              { label: 'Address', key: 'address' as keyof Customer, type: 'text' },
               { label: 'VAT Number', key: 'vat_number' as keyof Customer, type: 'text' },
               { label: 'PAN Number', key: 'pan_number' as keyof Customer, type: 'text' },
-            ]).map(({ label, key, type }) => (
+            ]).map(({ label, key, type, optional }) => (
               <div key={key}>
-                <label className="block text-xs font-medium text-gray-500 mb-1">{label}</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1">
+                  {label}
+                  {optional && <span className="ml-1 font-normal text-gray-400">(optional)</span>}
+                </label>
                 {editing ? (
                   <input type={type} value={(form[key] as string) ?? ''}
                     onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
@@ -141,6 +145,34 @@ export default function CustomerDetailPage() {
                 )}
               </div>
             ))}
+
+            {/* Nepal hierarchical address */}
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-gray-500 mb-2">
+                Address
+                {editing && <span className="ml-1 font-normal text-gray-400">(optional)</span>}
+              </label>
+              {editing ? (
+                <NepalAddressFields
+                  value={{
+                    province:     form.province     ?? '',
+                    district:     form.district     ?? '',
+                    municipality: form.municipality ?? '',
+                    ward_no:      form.ward_no      ?? '',
+                    street:       form.street       ?? '',
+                  }}
+                  onChange={(next: NepalAddressValue) => setForm(f => ({ ...f, ...next }))}
+                />
+              ) : (
+                <div className="text-sm text-gray-900">
+                  {customer.full_address
+                    ? <p>{customer.full_address}</p>
+                    : <p className="text-gray-400">—</p>
+                  }
+                </div>
+              )}
+            </div>
+
             <div className="col-span-2">
               <label className="block text-xs font-medium text-gray-500 mb-1">Notes</label>
               {editing ? (

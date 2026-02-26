@@ -173,6 +173,11 @@ CORS_ALLOWED_ORIGINS = [
     'http://192.168.100.100:5173',
     'http://192.168.100.100:5174',
 ]
+# Also allow any *.localhost subdomain (e.g. pro.localhost:5173, els.localhost:5173)
+# so tenant subdomains work in local dev without listing every slug explicitly.
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r'^http://[a-z0-9-]+\.localhost(:\d+)?$',
+]
 CORS_ALLOW_CREDENTIALS = True
 
 # Redis cache (for staff availability and other short-lived data)
