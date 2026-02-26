@@ -58,7 +58,7 @@ export const PROVINCES: ProvinceOption[] = EN_PROVINCE_KEYS.map(enKey => {
 // ── Internal data indexed by slug ─────────────────────────────────────────────
 type JsonShape = Record<string, Record<string, Record<string, string[]>>>
 const _en = enData as unknown as JsonShape
-const _np = npData as unknown as JsonShape
+void (npData)
 
 // Build slug → EN district data
 const BY_SLUG_EN: Record<string, Record<string, Record<string, string[]>>> = {}

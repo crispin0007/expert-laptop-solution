@@ -663,7 +663,6 @@ function VehiclesTab() {
   const [showForm, setShowForm] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
   const [form, setForm] = useState({ ...VEHICLE_INIT })
-  const [expandedNotes, setExpandedNotes] = useState<number | null>(null)
 
   const { data: vehicles = [], isLoading } = useQuery<Vehicle[]>({
     queryKey: ['vehicles'],
