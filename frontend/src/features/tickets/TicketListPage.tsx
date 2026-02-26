@@ -91,9 +91,10 @@ function SLABadge({ breached, deadline }: { breached: boolean; deadline: string 
 
 export default function TicketListPage() {
   const qc = useQueryClient()
-  const navigate = useNavigate()
+
   const { can } = usePermissions()
   const currentUser = useAuthStore((s) => s.user)
+  const navigate = useNavigate()
   const [urlParams] = useSearchParams()
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(

@@ -1249,19 +1249,19 @@ export default function TicketDetailPage() {
   }
 
   return (
-    <div className="-mx-6 md:-mx-8 -mt-6 md:-mt-8 flex flex-col bg-gray-50">
+    <div className="-mx-4 sm:-mx-6 md:-mx-8 -mt-6 md:-mt-8 flex flex-col bg-gray-50">
 
       {/* ── Top bar ──────────────────────────────────────────────────────────── */}
-      <div className="flex-shrink-0 sticky top-0 z-10 bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4">
+      <div className="flex-shrink-0 sticky top-0 z-10 bg-white border-b border-gray-200 px-4 md:px-6 py-3 flex flex-wrap items-center gap-2 md:gap-3">
         <Link
           to="/tickets"
           className="inline-flex items-center gap-1 text-sm text-indigo-500 hover:text-indigo-700"
         >
           <ArrowLeft size={15} /> Tickets
         </Link>
-        <span className="text-gray-300">/</span>
-        <span className="font-mono text-xs text-indigo-400">{ticket.ticket_number}</span>
-        <h1 className="text-sm font-semibold text-gray-900 truncate flex-1">{ticket.title}</h1>
+        <span className="text-gray-300 hidden sm:inline">/</span>
+        <span className="font-mono text-xs text-indigo-400 hidden sm:inline">{ticket.ticket_number}</span>
+        <h1 className="text-sm font-semibold text-gray-900 truncate flex-1 min-w-0">{ticket.title}</h1>
 
         {/* Status + priority badges */}
         <span className={`flex-shrink-0 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[ticket.status]}`}>
@@ -1276,8 +1276,8 @@ export default function TicketDetailPage() {
           </span>
         )}
 
-        {/* Action buttons */}
-        <div className="flex items-center gap-2 flex-shrink-0">
+        {/* Action buttons — wrap to next line on narrow screens */}
+        <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
           {managerView ? (
             <>
               <div className="flex items-center gap-1">
@@ -1336,11 +1336,11 @@ export default function TicketDetailPage() {
         </div>
       </div>
 
-      {/* ── Body: two panes ──────────────────────────────────────────────────── */}
-      <div className="flex gap-0 items-start">
+      {/* ── Body: two panes — stacked on mobile, side-by-side on lg+ ──────── */}
+      <div className="flex flex-col lg:flex-row gap-0 lg:items-start">
 
-        {/* ── Left: scrollable details ──────────────────────────────────────── */}
-        <div className="flex-1 p-6 space-y-5 min-w-0 pb-10">
+        {/* ── Left: details ─────────────────────────────────────────────────── */}
+        <div className="flex-1 p-4 md:p-6 space-y-5 min-w-0 pb-10">
 
           {/* Info card */}
           <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
@@ -1452,8 +1452,8 @@ export default function TicketDetailPage() {
           </div>
         </div>
 
-        {/* ── Right: Comments pane ──────────────────────────────────────────── */}
-        <div className="w-96 flex-shrink-0 flex flex-col bg-white border-l border-gray-200 sticky top-[46px]" style={{ height: 'calc(100vh - 92px)' }}>
+        {/* ── Right: Comments pane — full-width on mobile, fixed side panel on lg ── */}
+        <div className="w-full lg:w-96 lg:flex-shrink-0 flex flex-col bg-white border-t lg:border-t-0 lg:border-l border-gray-200 lg:sticky lg:top-[46px] lg:h-[calc(100vh-92px)]">
 
           {/* Pane header */}
           <div className="flex-shrink-0 px-5 py-3.5 border-b border-gray-100 flex items-center gap-2">
