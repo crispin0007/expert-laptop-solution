@@ -746,8 +746,21 @@ export default function ProjectDetailPage() {
     mutationFn: (product: Product) => apiClient.post(PROJECTS.PROJECT_PRODUCTS(projectId), {
       product: product.id, quantity_planned: ppQty,
     }),
-    onSuccess: () => { toast.success('Product added'); setPpQty(1); qc.invalidateQueries({ queryKey: ['project-products', id] }) },
-    onError: (err: any) => toast.error(err?.response?.data?.non_field_errors?.[0] ?? 'Failed to add product'),
+    onSuccess: (res) => {
+      const msg = res.status === 200 ? 'Quantity updated' : 'Product added'
+      toast.success(msg)
+      setPpQty(1)
+      qc.invalidateQueries({ queryKey: ['project-products', id] })
+    },
+    onError: (err: any) => {
+      const data = err?.response?.data
+      const msg =
+        data?.product?.[0] ??
+        data?.non_field_errors?.[0] ??
+        data?.detail ??
+        'Failed to add product'
+      toast.error(msg)
+    },
   })
 
   const removeProductMutation = useMutation({

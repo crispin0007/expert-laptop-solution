@@ -1,8 +1,6 @@
-from django.db import IntegrityError
 from django.utils import timezone
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from core.mixins import TenantMixin
 from core.permissions import make_role_permission, STAFF_ROLES, MANAGER_ROLES, ALL_ROLES
@@ -138,13 +136,35 @@ class ProjectProductViewSet(TenantMixin, viewsets.ModelViewSet):
             qs = qs.filter(project_id=project_pk)
         return qs
 
-    def perform_create(self, serializer):
+    def create(self, request, *args, **kwargs):
+        """
+        Upsert: if the product is already linked to this project, increment
+        quantity_planned instead of raising a duplicate-key error.
+        """
         project_pk = self.kwargs.get('project_pk')
-        project = Project.objects.get(pk=project_pk, tenant=self.request.tenant)
-        try:
-            serializer.save(tenant=self.tenant, created_by=self.request.user, project=project)
-        except IntegrityError:
-            raise ValidationError({'product': 'This product is already added to the project.'})
+        project = Project.objects.get(pk=project_pk, tenant=self.tenant)
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        product = serializer.validated_data['product']
+        qty = serializer.validated_data.get('quantity_planned', 1)
+
+        existing = ProjectProduct.objects.filter(
+            tenant=self.tenant, project=project, product=product
+        ).first()
+
+        if existing:
+            # Increment quantity on the existing record
+            existing.quantity_planned += qty
+            existing.save(update_fields=['quantity_planned', 'updated_at'])
+            out = self.get_serializer(existing)
+            return Response(out.data, status=status.HTTP_200_OK)
+
+        # First time — create fresh
+        serializer.save(tenant=self.tenant, created_by=request.user, project=project)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
 
 class ProjectProductRequestViewSet(TenantMixin, viewsets.ModelViewSet):
