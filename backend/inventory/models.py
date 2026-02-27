@@ -162,6 +162,20 @@ class StockMovement(TenantModel):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            # Accelerates per-tenant stock movement queries filtered by product+type
+            # (e.g. aggregate IN quantities for a product within a tenant).
+            models.Index(
+                fields=['tenant', 'product', 'movement_type'],
+                name='stkmov_tenant_prod_type_idx',
+            ),
+            # Accelerates the most recent movements lookup per product
+            # (used both by signals that update StockLevel and admin timelines).
+            models.Index(
+                fields=['product', '-created_at'],
+                name='stockmov_product_recent_idx',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.movement_type} {self.quantity}x {self.product_id}"

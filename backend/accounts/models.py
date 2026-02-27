@@ -61,20 +61,8 @@ class TenantMembership(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.staff_number and self.tenant_id:
-            last = (
-                TenantMembership.objects.filter(tenant_id=self.tenant_id)
-                .order_by('created_at')
-                .values_list('staff_number', flat=True)
-                .last()
-            )
-            if last:
-                try:
-                    seq = int(last.split('-')[-1]) + 1
-                except (ValueError, IndexError):
-                    seq = 1
-            else:
-                seq = 1
-            self.staff_number = f"STF-{seq:04d}"
+            from core.models import next_seq
+            self.staff_number = f"STF-{next_seq(self.tenant_id, 'staff', TenantMembership, 'staff_number'):04d}"
         super().save(*args, **kwargs)
 
     def __str__(self):

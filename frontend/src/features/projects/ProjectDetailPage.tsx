@@ -977,7 +977,7 @@ export default function ProjectDetailPage() {
       </div>
 
       {/* ── Main content split ─────────────────────────────────────────────── */}
-      <div className="flex gap-6 items-start">
+      <div className="flex flex-col lg:flex-row gap-6 items-start">
 
         {/* ── Left: Tasks board ─────────────────────────────────────────────── */}
         <div className="flex-1 min-w-0 space-y-4">
@@ -1085,7 +1085,7 @@ export default function ProjectDetailPage() {
 
           {/* ── Kanban Board ─────────────────────────────────────────────────── */}
           {viewMode === 'kanban' && (
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               {KANBAN_COLS.map(col => {
                 const colTasks = tasks.filter(t => t.status === col.key)
                 const isDragTarget = dragOverCol === col.key
@@ -1144,7 +1144,7 @@ export default function ProjectDetailPage() {
 
           {/* ── List View ────────────────────────────────────────────────────── */}
           {viewMode === 'list' && (
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden overflow-x-auto">
               {tasks.length === 0 ? (
                 <div className="p-8 text-center text-sm text-gray-400">No tasks yet — add one above</div>
               ) : (
@@ -1236,7 +1236,7 @@ export default function ProjectDetailPage() {
         </div>
 
         {/* ── Right Sidebar ──────────────────────────────────────────────────── */}
-        <div className="w-72 shrink-0 space-y-4">
+        <div className="w-full lg:w-72 lg:shrink-0 space-y-4">
 
           {/* Team */}
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">

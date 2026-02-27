@@ -2,12 +2,13 @@ import { useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import apiClient from '../../api/client'
-import { TICKETS, PROJECTS, ACCOUNTING } from '../../api/endpoints'
+import { DASHBOARD, TICKETS, PROJECTS, ACCOUNTING } from '../../api/endpoints'
 import { usePermissions } from '../../hooks/usePermissions'
 import { useModules } from '../../hooks/useModules'
 import {
   Ticket as TicketIcon, FolderKanban, Coins, AlertTriangle,
   Clock, CheckCircle2, CircleDot, ArrowRight, Plus,
+  TrendingUp, ShieldAlert,
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -36,13 +37,17 @@ interface CoinRow {
   status: string
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function count(data: unknown): number {
-  if (Array.isArray(data)) return data.length
-  if (data && typeof data === 'object' && 'count' in data) return (data as { count: number }).count
-  return 0
+interface DashboardStats {
+  open_tickets: number
+  in_progress_tickets: number
+  sla_breached: number
+  sla_warning: number
+  active_projects: number
+  pending_coins: number
+  revenue_this_month: string
 }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function toArray<T>(data: unknown): T[] {
   if (Array.isArray(data)) return data as T[]
@@ -108,33 +113,27 @@ export default function DashboardPage() {
   const perms = usePermissions()
   const modules = useModules()
 
-  // ── Tickets ──────────────────────────────────────────────────────────────
+  // ── Aggregated KPI stats (single request) ────────────────────────────────
+  const { data: stats } = useQuery<DashboardStats>({
+    queryKey: ['dashboard', 'stats'],
+    queryFn: () => apiClient.get(DASHBOARD.STATS).then(r => r.data),
+    staleTime: 60_000,
+    refetchInterval: 120_000,
+  })
+
+  // ── Full list data (needed for table/list rendering) ─────────────────────
   const { data: openData } = useQuery({
     queryKey: ['tickets', 'open'],
     queryFn: () => apiClient.get(TICKETS.LIST, { params: { status: 'open' } }).then(r => r.data),
     enabled: modules.has('tickets') && perms.can('can_view_tickets'),
   })
 
-  const { data: inProgressData } = useQuery({
-    queryKey: ['tickets', 'in_progress'],
-    queryFn: () => apiClient.get(TICKETS.LIST, { params: { status: 'in_progress' } }).then(r => r.data),
-    enabled: modules.has('tickets') && perms.can('can_view_tickets'),
-  })
-
-  const { data: breachedData } = useQuery({
-    queryKey: ['tickets', 'sla-breached'],
-    queryFn: () => apiClient.get(TICKETS.SLA_BREACHED).then(r => r.data),
-    enabled: modules.has('tickets') && perms.can('can_view_tickets'),
-  })
-
-  // ── Projects ─────────────────────────────────────────────────────────────
   const { data: projectsData } = useQuery({
     queryKey: ['projects', 'active'],
     queryFn: () => apiClient.get(PROJECTS.LIST, { params: { status: 'active' } }).then(r => r.data),
     enabled: modules.has('projects') && perms.can('can_view_projects'),
   })
 
-  // ── Coins (admin+) ────────────────────────────────────────────────────────
   const { data: coinsData } = useQuery({
     queryKey: ['coins', 'pending'],
     queryFn: () => apiClient.get(ACCOUNTING.COINS, { params: { status: 'pending' } }).then(r => r.data),
@@ -145,11 +144,22 @@ export default function DashboardPage() {
   const openTickets    = useMemo(() => toArray<TicketRow>(openData), [openData])
   const activeProjects = useMemo(() => toArray<ProjectRow>(projectsData), [projectsData])
   const pendingCoins   = useMemo(() => toArray<CoinRow>(coinsData), [coinsData])
-  const breachedCount  = count(breachedData)
+
+  // Counts from stats endpoint (fast, single request) or fall back to list length
+  const openCount       = stats?.open_tickets     ?? openTickets.length
+  const inProgressCount = stats?.in_progress_tickets ?? 0
+  const breachedCount   = stats?.sla_breached     ?? 0
+  const warningCount    = stats?.sla_warning       ?? 0
+  const projectCount    = stats?.active_projects   ?? activeProjects.length
+  const pendingCount    = stats?.pending_coins     ?? pendingCoins.length
+
+  const revenueRaw      = parseFloat(stats?.revenue_this_month ?? '0')
+  const revenueDisplay  = revenueRaw.toLocaleString('en-NP', { maximumFractionDigits: 0 })
 
   const showTickets  = modules.has('tickets') && perms.can('can_view_tickets')
   const showProjects = modules.has('projects') && perms.can('can_view_projects')
   const showCoins    = modules.has('accounting') && perms.can('can_approve_coins')
+  const showAccounting = modules.has('accounting') && perms.can('can_view_accounting')
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -173,11 +183,16 @@ export default function DashboardPage() {
       </div>
 
       {/* ── SLA breach alert banner ─────────────────────────────────────── */}
-      {showTickets && breachedCount > 0 && (
+      {showTickets && (breachedCount > 0 || warningCount > 0) && (
         <div className="flex items-center gap-3 bg-red-50 border border-red-300 rounded-xl px-5 py-3">
           <AlertTriangle size={18} className="text-red-500 shrink-0" />
           <p className="text-sm font-semibold text-red-700">
-            {breachedCount} ticket{breachedCount > 1 ? 's have' : ' has'} breached SLA and need immediate attention.
+            {breachedCount > 0 && (
+              <>{breachedCount} ticket{breachedCount !== 1 ? 's' : ''} breached SLA. </>
+            )}
+            {warningCount > 0 && (
+              <span className="text-orange-600">{warningCount} approaching breach.</span>
+            )}
           </p>
           <Link
             to="/tickets"
@@ -194,14 +209,14 @@ export default function DashboardPage() {
           <>
             <StatCard
               label="Open Tickets"
-              value={openTickets.length}
+              value={openCount}
               icon={CircleDot}
               iconBg="bg-blue-50"
               iconColor="text-blue-500"
             />
             <StatCard
               label="In Progress"
-              value={count(inProgressData)}
+              value={inProgressCount}
               icon={Clock}
               iconBg="bg-indigo-50"
               iconColor="text-indigo-500"
@@ -214,18 +229,35 @@ export default function DashboardPage() {
               iconColor={breachedCount > 0 ? 'text-red-500' : 'text-gray-400'}
               alert={breachedCount > 0}
             />
+            <StatCard
+              label="SLA Warning"
+              value={warningCount}
+              icon={ShieldAlert}
+              iconBg={warningCount > 0 ? 'bg-orange-50' : 'bg-gray-50'}
+              iconColor={warningCount > 0 ? 'text-orange-500' : 'text-gray-400'}
+              alert={warningCount > 0}
+            />
           </>
         )}
         {showProjects && (
           <StatCard
             label="Active Projects"
-            value={activeProjects.length}
+            value={projectCount}
             icon={FolderKanban}
             iconBg="bg-emerald-50"
             iconColor="text-emerald-500"
           />
         )}
-        {!showTickets && !showProjects && (
+        {showAccounting && (
+          <StatCard
+            label="Revenue This Month"
+            value={`Rs. ${revenueDisplay}`}
+            icon={TrendingUp}
+            iconBg="bg-teal-50"
+            iconColor="text-teal-500"
+          />
+        )}
+        {!showTickets && !showProjects && !showAccounting && (
           <StatCard
             label="Today"
             value={new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
@@ -348,9 +380,9 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-2">
                   <Coins size={16} className="text-amber-500" />
                   <h2 className="text-sm font-semibold text-gray-900">Pending Coin Approvals</h2>
-                  {pendingCoins.length > 0 && (
+                  {pendingCount > 0 && (
                     <span className="ml-1 bg-amber-100 text-amber-700 text-xs font-bold px-1.5 py-0.5 rounded-full">
-                      {pendingCoins.length}
+                      {pendingCount}
                     </span>
                   )}
                 </div>

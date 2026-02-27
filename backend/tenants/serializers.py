@@ -89,6 +89,32 @@ class TenantSerializer(serializers.ModelSerializer):
     def get_active_modules(self, obj):
         return sorted(obj.active_modules_set)
 
+    def validate_slug(self, value):
+        """Prevent slug changes after tenant creation; reject reserved slugs.
+
+        The slug is the subdomain — changing it after creation breaks all
+        existing DNS entries, bookmarks, and any cached JWT tokens that were
+        issued against the old subdomain resolution path.
+
+        Also rejects slugs permanently reserved by SlugReservation (set when a
+        tenant is soft-deleted) to prevent JWT scope confusion and DNS history
+        reuse by a new tenant claiming an old slug.
+        """
+        # self.instance is set on updates (PATCH/PUT), None on create (POST)
+        if self.instance is not None and self.instance.slug != value:
+            raise serializers.ValidationError(
+                'Tenant slug (subdomain) cannot be changed after creation. '
+                'Doing so would break all existing user sessions and DNS entries.'
+            )
+        # On creation, reject slugs that are permanently reserved.
+        if self.instance is None:
+            from tenants.models import SlugReservation
+            if SlugReservation.objects.filter(slug=value).exists():
+                raise serializers.ValidationError(
+                    'This slug is reserved and cannot be used for a new tenant.'
+                )
+        return value
+
     def validate_custom_domain(self, value):
         """Normalise empty string → None so unique constraint works correctly."""
         if not value or not value.strip():

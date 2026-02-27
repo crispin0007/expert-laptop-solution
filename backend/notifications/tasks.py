@@ -311,3 +311,27 @@ def task_check_sla_deadlines() -> None:
         "task_check_sla_deadlines: %d breached, %d warnings sent.",
         breach_count, warning_count,
     )
+
+
+@shared_task
+def task_flush_expired_tokens() -> None:
+    """
+    Purge expired SimpleJWT tokens from the database.
+
+    SimpleJWT's ``OutstandingToken`` and ``BlacklistedToken`` tables grow
+    unboundedly unless pruned.  Django ships a management command
+    ``flushexpiredtokens`` (from ``rest_framework_simplejwt``) that deletes
+    every ``OutstandingToken`` whose ``expires_at`` is in the past (and
+    cascades to ``BlacklistedToken``).
+
+    This task is scheduled nightly at 03:00 UTC via ``CELERY_BEAT_SCHEDULE``
+    in ``config/settings/base.py``.
+    """
+    from django.core.management import call_command
+
+    try:
+        call_command('flushexpiredtokens')
+        logger.info("task_flush_expired_tokens: expired JWT tokens purged successfully.")
+    except Exception as exc:
+        logger.error("task_flush_expired_tokens failed: %s", exc, exc_info=True)
+        raise

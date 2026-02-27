@@ -27,6 +27,10 @@ class IsSuperAdmin(permissions.BasePermission):
     Allows access only to users with is_superadmin=True accessing the MAIN domain.
     Blocks access even for superusers when request comes via a tenant subdomain.
     Used exclusively for platform-level operations (Tenant CRUD).
+
+    Optional IP allowlist: set SUPERADMIN_ALLOWED_IPS in settings (derived from
+    the env var of the same name) to restrict super-admin API access to known
+    office/VPN IPs.  When the list is empty (default), all IPs are allowed.
     """
     message = 'Super admin access required. Use the main domain, not a tenant subdomain.'
 
@@ -44,6 +48,25 @@ class IsSuperAdmin(permissions.BasePermission):
         # via a tenant subdomain (e.g. acme.nexusbms.com/api/v1/tenants/).
         if getattr(request, 'tenant', None) is not None:
             return False
+        # Optional IP allowlist — only enforced when SUPERADMIN_ALLOWED_IPS is
+        # non-empty in settings.  When empty, any IP is accepted (dev / open).
+        from django.conf import settings
+        allowed_ips = getattr(settings, 'SUPERADMIN_ALLOWED_IPS', [])
+        if allowed_ips:
+            from core.audit import log_event, AuditEvent, _extract_ip
+            client_ip = _extract_ip(request)
+            if client_ip not in allowed_ips:
+                try:
+                    log_event(
+                        AuditEvent.SUPERADMIN_IP_BLOCKED,
+                        request=request,
+                        actor=request.user,
+                        extra={'client_ip': client_ip, 'allowed': allowed_ips},
+                    )
+                except Exception:
+                    pass
+                self.message = 'Access denied from your IP address.'
+                return False
         return True
 
 

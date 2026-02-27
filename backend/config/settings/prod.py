@@ -3,26 +3,37 @@ from .base import *
 
 DEBUG = False
 
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', SECRET_KEY)
-
-# '*' allows any hostname — safe because Nginx is the public boundary and
-# validates Host headers before requests reach Django. Custom tenant domains
-# (els.com, etc.) cannot be enumerated statically so wildcard is intentional.
-ALLOWED_HOSTS = ['*']
+# Build ALLOWED_HOSTS from ROOT_DOMAIN so it is never a wildcard.
+# 1. The root domain itself (for the landing page / super-admin).
+# 2. All first-level subdomains of ROOT_DOMAIN (tenant workspaces).
+# 3. Any extra hosts supplied as a comma-separated env var (e.g. custom
+#    tenant vanity domains).
+_root = ROOT_DOMAIN  # imported from base via *
+_extra = [h.strip() for h in os.environ.get('EXTRA_ALLOWED_HOSTS', '').split(',') if h.strip()]
+ALLOWED_HOSTS = [
+    _root,
+    f'.{_root}',   # matches *.bms.techyatra.com.np
+    'localhost',
+    '127.0.0.1',
+] + _extra
 
 # Throttle rates are tighter in production (base.py sets up the class list)
 REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
-    'anon': '5/min',   # auth endpoints — stricter in prod
+    'anon': '5/min',         # auth endpoints — stricter in prod
     'user': '2000/day',
-    'login': '5/min',  # dedicated scope on LoginRateThrottle
+    'login': '5/min',        # dedicated scope on LoginRateThrottle
+    'tenant': '1000/min',    # per-tenant aggregate — more conservative in prod
+    'anon_strict': '10/min', # registration endpoints
 }
 
-# CORS — allow all tenant subdomains in production (HTTP + HTTPS)
+# CORS — allow all tenant subdomains + root domain in production.
+# Built from ROOT_DOMAIN so nothing is hardcoded to a specific domain or IP.
+import re as _re
+_escaped_root = _re.escape(_root)
 CORS_ALLOWED_ORIGIN_REGEXES = [
-    r'^https?://.*\.bms\.techyatra\.com\.np$',
-    r'^https://bms\.techyatra\.com\.np$',
-    r'^http://92\.4\.89\.25$',
-    r'^http://localhost(:\d+)?$',
+    rf'^https?://.*\.{_escaped_root}$',   # all tenant subdomains
+    rf'^https?://{_escaped_root}$',        # root domain (landing / super-admin)
+    r'^http://localhost(:\d+)?$',           # local frontend dev server
 ]
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True

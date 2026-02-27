@@ -23,6 +23,7 @@ from core.permissions import (
     TenantRolePermission, make_role_permission,
     ALL_ROLES, STAFF_ROLES, MANAGER_ROLES, ADMIN_ROLES,
 )
+from core.audit import log_event, AuditEvent
 
 
 class LoginRateThrottle(AnonRateThrottle):
@@ -67,6 +68,15 @@ class TenantTokenObtainPairView(TokenObtainPairView):
         try:
             serializer.is_valid(raise_exception=True)
         except Exception:
+            log_event(
+                AuditEvent.LOGIN_FAILED,
+                request=request,
+                tenant=getattr(request, 'tenant', None),
+                extra={
+                    'email': request.data.get('email', ''),
+                    'reason': 'invalid_credentials',
+                },
+            )
             raise AuthenticationFailed('Invalid email or password.')
 
         user = serializer.user
@@ -76,6 +86,12 @@ class TenantTokenObtainPairView(TokenObtainPairView):
         if tenant is None:
             # Root domain — superusers only. Staff must use their workspace URL.
             if not user.is_superuser:
+                log_event(
+                    AuditEvent.LOGIN_FAILED,
+                    request=request,
+                    actor=user,
+                    extra={'email': user.email, 'reason': 'staff_on_root_domain'},
+                )
                 raise AuthenticationFailed(
                     'Staff accounts must log in via your workspace URL. '
                     'Please use <your-company>.nexusbms.com to sign in.'
@@ -84,6 +100,13 @@ class TenantTokenObtainPairView(TokenObtainPairView):
             # Tenant subdomain — superusers are root-domain accounts and must
             # NOT log in here. Only active workspace members may log in.
             if user.is_superuser:
+                log_event(
+                    AuditEvent.LOGIN_FAILED,
+                    request=request,
+                    actor=user,
+                    tenant=tenant,
+                    extra={'email': user.email, 'reason': 'superuser_on_tenant'},
+                )
                 raise AuthenticationFailed(
                     'Super-admin accounts must log in from the main domain, '
                     'not a workspace URL.'
@@ -94,6 +117,13 @@ class TenantTokenObtainPairView(TokenObtainPairView):
                 is_active=True,
             ).exists()
             if not is_member:
+                log_event(
+                    AuditEvent.LOGIN_FAILED,
+                    request=request,
+                    actor=user,
+                    tenant=tenant,
+                    extra={'email': user.email, 'reason': 'not_a_member'},
+                )
                 raise AuthenticationFailed(
                     'You are not a member of this workspace. '
                     'Contact your administrator.'
@@ -103,6 +133,14 @@ class TenantTokenObtainPairView(TokenObtainPairView):
         # tenant_id is embedded in the JWT payload and validated on every request
         # by TenantJWTAuthentication — no client-side value can override this.
         refresh = TenantRefreshToken.for_user_and_tenant(user, tenant)
+
+        log_event(
+            AuditEvent.LOGIN_SUCCESS,
+            request=request,
+            actor=user,
+            tenant=tenant,
+            extra={'email': user.email, 'is_superuser': user.is_superuser},
+        )
 
         return Response({
             'access': str(refresh.access_token),

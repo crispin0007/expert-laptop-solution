@@ -154,17 +154,8 @@ class JournalEntry(TenantModel):
 
     def save(self, *args, **kwargs):
         if not self.entry_number and self.tenant_id:
-            last = (
-                JournalEntry.objects.filter(tenant_id=self.tenant_id)
-                .order_by('-created_at')
-                .values_list('entry_number', flat=True)
-                .first()
-            )
-            try:
-                seq = int(str(last).split('-')[-1]) + 1 if last else 1
-            except (ValueError, IndexError):
-                seq = 1
-            self.entry_number = f"JE-{seq:05d}"
+            from core.models import next_seq
+            self.entry_number = f"JE-{next_seq(self.tenant_id, 'journal_entry', JournalEntry, 'entry_number'):05d}"
         super().save(*args, **kwargs)
 
     def post(self):
@@ -363,20 +354,8 @@ class Invoice(TenantModel):
 
     def save(self, *args, **kwargs):
         if not self.invoice_number and self.tenant_id:
-            last = (
-                Invoice.objects.filter(tenant_id=self.tenant_id)
-                .order_by('-created_at')
-                .values_list('invoice_number', flat=True)
-                .first()
-            )
-            if last:
-                try:
-                    seq = int(last.split('-')[-1]) + 1
-                except (ValueError, IndexError):
-                    seq = 1
-            else:
-                seq = 1
-            self.invoice_number = f"INV-{seq:05d}"
+            from core.models import next_seq
+            self.invoice_number = f"INV-{next_seq(self.tenant_id, 'invoice', Invoice, 'invoice_number'):05d}"
         super().save(*args, **kwargs)
 
 
@@ -432,17 +411,8 @@ class Bill(TenantModel):
 
     def save(self, *args, **kwargs):
         if not self.bill_number and self.tenant_id:
-            last = (
-                Bill.objects.filter(tenant_id=self.tenant_id)
-                .order_by('-created_at')
-                .values_list('bill_number', flat=True)
-                .first()
-            )
-            try:
-                seq = int(str(last).split('-')[-1]) + 1 if last else 1
-            except (ValueError, IndexError):
-                seq = 1
-            self.bill_number = f"BILL-{seq:05d}"
+            from core.models import next_seq
+            self.bill_number = f"BILL-{next_seq(self.tenant_id, 'bill', Bill, 'bill_number'):05d}"
         super().save(*args, **kwargs)
 
     @property
@@ -521,17 +491,8 @@ class Payment(TenantModel):
 
     def save(self, *args, **kwargs):
         if not self.payment_number and self.tenant_id:
-            last = (
-                Payment.objects.filter(tenant_id=self.tenant_id)
-                .order_by('-created_at')
-                .values_list('payment_number', flat=True)
-                .first()
-            )
-            try:
-                seq = int(str(last).split('-')[-1]) + 1 if last else 1
-            except (ValueError, IndexError):
-                seq = 1
-            self.payment_number = f"PAY-{seq:05d}"
+            from core.models import next_seq
+            self.payment_number = f"PAY-{next_seq(self.tenant_id, 'payment', Payment, 'payment_number'):05d}"
         super().save(*args, **kwargs)
 
 
@@ -584,16 +545,8 @@ class CreditNote(TenantModel):
 
     def save(self, *args, **kwargs):
         if not self.credit_note_number and self.tenant_id:
-            last = (
-                CreditNote.objects.filter(tenant_id=self.tenant_id)
-                .order_by('-created_at')
-                .values_list('credit_note_number', flat=True)
-                .first()
-            )
-            try:
-                seq = int(str(last).split('-')[-1]) + 1 if last else 1
-            except (ValueError, IndexError):                seq = 1
-            self.credit_note_number = f"CN-{seq:05d}"
+            from core.models import next_seq
+            self.credit_note_number = f"CN-{next_seq(self.tenant_id, 'credit_note', CreditNote, 'credit_note_number'):05d}"
         super().save(*args, **kwargs)
 
 
@@ -661,17 +614,8 @@ class Quotation(TenantModel):
 
     def save(self, *args, **kwargs):
         if not self.quotation_number and self.tenant_id:
-            last = (
-                Quotation.objects.filter(tenant_id=self.tenant_id)
-                .order_by('-created_at')
-                .values_list('quotation_number', flat=True)
-                .first()
-            )
-            try:
-                seq = int(str(last).split('-')[-1]) + 1 if last else 1
-            except (ValueError, IndexError):
-                seq = 1
-            self.quotation_number = f"QUO-{seq:05d}"
+            from core.models import next_seq
+            self.quotation_number = f"QUO-{next_seq(self.tenant_id, 'quotation', Quotation, 'quotation_number'):05d}"
         super().save(*args, **kwargs)
 
 
@@ -718,17 +662,8 @@ class DebitNote(TenantModel):
 
     def save(self, *args, **kwargs):
         if not self.debit_note_number and self.tenant_id:
-            last = (
-                DebitNote.objects.filter(tenant_id=self.tenant_id)
-                .order_by('-created_at')
-                .values_list('debit_note_number', flat=True)
-                .first()
-            )
-            try:
-                seq = int(str(last).split('-')[-1]) + 1 if last else 1
-            except (ValueError, IndexError):
-                seq = 1
-            self.debit_note_number = f"DN-{seq:05d}"
+            from core.models import next_seq
+            self.debit_note_number = f"DN-{next_seq(self.tenant_id, 'debit_note', DebitNote, 'debit_note_number'):05d}"
         super().save(*args, **kwargs)
 
 

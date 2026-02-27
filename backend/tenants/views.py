@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 
 from core.mixins import TenantMixin
 from core.permissions import IsSuperAdmin
+from core.audit import log_event, AuditEvent
 from .models import Tenant, Plan, Module, TenantModuleOverride
 from .serializers import (
     TenantSerializer, TenantMemberSerializer, TenantSettingsSerializer,
@@ -32,6 +33,12 @@ class TenantViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         tenant = serializer.save(created_by=self.request.user)
+        log_event(
+            AuditEvent.TENANT_CREATED,
+            request=self.request,
+            actor=self.request.user,
+            extra={'tenant_id': tenant.pk, 'slug': tenant.slug},
+        )
 
         # Optionally create an owner/admin user for this tenant
         admin_email = self.request.data.get('admin_email', '').strip()
@@ -97,14 +104,31 @@ class TenantViewSet(viewsets.ModelViewSet):
         return Response(data, status=status.HTTP_201_CREATED)
 
     def perform_update(self, serializer):
-        # Before saving, capture the old custom_domain to invalidate its cache.
+        # Before saving, capture old values to detect significant changes.
         old_domain = serializer.instance.custom_domain
+        old_plan_id = serializer.instance.plan_id
         instance = serializer.save()
         if old_domain:
             cache.delete(f'tenant_domain_{old_domain}')
         if instance.custom_domain and instance.custom_domain != old_domain:
             cache.delete(f'tenant_domain_{instance.custom_domain}')
         cache.delete(f'tenant_slug_{instance.slug}')
+        # Plan may have changed — invalidate the module set cache too.
+        instance.clear_module_cache()
+        # Audit plan changes — these affect billing and permissions.
+        if instance.plan_id != old_plan_id:
+            log_event(
+                AuditEvent.PLAN_CHANGED,
+                request=self.request,
+                actor=self.request.user,
+                extra={
+                    'tenant_id': instance.pk,
+                    'slug': instance.slug,
+                    'old_plan_id': old_plan_id,
+                    'new_plan_id': instance.plan_id,
+                    'new_plan_name': getattr(instance.plan, 'name', None),
+                },
+            )
 
     def destroy(self, request, *args, **kwargs):
         """Soft-delete instead of hard delete."""
@@ -119,6 +143,12 @@ class TenantViewSet(viewsets.ModelViewSet):
         if tenant.custom_domain:
             cache.delete(f'tenant_domain_{tenant.custom_domain}')
         tenant.soft_delete()
+        log_event(
+            AuditEvent.TENANT_DELETED,
+            request=request,
+            actor=request.user,
+            extra={'tenant_id': tenant.pk, 'slug': tenant.slug},
+        )
         return Response({'success': True, 'detail': 'Tenant soft-deleted.'})
 
     @action(detail=True, methods=['post'])
@@ -133,6 +163,51 @@ class TenantViewSet(viewsets.ModelViewSet):
         tenant.is_active = False
         tenant.save(update_fields=['is_active', 'updated_at'])
         cache.delete(f'tenant_slug_{tenant.slug}')
+        if tenant.custom_domain:
+            cache.delete(f'tenant_domain_{tenant.custom_domain}')
+        tenant.clear_module_cache()
+
+        # ── Immediately blacklist all outstanding JWTs for every tenant member ─
+        # Without this, suspended users can keep using existing tokens until they
+        # naturally expire (up to 60 min for access tokens, 1 day for refresh).
+        # We iterate OutstandingToken so Celery is not needed — the list of
+        # active members is small and this is an infrequent admin action.
+        try:
+            from rest_framework_simplejwt.token_blacklist.models import (
+                OutstandingToken, BlacklistedToken,
+            )
+            from accounts.models import TenantMembership
+            from django.utils import timezone as _tz
+
+            member_user_ids = list(
+                TenantMembership.objects.filter(tenant=tenant)
+                .values_list('user_id', flat=True)
+            )
+            if member_user_ids:
+                active_tokens = OutstandingToken.objects.filter(
+                    user_id__in=member_user_ids,
+                    expires_at__gt=_tz.now(),
+                )
+                blacklisted_count = 0
+                for outstanding in active_tokens:
+                    _, created = BlacklistedToken.objects.get_or_create(token=outstanding)
+                    if created:
+                        blacklisted_count += 1
+            else:
+                blacklisted_count = 0
+        except Exception:
+            blacklisted_count = -1  # flag: kill failed — logged below
+
+        log_event(
+            AuditEvent.TENANT_SUSPENDED,
+            request=request,
+            actor=request.user,
+            extra={
+                'tenant_id': tenant.pk,
+                'slug': tenant.slug,
+                'tokens_blacklisted': blacklisted_count,
+            },
+        )
         return Response({'success': True, 'detail': 'Tenant suspended.'})
 
     @action(detail=True, methods=['post'])
@@ -147,6 +222,13 @@ class TenantViewSet(viewsets.ModelViewSet):
         tenant.is_active = True
         tenant.save(update_fields=['is_active', 'updated_at'])
         cache.delete(f'tenant_slug_{tenant.slug}')
+        tenant.clear_module_cache()
+        log_event(
+            AuditEvent.TENANT_ACTIVATED,
+            request=request,
+            actor=request.user,
+            extra={'tenant_id': tenant.pk, 'slug': tenant.slug},
+        )
         return Response({'success': True, 'detail': 'Tenant activated.'})
 
     # ── Members management (superadmin only, no TenantMixin needed) ────────────
@@ -358,6 +440,22 @@ class TenantViewSet(viewsets.ModelViewSet):
             tenant=tenant, module=module,
             defaults={'is_enabled': is_enabled, 'note': note},
         )
+        # Module set changed — purge the Redis cache so the next request
+        # re-computes it from the DB instead of serving stale data.
+        tenant.clear_module_cache()
+        log_event(
+            AuditEvent.MODULE_OVERRIDE_SET,
+            request=request,
+            actor=request.user,
+            extra={
+                'tenant_id': tenant.pk,
+                'slug': tenant.slug,
+                'module_id': module.pk,
+                'module_key': module.key,
+                'is_enabled': is_enabled,
+                'created': created,
+            },
+        )
         return Response(
             TenantModuleOverrideSerializer(override).data,
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
@@ -371,6 +469,14 @@ class TenantViewSet(viewsets.ModelViewSet):
         if not override:
             return Response({'detail': 'Override not found.'}, status=status.HTTP_404_NOT_FOUND)
         override.delete()
+        # Revert to plan default — module set may have changed.
+        tenant.clear_module_cache()
+        log_event(
+            AuditEvent.MODULE_OVERRIDE_DEL,
+            request=request,
+            actor=request.user,
+            extra={'tenant_id': tenant.pk, 'slug': tenant.slug, 'mod_id': mod_id},
+        )
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -408,6 +514,23 @@ class PlanViewSet(viewsets.ModelViewSet):
             plan.modules.add(module)
         else:
             plan.modules.remove(module)
+
+        # This plan change affects ALL tenants subscribed to this plan.
+        # Invalidate their module set caches so next request re-computes.
+        for t in plan.tenants.only('slug'):
+            t.clear_module_cache()
+
+        log_event(
+            AuditEvent.MODULE_TOGGLED,
+            request=request,
+            actor=request.user,
+            extra={
+                'plan_id': plan.pk,
+                'plan_name': plan.name,
+                'module_key': module_key,
+                'enabled': bool(enabled),
+            },
+        )
 
         return Response(PlanSerializer(plan, context={'request': request}).data)
 

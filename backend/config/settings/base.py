@@ -1,12 +1,41 @@
 import os
+import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'replace-me')
+# ── Security ──────────────────────────────────────────────────────────────────
+# Fail loudly at startup if the secret key is missing or still the placeholder.
+_raw_secret = os.environ.get('DJANGO_SECRET_KEY', '')
+if not _raw_secret or _raw_secret in ('replace-me', 'changeme', 'secret'):
+    sys.exit(
+        'FATAL: DJANGO_SECRET_KEY env var is not set or is using a placeholder value.\n'
+        'Generate one with: python -c "from django.core.management.utils import '
+        'get_random_secret_key; print(get_random_secret_key())"'
+    )
+SECRET_KEY = _raw_secret
 
 # Root domain for subdomain resolution and Caddy cert verification
 ROOT_DOMAIN = os.environ.get('ROOT_DOMAIN', 'bms.techyatra.com.np')
+
+# IP allowlist for super-admin API access.
+# When non-empty, any request to IsSuperAdmin-gated views from an IP not in
+# this list is rejected with 403 and logged as SUPERADMIN_IP_BLOCKED.
+# Set via environment: SUPERADMIN_ALLOWED_IPS=1.2.3.4,5.6.7.8
+# Leave empty (default) to allow all IPs — suitable for dev/testing only.
+SUPERADMIN_ALLOWED_IPS = [
+    ip.strip()
+    for ip in os.environ.get('SUPERADMIN_ALLOWED_IPS', '').split(',')
+    if ip.strip()
+]
+
+# ── Admin domain isolation (Phase 4 — Item #6) ───────────────────────────────
+# A second secret used ONLY for main-domain (superadmin) JWT domain_sig claims.
+# Set this to a value DIFFERENT from DJANGO_SECRET_KEY in production.
+# When set separately, leaking DJANGO_SECRET_KEY does NOT allow forging admin
+# tokens — the attacker also needs SUPERADMIN_JWT_SECRET.
+# Falls back to SECRET_KEY when not set (no isolation, acceptable for dev).
+SUPERADMIN_JWT_SECRET = os.environ.get('SUPERADMIN_JWT_SECRET', _raw_secret)
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -90,23 +119,59 @@ DATABASES = {
         'PASSWORD': os.environ.get('POSTGRES_PASSWORD', 'nexus_password'),
         'HOST': os.environ.get('POSTGRES_HOST', 'localhost'),
         'PORT': os.environ.get('POSTGRES_PORT', '5432'),
+        # Keep a live DB connection per worker thread for 60 s instead of
+        # opening a new one on every request. Dramatically reduces connection
+        # churn under load without requiring PgBouncer.
+        'CONN_MAX_AGE': int(os.environ.get('CONN_MAX_AGE', 60)),
     }
 }
 
-# Redis / Celery
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-CELERY_BROKER_URL = REDIS_URL
-CELERY_RESULT_BACKEND = REDIS_URL
+# ── Redis URL helpers ─────────────────────────────────────────────────────────
+# REDIS_URL is the base connection string (without DB suffix).
+# Split into three logical databases to isolate concerns:
+#   DB 0 — Celery task broker  (tasks / queues — volatile, OK to lose on restart)
+#   DB 1 — Celery result store (task results)
+#   DB 2 — Django cache        (tenant slugs, staff availability, throttle counters)
+#
+# In compose the env-var already includes the DB number for legacy compat;
+# strip it and re-add the correct suffix so all three Redis usages share one
+# Redis instance without stepping on each other.
+def _redis_db(base_url: str, db: int) -> str:
+    """Return *base_url* with the path replaced by /<db>."""
+    from urllib.parse import urlparse, urlunparse
+    p = urlparse(base_url)
+    return urlunparse(p._replace(path=f'/{db}'))
+
+
+_REDIS_BASE = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+REDIS_URL          = _redis_db(_REDIS_BASE, 0)   # canonical alias used elsewhere
+CELERY_BROKER_URL  = _redis_db(_REDIS_BASE, 0)
+CELERY_RESULT_BACKEND = _redis_db(_REDIS_BASE, 1)
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 
 # Celery Beat — periodic tasks
+from celery.schedules import crontab
 CELERY_BEAT_SCHEDULE = {
     'check-sla-deadlines-every-15min': {
         'task': 'notifications.tasks.task_check_sla_deadlines',
         'schedule': 900,  # 15 minutes in seconds
+    },
+    # Purge expired SimpleJWT tokens every night at 03:00 UTC.
+    # Without this the OutstandingToken + BlacklistedToken tables grow forever
+    # and every token validation becomes slower as the unbounded table is scanned.
+    'flush-expired-jwt-tokens-daily': {
+        'task': 'notifications.tasks.task_flush_expired_tokens',
+        'schedule': crontab(hour=3, minute=0),
+    },
+    # Anomaly detection: scan for IPs with repeated probe events and auto-ban them.
+    # Runs every 5 minutes; bans IPs that exceed ANOMALY_PROBE_THRESHOLD (default 5)
+    # probe events within ANOMALY_WINDOW_MINUTES (default 15) minutes.
+    'anomaly-detection-every-5min': {
+        'task': 'core.tasks.task_detect_and_ban_probe_ips',
+        'schedule': 300,  # 5 minutes
     },
 }
 
@@ -140,16 +205,20 @@ REST_FRAMEWORK = {
         # before any view or permission class executes.
         'accounts.authentication.TenantJWTAuthentication',
     ],
-    # Rate limiting — brute-force protection on auth endpoints.
+    # Rate limiting — three layers: per-IP (anon), per-user, per-tenant.
     # Anon: 10/min (login attempts).  User: 1000/day (normal API usage).
+    # Tenant: 2000/min aggregate (overridden to 1000/min in prod).
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',
+        'core.throttles.TenantRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
         'anon': '10/min',
         'user': '1000/day',
-        'login': '5/min',   # dedicated scope used by LoginRateThrottle
+        'login': '5/min',        # dedicated scope used by LoginRateThrottle
+        'tenant': '2000/min',    # per-tenant aggregate (all users in workspace)
+        'anon_strict': '20/min', # stricter anon scope for registration endpoints
     },
 }
 
@@ -181,10 +250,11 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
 CORS_ALLOW_CREDENTIALS = True
 
 # Redis cache (for staff availability and other short-lived data)
+# Uses DB 2 — isolated from Celery broker (DB 0) and results (DB 1).
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-        'LOCATION': REDIS_URL,
+        'LOCATION': _redis_db(_REDIS_BASE, 2),
     }
 }
 

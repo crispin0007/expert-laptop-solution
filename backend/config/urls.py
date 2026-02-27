@@ -4,6 +4,7 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from core import views as core_views
+from core.views import DashboardStatsView
 from tenants.views import TenantSettingsView, verify_domain
 
 
@@ -35,6 +36,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/v1/', include('rest_framework.urls')),
     path('health/', core_views.health_check),
+    path('api/v1/dashboard/stats/', DashboardStatsView.as_view(), name='dashboard-stats'),
     # Caddy on-demand TLS: checks if a domain should receive a certificate.
     # This endpoint is only reachable from the internal Docker network (port 8000
     # is not exposed publicly) so no auth is required.

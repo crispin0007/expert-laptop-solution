@@ -6,6 +6,10 @@ export const AUTH = {
   ME: '/accounts/me/',
 } as const
 
+export const DASHBOARD = {
+  STATS: '/dashboard/stats/',
+} as const
+
 export const TICKETS = {
   LIST: '/tickets/',
   DETAIL: (id: number) => `/tickets/${id}/`,

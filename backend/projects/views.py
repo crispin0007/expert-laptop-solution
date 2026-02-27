@@ -139,7 +139,7 @@ class ProjectProductViewSet(TenantMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         project_pk = self.kwargs.get('project_pk')
         project = Project.objects.get(pk=project_pk, tenant=self.request.tenant)
-        serializer.save(created_by=self.request.user, project=project)
+        serializer.save(tenant=self.tenant, created_by=self.request.user, project=project)
 
 
 class ProjectProductRequestViewSet(TenantMixin, viewsets.ModelViewSet):

@@ -194,26 +194,19 @@ class Ticket(TenantModel):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['tenant', 'status'],      name='ticket_tenant_status_idx'),
+            models.Index(fields=['tenant', 'assigned_to'], name='ticket_tenant_assigned_idx'),
+            models.Index(fields=['tenant', 'is_deleted'],  name='ticket_tenant_deleted_idx'),
+        ]
 
     def __str__(self):
         return f"[{self.ticket_number or self.pk}] {self.title}"
 
     def save(self, *args, **kwargs):
         if not self.ticket_number and self.tenant_id:
-            last = (
-                Ticket.objects.filter(tenant_id=self.tenant_id)
-                .order_by('-created_at')
-                .values_list('ticket_number', flat=True)
-                .first()
-            )
-            if last:
-                try:
-                    seq = int(last.split('-')[-1]) + 1
-                except (ValueError, IndexError):
-                    seq = 1
-            else:
-                seq = 1
-            self.ticket_number = f"TKT-{seq:04d}"
+            from core.models import next_seq
+            self.ticket_number = f"TKT-{next_seq(self.tenant_id, 'ticket', Ticket, 'ticket_number'):04d}"
         super().save(*args, **kwargs)
 
 

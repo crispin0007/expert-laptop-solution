@@ -51,26 +51,18 @@ class Project(TenantModel):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['tenant', 'status'],     name='project_tenant_status_idx'),
+            models.Index(fields=['tenant', 'is_deleted'], name='project_tenant_deleted_idx'),
+        ]
 
     def __str__(self):
         return self.name
 
     def save(self, *args, **kwargs):
         if not self.project_number and self.tenant_id:
-            last = (
-                Project.objects.filter(tenant_id=self.tenant_id)
-                .order_by('-created_at')
-                .values_list('project_number', flat=True)
-                .first()
-            )
-            if last:
-                try:
-                    seq = int(last.split('-')[-1]) + 1
-                except (ValueError, IndexError):
-                    seq = 1
-            else:
-                seq = 1
-            self.project_number = f"PRJ-{seq:04d}"
+            from core.models import next_seq
+            self.project_number = f"PRJ-{next_seq(self.tenant_id, 'project', Project, 'project_number'):04d}"
         super().save(*args, **kwargs)
 
 
