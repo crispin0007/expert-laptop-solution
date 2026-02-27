@@ -63,7 +63,9 @@ class TicketTypeSerializer(serializers.ModelSerializer):
         model = TicketType
         fields = (
             'id', 'name', 'slug', 'default_sla_hours', 'color', 'icon',
-            'requires_product', 'is_active', 'created_at', 'updated_at',
+            'requires_product', 'is_active',
+            'is_free_service', 'coin_service_rate', 'coin_product_rate',
+            'created_at', 'updated_at',
         )
         read_only_fields = ('slug', 'created_at', 'updated_at')
 
@@ -106,6 +108,7 @@ class TicketSerializer(serializers.ModelSerializer):
             'parent_ticket',
             'sla_deadline', 'sla_breached', 'sla_breach_at',
             'resolved_at', 'closed_at',
+            'service_charge',
             'is_deleted',
             'created_at', 'updated_at',
         )
@@ -168,6 +171,34 @@ class TicketCreateSerializer(serializers.ModelSerializer):
             'title', 'description', 'contact_phone', 'priority',
             'assigned_to', 'parent_ticket', 'team_members', 'vehicles',
         )
+
+    def validate_team_members(self, users):
+        """
+        Reject any user who is not an active member of the current tenant.
+
+        Without this guard, a caller could pass arbitrary user PKs from other
+        tenants and silently assign cross-tenant users as co-assignees.
+        The ``assign`` action on TicketViewSet already enforces this; here we
+        close the same gap on ``create`` / ``update`` paths.
+        """
+        if not users:
+            return users
+        tenant = self.context.get('tenant')
+        if not tenant:
+            return users  # tenant-less context (tests/admin) — defer to view layer
+        from accounts.models import TenantMembership
+        member_ids = set(
+            TenantMembership.objects.filter(
+                user__in=users, tenant=tenant, is_active=True,
+            ).values_list('user_id', flat=True)
+        )
+        invalid = [u for u in users if u.pk not in member_ids]
+        if invalid:
+            emails = [u.email for u in invalid]
+            raise serializers.ValidationError(
+                f"These users are not active members of this workspace: {emails}"
+            )
+        return users
 
     def _build_auto_title(self, validated_data):
         """Build a title from category + subcategory if not supplied."""
@@ -311,11 +342,25 @@ class TicketProductSerializer(serializers.ModelSerializer):
         }
 
     def get_line_total(self, obj):
+        """
+        Return the line total after applying the percentage discount.
+
+        ``discount`` is stored as a percentage (0–100), e.g. 10 means 10% off.
+        Formula: qty × unit_price × (1 − discount / 100)
+
+        This matches:
+          • ticket_invoice_service.calculate_ticket_coins
+          • accounting.services.invoice_service.compute_invoice_totals
+        so the value displayed on the ticket panel is always consistent with
+        what appears on the generated invoice.
+        """
         from decimal import Decimal
-        qty = obj.quantity or 1
-        price = obj.unit_price or Decimal('0')
-        disc = obj.discount or Decimal('0')
-        return str((price * qty) - disc)
+        qty      = Decimal(str(obj.quantity or 1))
+        price    = obj.unit_price or Decimal('0')
+        disc_pct = obj.discount or Decimal('0')          # percentage, e.g. 10 = 10 %
+        subtotal        = price * qty
+        discount_amount = subtotal * (disc_pct / Decimal('100'))
+        return str((subtotal - discount_amount).quantize(Decimal('0.01')))
 
     def validate(self, attrs):
         """Auto-snapshot unit_price from the product if not supplied."""
