@@ -15,6 +15,7 @@ ALLOWED_HOSTS = [
     f'.{_root}',   # matches *.bms.techyatra.com.np
     'localhost',
     '127.0.0.1',
+    'web',         # Docker internal service hostname (health checks / compose networking)
 ] + _extra
 
 # Throttle rates are tighter in production (base.py sets up the class list)
@@ -30,11 +31,17 @@ REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
 # Built from ROOT_DOMAIN so nothing is hardcoded to a specific domain or IP.
 import re as _re
 _escaped_root = _re.escape(_root)
+_cors_extra_origins = [
+    _re.escape(h) for h in _extra if not h.startswith('.')
+]
+_cors_extra_wildcards = [
+    rf'^https?://.*\.{_re.escape(h.lstrip("."))}$' for h in _extra if h.startswith('.')
+]
 CORS_ALLOWED_ORIGIN_REGEXES = [
-    rf'^https?://.*\.{_escaped_root}$',   # all tenant subdomains
+    rf'^https?://.*\.{_escaped_root}$',   # all tenant subdomains of ROOT_DOMAIN
     rf'^https?://{_escaped_root}$',        # root domain (landing / super-admin)
     r'^http://localhost(:\d+)?$',           # local frontend dev server
-]
+] + [rf'^https?://{o}$' for o in _cors_extra_origins] + _cors_extra_wildcards
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
 
