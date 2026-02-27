@@ -204,19 +204,20 @@ class TenantTokenRefreshView(TokenRefreshView):
 
 def _rotate_refresh(old_token: TenantRefreshToken, tenant) -> TenantRefreshToken:
     """Create a rotated refresh token preserving the tenant_id claim."""
-    from rest_framework_simplejwt.tokens import BlacklistMixin
-    from datetime import timezone as tz, datetime
-
-    # Build a new refresh token carrying the same user + tenant
     from django.contrib.auth import get_user_model
+    from rest_framework_simplejwt.exceptions import TokenError
     User = get_user_model()
     try:
         user_id = old_token['user_id']
         user = User.objects.get(pk=user_id)
-        return TenantRefreshToken.for_user_and_tenant(user, tenant)
-    except Exception:
-        # Fallback: return a plain new token from the old one
-        return old_token
+    except (User.DoesNotExist, KeyError):
+        # The user no longer exists — this token must not be rotated.
+        # Raise so the refresh view returns 401 rather than silently
+        # re-issuing a new refresh token for a deleted/deactivated account.
+        raise TokenError('User account no longer exists.')
+    if not user.is_active:
+        raise TokenError('User account is deactivated.')
+    return TenantRefreshToken.for_user_and_tenant(user, tenant)
 
 
 class MeView(APIView):
@@ -275,8 +276,14 @@ class StaffAvailabilityView(TenantMixin, APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        tenant = request.tenant
-        cache_key = f'staff_availability_{tenant.pk if tenant else "global"}'
+        tenant = getattr(request, 'tenant', None)
+        # Guard: this endpoint requires a tenant workspace. Without it the cache
+        # key degenerates to 'staff_availability_global' and any tenant's data
+        # could leak to main-domain callers.
+        if tenant is None:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('This endpoint requires a tenant workspace context.')
+        cache_key = f'staff_availability_{tenant.pk}'
         data = cache.get(cache_key)
 
         if data is None:
@@ -419,7 +426,9 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
     @action(detail=False, methods=['get'], url_path='generate_employee_id')
     def generate_employee_id(self, request):
         """GET /api/v1/staff/generate_employee_id/ — return a unique EMP-XXXX for this tenant."""
-        import random
+        # Use secrets (CSPRNG) instead of random — employee IDs are exposed to
+        # users and predictability could allow enumeration / social engineering.
+        import secrets
         self.ensure_tenant()
         existing = set(
             TenantMembership.objects.filter(tenant=self.tenant)
@@ -427,11 +436,11 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
             .values_list('employee_id', flat=True)
         )
         for _ in range(100):
-            candidate = f'EMP-{random.randint(1000, 9999)}'
+            candidate = f'EMP-{secrets.randbelow(9000) + 1000}'
             if candidate not in existing:
                 return Response({'employee_id': candidate})
         # Extremely unlikely fallback — widen range
-        return Response({'employee_id': f'EMP-{random.randint(10000, 99999)}'})
+        return Response({'employee_id': f'EMP-{secrets.randbelow(90000) + 10000}'})
 
     @action(detail=True, methods=['post'], url_path='deactivate')
     def deactivate(self, request, pk=None):
@@ -505,20 +514,15 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
         user.set_password(new_password)
         user.save(update_fields=['password'])
 
-        # Notify the staff member by email — try Celery first, fall back to synchronous send
+        # SECURITY: never pass the plaintext password to Celery — task args are
+        # serialised and stored in Redis broker in plaintext. Instead, pass only
+        # the new_password to the synchronous email function directly, which sends
+        # it over TLS-encrypted SMTP and never persists it beyond the call stack.
         try:
-            from notifications.tasks import task_send_staff_password_reset
-            task_send_staff_password_reset.delay(
-                user_id=user.pk,
-                tenant_id=self.tenant.pk,
-                new_password=new_password,
-            )
+            from notifications.email import send_staff_password_reset
+            send_staff_password_reset(user, self.tenant, new_password)
         except Exception:
-            try:
-                from notifications.email import send_staff_password_reset
-                send_staff_password_reset(user, self.tenant, new_password)
-            except Exception:
-                pass
+            pass  # email failure must not block the password reset itself
 
         return Response({'detail': f'Password reset. Email sent to {user.email}.'})
 

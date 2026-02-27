@@ -327,6 +327,8 @@ class PurchaseOrderViewSet(TenantMixin, viewsets.ModelViewSet):
         po = write_ser.save(tenant=self.tenant, created_by=self.request.user)
         return Response(PurchaseOrderSerializer(po, context=self.get_serializer_context()).data,
                         status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='receive')
     def receive(self, request, pk=None):
         """
         Body: { "lines": [{"item_id": 1, "quantity_received": 5}], "notes": "" }
@@ -1018,33 +1020,38 @@ class StockCountViewSet(TenantMixin, viewsets.ModelViewSet):
             return Response({'detail': 'Only counting-status sessions can be completed.'},
                             status=status.HTTP_400_BAD_REQUEST)
 
+        # Wrap inside a transaction so a mid-loop failure does not leave stock
+        # levels partially adjusted while movements are only partially created.
+        from django.db import transaction as _tx
         from django.db.models import F as DbF
         adjustments_created = 0
-        for item in sc.items.select_related('product'):
-            if item.counted_qty is None:
-                continue
-            diff = item.discrepancy
-            if diff == 0:
-                continue
-            StockMovement.objects.create(
-                tenant=sc.tenant,
-                product=item.product,
-                movement_type=StockMovement.MOVEMENT_ADJUSTMENT,
-                quantity=abs(diff),
-                reference_type='stock_count',
-                reference_id=sc.pk,
-                notes=f"Stock count {sc.count_number}: {'surplus' if diff > 0 else 'shrinkage'} of {abs(diff)}",
-                created_by=request.user,
-            )
-            StockLevel.objects.filter(product=item.product).update(
-                quantity_on_hand=DbF('quantity_on_hand') + diff
-            )
-            adjustments_created += 1
+        with _tx.atomic():
+            for item in sc.items.select_related('product'):
+                if item.counted_qty is None:
+                    continue
+                diff = item.discrepancy
+                if diff == 0:
+                    continue
+                StockMovement.objects.create(
+                    tenant=sc.tenant,
+                    product=item.product,
+                    movement_type=StockMovement.MOVEMENT_ADJUSTMENT,
+                    quantity=abs(diff),
+                    reference_type='stock_count',
+                    reference_id=sc.pk,
+                    notes=f"Stock count {sc.count_number}: {'surplus' if diff > 0 else 'shrinkage'} of {abs(diff)}",
+                    created_by=request.user,
+                )
+                StockLevel.objects.filter(product=item.product).update(
+                    quantity_on_hand=DbF('quantity_on_hand') + diff
+                )
+                adjustments_created += 1
 
-        sc.status       = StockCount.STATUS_COMPLETED
-        sc.completed_at = timezone.now()
-        sc.completed_by = request.user
-        sc.save(update_fields=['status', 'completed_at', 'completed_by'])
+            sc.status       = StockCount.STATUS_COMPLETED
+            sc.completed_at = timezone.now()
+            sc.completed_by = request.user
+            sc.save(update_fields=['status', 'completed_at', 'completed_by'])
+
         return Response({
             **StockCountSerializer(sc).data,
             'adjustments_created': adjustments_created,

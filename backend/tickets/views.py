@@ -280,6 +280,18 @@ class TicketViewSet(TenantMixin, viewsets.ModelViewSet):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
+            # Security: ensure the assignee is an active member of THIS tenant.
+            # Without this check, any user PK from any tenant could be set as assignee,
+            # leaking cross-tenant user existence information.
+            from accounts.models import TenantMembership
+            if not TenantMembership.objects.filter(
+                user=assignee, tenant=self.tenant, is_active=True
+            ).exists():
+                return Response(
+                    {'success': False, 'errors': ['Assignee is not an active member of this workspace.']},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
             old_assignee = ticket.assigned_to
             ticket.assigned_to = assignee
             if ticket.status == Ticket.STATUS_OPEN:
@@ -316,6 +328,19 @@ class TicketViewSet(TenantMixin, viewsets.ModelViewSet):
                 return Response(
                     {'success': False, 'errors': [f'Users not found: {missing}']},
                     status=status.HTTP_404_NOT_FOUND,
+                )
+            # Security: confirm every co-assignee belongs to this tenant.
+            from accounts.models import TenantMembership
+            member_ids_in_tenant = set(
+                TenantMembership.objects.filter(
+                    user__in=team_qs, tenant=self.tenant, is_active=True
+                ).values_list('user_id', flat=True)
+            )
+            not_members = [i for i in found_ids if i not in member_ids_in_tenant]
+            if not_members:
+                return Response(
+                    {'success': False, 'errors': [f'Users not in this workspace: {not_members}']},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
             ticket.team_members.set(team_qs)
             names = [u.get_full_name() or u.email for u in team_qs]
@@ -717,14 +742,35 @@ class TicketCommentViewSet(TenantMixin, viewsets.ModelViewSet):
             tenant=self.tenant,
             ticket_id=ticket_pk,
         ).select_related('author')
-        if not self.request.user.is_staff:
+        # Use TenantMembership role — Django's is_staff flag is always False for
+        # tenant users and would hide internal comments from everyone including admins.
+        from accounts.models import TenantMembership
+        from core.permissions import STAFF_ROLES
+        try:
+            role = TenantMembership.objects.get(
+                user=self.request.user, tenant=self.tenant, is_active=True
+            ).role
+        except TenantMembership.DoesNotExist:
+            role = None
+        is_staff_member = (
+            role in STAFF_ROLES
+            or getattr(self.request.user, 'is_superadmin', False)
+        )
+        if not is_staff_member:
             qs = qs.filter(is_internal=False)
         return qs
 
     def perform_create(self, serializer):
         self.ensure_tenant()
         ticket_pk = self.kwargs.get('ticket_pk')
-        ticket = Ticket.objects.get(pk=ticket_pk, tenant=self.tenant)
+        if not ticket_pk:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError('Comments must be created via /tickets/{id}/comments/.')
+        try:
+            ticket = Ticket.objects.get(pk=ticket_pk, tenant=self.tenant)
+        except Ticket.DoesNotExist:
+            from rest_framework.exceptions import NotFound
+            raise NotFound('Ticket not found.')
 
         comment = serializer.save(
             tenant=self.tenant,
@@ -827,8 +873,11 @@ class TicketProductViewSet(TenantMixin, viewsets.ModelViewSet):
                 existing.save(update_fields=['quantity', 'updated_at'])
 
                 # Manually create the stock-out movement for the incremented qty
-                # (signal only fires on created=True and cannot see the delta)
+                # (signal only fires on created=True and cannot see the delta).
+                # Do NOT swallow this exception — a silent failure here means
+                # the ticket shows a product added but inventory is never updated.
                 if not product.is_service:
+                    import logging as _logging
                     try:
                         from inventory.models import StockMovement
                         StockMovement.objects.create(
@@ -841,8 +890,15 @@ class TicketProductViewSet(TenantMixin, viewsets.ModelViewSet):
                             reference_id=existing.pk,
                             notes=f'Qty increment: TicketProduct #{existing.pk} on Ticket #{ticket_pk}',
                         )
-                    except Exception:
-                        pass
+                    except Exception as _sm_err:
+                        _logging.getLogger(__name__).error(
+                            'StockMovement creation failed for TicketProduct %s (qty delta %s): %s',
+                            existing.pk, qty, _sm_err, exc_info=True,
+                        )
+                        return Response(
+                            {'detail': 'Product quantity updated but stock movement failed. Contact an admin.'},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        )
 
                 # Timeline entry
                 try:
