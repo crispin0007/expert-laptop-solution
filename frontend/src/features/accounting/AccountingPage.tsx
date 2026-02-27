@@ -3512,7 +3512,7 @@ function DayBookTab() {
 // ─── Main Page ──────────────────────────────────────────────────────────────
 
 export default function AccountingPage() {
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
   const activeTab = searchParams.get('tab') ?? ''
 
   function renderTab() {
