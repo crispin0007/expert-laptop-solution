@@ -58,14 +58,24 @@ class Account(TenantModel):
 
     @property
     def balance(self):
-        """Net balance: sum(debits) - sum(credits) for asset/expense; reversed otherwise."""
+        """
+        Net balance including opening_balance.
+
+        opening_balance is treated as:
+          - a debit  for asset / expense accounts
+          - a credit for liability / equity / revenue accounts
+
+        Without this, migrated tenants with non-zero opening balances would
+        show incorrect Trial Balance, Balance Sheet, and P&L from day 1.
+        """
         from django.db.models import Sum
-        lines = self.journal_lines.filter(entry__is_posted=True)
+        lines   = self.journal_lines.filter(entry__is_posted=True)
         debits  = lines.aggregate(t=Sum('debit'))['t']  or Decimal('0')
         credits = lines.aggregate(t=Sum('credit'))['t'] or Decimal('0')
+        ob = self.opening_balance or Decimal('0')
         if self.type in (self.TYPE_ASSET, self.TYPE_EXPENSE):
-            return debits - credits
-        return credits - debits
+            return ob + debits - credits
+        return ob + credits - debits
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -242,6 +252,37 @@ class CoinTransaction(TenantModel):
         return f"{self.staff} +{self.amount} coins [{self.status}]"
 
 
+class StaffSalaryProfile(TenantModel):
+    """
+    Stores the configured salary for a staff member in a tenant.
+    Used by the auto-generate payslip task and the Generate Payslip action
+    to pre-fill base_salary and tds_rate without requiring manual entry each month.
+
+    tds_rate: Nepal default is 0.10 (10% on salaries above exemption threshold).
+    tds_deduction is computed as base_salary * tds_rate and stored on the Payslip.
+    """
+    staff = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='salary_profiles',
+    )
+    base_salary     = models.DecimalField(max_digits=14, decimal_places=2, default=0,
+                        help_text='Monthly base salary in tenant currency')
+    tds_rate        = models.DecimalField(max_digits=6, decimal_places=4, default='0.1000',
+                        help_text='TDS rate e.g. 0.10 = 10%. Applied to base_salary.')
+    bonus_default   = models.DecimalField(max_digits=14, decimal_places=2, default=0,
+                        help_text='Default monthly bonus (can be overridden per payslip)')
+    effective_from  = models.DateField(help_text='Salary effective from this date')
+    notes           = models.TextField(blank=True)
+
+    class Meta:
+        verbose_name = 'Staff Salary Profile'
+        unique_together = ('tenant', 'staff')
+
+    def __str__(self):
+        return f"{self.staff} — {self.base_salary} (TDS {self.tds_rate})"
+
+
 class Payslip(TenantModel):
     """
     Aggregates approved coins for a staff member within a pay period.
@@ -270,11 +311,24 @@ class Payslip(TenantModel):
     gross_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     base_salary  = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     bonus        = models.DecimalField(max_digits=14, decimal_places=2, default=0)
-    deductions   = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    tds_amount   = models.DecimalField(max_digits=14, decimal_places=2, default=0,
+                     help_text='Tax Deducted at Source computed from salary profile tds_rate')
+    deductions   = models.DecimalField(max_digits=14, decimal_places=2, default=0,
+                     help_text='Other deductions (advances, damages, etc.)')
     net_pay      = models.DecimalField(max_digits=14, decimal_places=2, default=0)
-    status    = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_DRAFT)
-    issued_at = models.DateTimeField(null=True, blank=True)
-    paid_at   = models.DateTimeField(null=True, blank=True)
+    status       = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    issued_at    = models.DateTimeField(null=True, blank=True)
+    paid_at      = models.DateTimeField(null=True, blank=True)
+    # Payment info snapshotted when mark_paid is called
+    payment_method  = models.CharField(max_length=32, blank=True,
+                        help_text='cash | bank_transfer | cheque')
+    bank_account    = models.ForeignKey(
+                        'accounting.BankAccount',
+                        null=True, blank=True,
+                        on_delete=models.SET_NULL,
+                        related_name='payslip_payments',
+                        help_text='Bank account used when payment_method=bank_transfer',
+                      )
 
     class Meta:
         ordering = ['-period_end']

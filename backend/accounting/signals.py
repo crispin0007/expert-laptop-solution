@@ -94,6 +94,13 @@ def handle_invoice_status_change(sender, instance, created, **kwargs):
         except Exception as e:
             log.error("Invoice journal failed for invoice %s: %s", instance.pk, e, exc_info=True)
 
+        # Post COGS journal for product lines (silently skipped if no product_id in line items)
+        try:
+            from accounting.services.journal_service import create_cogs_journal
+            create_cogs_journal(instance, created_by=instance.created_by)
+        except Exception as e:
+            log.error("COGS journal failed for invoice %s: %s", instance.pk, e, exc_info=True)
+
     elif instance.status == 'void':
         # Only reverse if there was actually a posted invoice journal to undo.
         # A draft invoice that is voided directly (draft → void) never had a
@@ -140,8 +147,18 @@ def handle_bill_status_change(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender='accounting.Payment')
 def handle_payment_created(sender, instance, created, **kwargs):
-    """New payment → create cash movement journal entry."""
+    """New payment → create cash movement journal entry.
+
+    SKIP salary payments (reference='PAYSLIP-…'): those are journalised by
+    handle_payslip_paid instead, with the correct gross-salary / TDS split.
+    The Payment record is still created for cash-flow / bank-reconciliation
+    purposes — we just don't want a duplicate (and incorrect) journal here.
+    """
     if not created:
+        return
+
+    # Salary payments: journal is posted by handle_payslip_paid signal
+    if (instance.reference or '').startswith('PAYSLIP-'):
         return
 
     from accounting.services.journal_service import create_payment_journal
@@ -180,7 +197,19 @@ def handle_credit_note_issued(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender='accounting.Payslip')
 def handle_payslip_paid(sender, instance, created, **kwargs):
-    """Paid → create salary expense journal entry."""
+    """
+    Paid → create salary expense journal entry with correct gross/TDS split:
+
+      Dr  Salary Expense  5200   gross (net_pay + tds_amount)
+      Cr  TDS Payable     2300   tds_amount   ← liability to IRD
+      Cr  Cash / Bank            net_pay      ← actually paid to employee
+
+    IMPORTANT: The Payment record created by mark_paid (reference='PAYSLIP-…')
+    intentionally skips its own journal in handle_payment_created so that only
+    THIS handler posts the double-entry.  Recording it here gives us the full
+    gross-salary debit and the TDS liability credit — neither of which the
+    Payment-side journal could supply.
+    """
     if created:
         return
 

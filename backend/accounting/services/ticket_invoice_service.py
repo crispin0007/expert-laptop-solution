@@ -83,6 +83,7 @@ def generate_ticket_invoice(ticket, tenant, due_date=None, notes='', created_by=
     for tp in TicketProduct.objects.filter(ticket=ticket).select_related('product'):
         line_items.append({
             'line_type':   'product',
+            'product_id':  tp.product.pk,    # stored for COGS journal lookup
             'description': tp.product.name,
             'qty':         tp.quantity,
             'unit_price':  str(tp.unit_price),
@@ -156,7 +157,7 @@ def submit_invoice_payment(
         date=timezone.localdate(),
         invoice=invoice,
         bank_account=bank_account,
-        reference=reference,
+        reference=reference or invoice.invoice_number,
         notes=notes or f"Payment collected for {invoice.invoice_number}",
     )
 

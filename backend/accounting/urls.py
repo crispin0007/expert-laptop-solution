@@ -6,6 +6,8 @@ from .views import (
     BillViewSet, PaymentViewSet, CreditNoteViewSet, ReportViewSet,
     QuotationViewSet, DebitNoteViewSet, TDSEntryViewSet,
     BankReconciliationViewSet, RecurringJournalViewSet,
+    StaffSalaryProfileViewSet,
+    VATRemittanceView, TDSRemittanceView,
 )
 
 router = DefaultRouter()
@@ -42,6 +44,12 @@ router.register(r'recurring-journals', RecurringJournalViewSet, basename='recurr
 # Coins / payroll
 router.register(r'coins', CoinTransactionViewSet, basename='coin-transaction')
 router.register(r'payslips', PayslipViewSet, basename='payslip')
+router.register(r'salary-profiles', StaffSalaryProfileViewSet, basename='salary-profile')
 
-urlpatterns = [path('', include(router.urls))]
+urlpatterns = [
+    path('', include(router.urls)),
+    # Tax remittance endpoints (VAT and TDS payments to IRD)
+    path('vat-remittance/',  VATRemittanceView.as_view({'post': 'create'}),  name='vat-remittance'),
+    path('tds-remittance/',  TDSRemittanceView.as_view({'post': 'create'}),  name='tds-remittance'),
+]
 

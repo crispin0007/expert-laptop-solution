@@ -17,6 +17,7 @@ from .models import (
     Bill, Payment, CreditNote,
     Quotation, DebitNote, TDSEntry,
     BankReconciliation, BankReconciliationLine, RecurringJournal,
+    StaffSalaryProfile,
 )
 from .serializers import (
     CoinTransactionSerializer, PayslipSerializer, InvoiceSerializer,
@@ -25,6 +26,7 @@ from .serializers import (
     QuotationSerializer, DebitNoteSerializer, TDSEntrySerializer,
     BankReconciliationSerializer, BankReconciliationLineSerializer,
     RecurringJournalSerializer,
+    StaffSalaryProfileSerializer,
 )
 
 
@@ -51,10 +53,27 @@ class AccountViewSet(TenantMixin, viewsets.ModelViewSet):
             qs = qs.filter(type=acct_type)
         return qs
 
+    def paginate_queryset(self, queryset):
+        """Allow callers to bypass pagination with ?no_page=1.
+        Used by the Create Account modal which must show the full CoA tree."""
+        if self.request.query_params.get('no_page'):
+            return None
+        return super().paginate_queryset(queryset)
+
     def destroy(self, request, *args, **kwargs):
         account = self.get_object()
         if account.is_system:
             return Response({'detail': 'System accounts cannot be deleted.'}, status=400)
+        if account.children.exists():
+            return Response(
+                {'detail': 'This account has sub-accounts. Delete or re-parent them first.'},
+                status=400,
+            )
+        if account.journal_lines.filter(entry__is_posted=True).exists():
+            return Response(
+                {'detail': 'This account has posted journal entries and cannot be deleted.'},
+                status=400,
+            )
         return super().destroy(request, *args, **kwargs)
 
     @action(detail=False, methods=['get'], url_path='trial-balance')
@@ -116,7 +135,7 @@ class JournalEntryViewSet(TenantMixin, viewsets.ModelViewSet):
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
     def get_serializer_class(self):
-        if self.action == 'create':
+        if self.action in ('create', 'update', 'partial_update'):
             return JournalEntryWriteSerializer
         return JournalEntrySerializer
 
@@ -194,6 +213,9 @@ class BillViewSet(TenantMixin, viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
             return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        # Staff and managers can edit draft bills; only admins can delete or perform other write actions
+        if self.action in ('update', 'partial_update'):
+            return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
     def get_queryset(self):
@@ -226,10 +248,17 @@ class BillViewSet(TenantMixin, viewsets.ModelViewSet):
         self._compute_and_save(serializer)
 
     def perform_update(self, serializer):
-        if serializer.instance.status != Bill.STATUS_DRAFT:
+        """Staff may only edit draft bills; admins may force-edit any status."""
+        if serializer.instance.status != Bill.STATUS_DRAFT and not self._is_admin():
             from rest_framework.exceptions import ValidationError
-            raise ValidationError('Only draft bills can be edited.')
+            raise ValidationError(
+                'Only draft bills can be edited. Ask an admin to override.'
+            )
         self._compute_and_save(serializer)
+
+    def destroy(self, request, *args, **kwargs):
+        """Admin-only. Admins can delete any bill; warning is shown in UI."""
+        return super().destroy(request, *args, **kwargs)
 
     @action(detail=True, methods=['post'], url_path='approve')
     def approve(self, request, pk=None):
@@ -262,20 +291,34 @@ class BillViewSet(TenantMixin, viewsets.ModelViewSet):
         """
         Mark a bill as paid.
         Creates an outgoing Payment record for the remaining amount so the journal
-        (Dr AP / Cr Cash) is auto-created by the Payment signal.
-        Optional body: { "method": "cash" | "bank_transfer" | ... }
+        (Dr AP / Cr Cash/Bank) is auto-created by the Payment signal.
+        Body: { "method": "cash" | "bank_transfer" | "cheque" | ..., "bank_account": <id> }
+        bank_account is required when method != cash.
         """
         bill = self.get_object()
         if bill.status != Bill.STATUS_APPROVED:
             return Response({'detail': 'Only approved bills can be marked as paid.'}, status=400)
 
+        method = request.data.get('method', Payment.METHOD_CASH)
+        if method not in dict(Payment.METHOD_CHOICES):
+            method = Payment.METHOD_CASH
+
+        bank_account = None
+        bank_account_id = request.data.get('bank_account')
+        if bank_account_id:
+            try:
+                bank_account = BankAccount.objects.get(pk=bank_account_id, tenant=self.tenant)
+            except BankAccount.DoesNotExist:
+                return Response({'detail': 'Bank account not found.'}, status=404)
+
+        if method != Payment.METHOD_CASH and not bank_account:
+            return Response({'detail': 'bank_account is required for non-cash payment methods.'}, status=400)
+
         from .services.payment_service import record_payment
         amount_due = bill.amount_due
+        payment = None
         if amount_due > Decimal('0'):
-            method = request.data.get('method', Payment.METHOD_CASH)
-            if method not in dict(Payment.METHOD_CHOICES):
-                method = Payment.METHOD_CASH
-            record_payment(
+            payment = record_payment(
                 tenant=self.tenant,
                 created_by=request.user,
                 payment_type=Payment.TYPE_OUTGOING,
@@ -283,7 +326,9 @@ class BillViewSet(TenantMixin, viewsets.ModelViewSet):
                 amount=amount_due,
                 date=timezone.localdate(),
                 bill=bill,
-                notes='Marked paid via admin action.',
+                bank_account=bank_account,
+                reference=bill.bill_number,
+                notes=f'Bill payment via {method}.',
             )
         else:
             bill.status  = Bill.STATUS_PAID
@@ -291,7 +336,10 @@ class BillViewSet(TenantMixin, viewsets.ModelViewSet):
             bill.save(update_fields=['status', 'paid_at'])
 
         bill.refresh_from_db()
-        return Response(BillSerializer(bill).data)
+        return Response({
+            'bill': BillSerializer(bill).data,
+            'payment': PaymentSerializer(payment).data if payment else None,
+        })
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -320,11 +368,21 @@ class PaymentViewSet(TenantMixin, viewsets.ModelViewSet):
         )
         if t := self.request.query_params.get('type'):
             qs = qs.filter(type=t)
+        if method := self.request.query_params.get('method'):
+            qs = qs.filter(method=method)
+        if bank := self.request.query_params.get('bank_account'):
+            qs = qs.filter(bank_account_id=bank)
         if inv := self.request.query_params.get('invoice'):
             qs = qs.filter(invoice_id=inv)
         if bill := self.request.query_params.get('bill'):
             qs = qs.filter(bill_id=bill)
-        return qs.order_by('-date', '-created_at')
+        ordering = self.request.query_params.get('ordering', '-date')
+        # Whitelist safe orderings
+        if ordering in ('date', '-date', 'created_at', '-created_at'):
+            qs = qs.order_by(ordering, 'id')
+        else:
+            qs = qs.order_by('-date', '-created_at')
+        return qs
 
     def perform_create(self, serializer):
         from .services.payment_service import record_payment
@@ -348,7 +406,11 @@ class PaymentViewSet(TenantMixin, viewsets.ModelViewSet):
         return Response({'detail': 'Payments cannot be edited.'}, status=400)
 
     def destroy(self, request, *args, **kwargs):
-        return Response({'detail': 'Payments cannot be deleted.'}, status=400)
+        """Admin-only hard delete. Note: linked journal entries are NOT auto-reversed.
+        Admin should post a manual reversing journal entry if needed."""
+        if not self._is_admin():
+            return Response({'detail': 'Only admins can delete payments.'}, status=403)
+        return super().destroy(request, *args, **kwargs)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -369,6 +431,9 @@ class CreditNoteViewSet(TenantMixin, viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
             return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        # Staff and managers can edit draft credit notes; only admins can delete or issue/void
+        if self.action in ('update', 'partial_update'):
+            return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
     def get_queryset(self):
@@ -386,6 +451,28 @@ class CreditNoteViewSet(TenantMixin, viewsets.ModelViewSet):
             tenant=self.tenant, created_by=self.request.user,
             subtotal=subtotal, vat_amount=vat_amount, total=total,
         )
+
+    def perform_update(self, serializer):
+        """Recalculate totals on edit. Only draft credit notes may be edited."""
+        cn = serializer.instance
+        if cn.status != CreditNote.STATUS_DRAFT:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError('Only draft credit notes can be edited.')
+        from .services.invoice_service import compute_invoice_totals
+        line_items = serializer.validated_data.get('line_items', cn.line_items)
+        vat_rate   = self.tenant.vat_rate if self.tenant.vat_enabled else Decimal('0')
+        subtotal, vat_amount, total = compute_invoice_totals(line_items, Decimal('0'), vat_rate)
+        serializer.save(subtotal=subtotal, vat_amount=vat_amount, total=total)
+
+    def destroy(self, request, *args, **kwargs):
+        """Admin-only. Only draft credit notes may be deleted."""
+        cn = self.get_object()
+        if cn.status != CreditNote.STATUS_DRAFT:
+            return Response(
+                {'detail': 'Only draft credit notes can be deleted. Void instead.'},
+                status=400,
+            )
+        return super().destroy(request, *args, **kwargs)
 
     @action(detail=True, methods=['post'], url_path='issue')
     def issue(self, request, pk=None):
@@ -675,18 +762,43 @@ class CoinTransactionViewSet(TenantMixin, viewsets.ModelViewSet):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Staff Salary Profiles
+# ─────────────────────────────────────────────────────────────────────────────
+
+class StaffSalaryProfileViewSet(TenantMixin, viewsets.ModelViewSet):
+    """CRUD for per-staff salary configuration used by auto-generate task and payslip generation."""
+    required_module  = 'accounting'
+    queryset         = StaffSalaryProfile.objects.all()
+    serializer_class = StaffSalaryProfileSerializer
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        return StaffSalaryProfile.objects.filter(
+            tenant=self.tenant
+        ).select_related('staff').order_by('staff__email')
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.tenant, created_by=self.request.user)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Payslips
 # ─────────────────────────────────────────────────────────────────────────────
 
 class PayslipViewSet(TenantMixin, viewsets.ModelViewSet):
     """
-    POST /payslips/generate/         auto-generate from approved coins
+    POST /payslips/generate/         auto-generate from approved coins + salary profile
     POST /payslips/{id}/issue/        mark as issued
-    POST /payslips/{id}/mark-paid/    mark as paid (triggers journal entry via signal)
+    POST /payslips/{id}/mark-paid/    mark as paid, record salary payment in cash flow
     """
 
     required_module  = 'accounting'
-    queryset         = Payslip.objects.select_related('staff')
+    queryset         = Payslip.objects.select_related('staff', 'bank_account')
     serializer_class = PayslipSerializer
 
     def get_permissions(self):
@@ -696,7 +808,7 @@ class PayslipViewSet(TenantMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         self.ensure_tenant()
-        qs = Payslip.objects.filter(tenant=self.tenant).select_related('staff')
+        qs = Payslip.objects.filter(tenant=self.tenant).select_related('staff', 'bank_account')
         if staff := self.request.query_params.get('staff'):
             qs = qs.filter(staff_id=staff)
         return qs.order_by('-period_end')
@@ -704,9 +816,19 @@ class PayslipViewSet(TenantMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(tenant=self.tenant, created_by=self.request.user)
 
+    def perform_update(self, serializer):
+        """Recompute net_pay after admin edits base_salary/bonus/deductions."""
+        from rest_framework.exceptions import ValidationError
+        p = serializer.instance
+        if p.status != Payslip.STATUS_DRAFT:
+            raise ValidationError('Only draft payslips can be edited.')
+        p = serializer.save()
+        p.net_pay = p.base_salary + p.bonus + p.gross_amount - p.deductions
+        p.save(update_fields=['net_pay'])
+
     @action(detail=False, methods=['post'], url_path='generate')
     def generate(self, request):
-        """Aggregate approved coins into a payslip for a staff member."""
+        """Aggregate approved coins + salary profile into a payslip for a staff member."""
         from django.contrib.auth import get_user_model
         from django.db.models import Sum
         from datetime import date as dt
@@ -732,33 +854,76 @@ class PayslipViewSet(TenantMixin, viewsets.ModelViewSet):
             pe = dt.fromisoformat(period_end)
         except ValueError:
             return Response({'detail': 'Invalid date format. Use YYYY-MM-DD.'}, status=400)
+
+        # Auto-load salary profile defaults (request data overrides)
+        profile = StaffSalaryProfile.objects.filter(tenant=self.tenant, staff=staff).first()
+        profile_base  = profile.base_salary if profile else Decimal('0')
+        profile_bonus = profile.bonus_default if profile else Decimal('0')
+        profile_tds   = profile.tds_rate if profile else Decimal('0')
+
+        base          = Decimal(str(request.data.get('base_salary', profile_base)))
+        bonus         = Decimal(str(request.data.get('bonus', profile_bonus)))
+        tds_rate_dec  = Decimal(str(request.data.get('tds_rate', profile_tds))).quantize(Decimal('0.0001'))
+        employee_pan  = request.data.get('employee_pan', '')
+        other_deductions = Decimal(str(request.data.get('deductions', 0)))
+
+        # Coins earned in period
         coins = CoinTransaction.objects.filter(
             tenant=self.tenant, staff=staff, status=CoinTransaction.STATUS_APPROVED,
             created_at__date__gte=ps, created_at__date__lte=pe,
         ).aggregate(t=Sum('amount'))['t'] or Decimal('0')
         rate  = self.tenant.coin_to_money_rate or Decimal('1')
         gross = (coins * rate).quantize(Decimal('0.01'))
-        base  = Decimal(str(request.data.get('base_salary', 0)))
-        bonus = Decimal(str(request.data.get('bonus', 0)))
-        deducs = Decimal(str(request.data.get('deductions', 0)))
-        net   = base + bonus + gross - deducs
+
+        # TDS on salary (base + bonus only; coins are not subject to salary TDS)
+        tds_amount = Decimal('0')
+        if tds_rate_dec > 0:
+            tds_amount = ((base + bonus) * tds_rate_dec).quantize(Decimal('0.01'))
+
+        total_deductions = tds_amount + other_deductions
+        net = base + bonus + gross - total_deductions
+
         payslip, created = Payslip.objects.get_or_create(
             tenant=self.tenant, staff=staff, period_start=ps, period_end=pe,
             defaults={
                 'total_coins': coins, 'coin_to_money_rate': rate, 'gross_amount': gross,
-                'base_salary': base, 'bonus': bonus, 'deductions': deducs, 'net_pay': net,
-                'created_by': request.user,
+                'base_salary': base, 'bonus': bonus,
+                'tds_amount': tds_amount, 'deductions': other_deductions,
+                'net_pay': net, 'created_by': request.user,
             },
         )
         if not created:
-            payslip.total_coins = coins
+            payslip.total_coins      = coins
             payslip.coin_to_money_rate = rate
-            payslip.gross_amount = gross
-            payslip.base_salary = base
-            payslip.bonus = bonus
-            payslip.deductions = deducs
-            payslip.net_pay = net
+            payslip.gross_amount     = gross
+            payslip.base_salary      = base
+            payslip.bonus            = bonus
+            payslip.tds_amount       = tds_amount
+            payslip.deductions       = other_deductions
+            payslip.net_pay          = net
             payslip.save()
+
+        # Auto-create TDS entry for this salary so it appears in TDS reports
+        if tds_rate_dec > 0 and tds_amount > 0:
+            nepali_year   = pe.year + 57 if pe.month >= 4 else pe.year + 56
+            staff_display = getattr(staff, 'full_name', '') or staff.email
+            TDSEntry.objects.filter(
+                tenant=self.tenant,
+                supplier_name=staff_display,
+                period_month=pe.month,
+                period_year=nepali_year,
+            ).delete()
+            TDSEntry.objects.create(
+                tenant=self.tenant,
+                supplier_name=staff_display,
+                supplier_pan=employee_pan,
+                taxable_amount=base + bonus,
+                tds_rate=tds_rate_dec,
+                period_month=pe.month,
+                period_year=nepali_year,
+                created_by=request.user,
+            )
+
         return Response(PayslipSerializer(payslip).data, status=201 if created else 200)
 
     @action(detail=True, methods=['post'], url_path='issue')
@@ -773,13 +938,55 @@ class PayslipViewSet(TenantMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='mark-paid')
     def mark_paid(self, request, pk=None):
+        """Mark payslip as paid and record salary outflow in Payments."""
         p = self.get_object()
         if p.status != Payslip.STATUS_ISSUED:
             return Response({'detail': 'Only issued payslips can be marked as paid.'}, status=400)
-        p.status = Payslip.STATUS_PAID
-        p.paid_at = timezone.now()
-        p.save(update_fields=['status', 'paid_at'])
-        return Response(PayslipSerializer(p).data)
+
+        payment_method  = request.data.get('payment_method', 'cash')
+        bank_account_id = request.data.get('bank_account')
+
+        VALID_METHODS = ('cash', 'bank_transfer', 'cheque')
+        if payment_method not in VALID_METHODS:
+            return Response({'detail': f'payment_method must be one of: {VALID_METHODS}'}, status=400)
+        if payment_method == 'bank_transfer' and not bank_account_id:
+            return Response({'detail': 'bank_account is required for bank transfer.'}, status=400)
+
+        bank_account = None
+        if bank_account_id:
+            try:
+                bank_account = BankAccount.objects.get(pk=bank_account_id, tenant=self.tenant)
+            except BankAccount.DoesNotExist:
+                return Response({'detail': 'Bank account not found.'}, status=404)
+
+        # Record outgoing payment so it appears in cash / bank statement
+        # Skip if net_pay <= 0 (e.g. fully TDS-deducted payslip)
+        payment = None
+        if p.net_pay > Decimal('0'):
+            from .services.payment_service import record_payment
+            staff_label = getattr(p.staff, 'full_name', '') or p.staff.email
+            period_label = f"{p.period_start}–{p.period_end}"
+            payment = record_payment(
+                tenant=self.tenant,
+                created_by=request.user,
+                payment_type='outgoing',
+                method=payment_method,
+                amount=p.net_pay,
+                date=timezone.localdate(),
+                bank_account=bank_account,
+                reference=f'PAYSLIP-{p.pk}',
+                notes=f'Salary payment to {staff_label} for {period_label}',
+            )
+
+        p.status         = Payslip.STATUS_PAID
+        p.paid_at        = timezone.now()
+        p.payment_method = payment_method
+        p.bank_account   = bank_account
+        p.save(update_fields=['status', 'paid_at', 'payment_method', 'bank_account'])
+        return Response({
+            'payslip': PayslipSerializer(p).data,
+            'payment': PaymentSerializer(payment).data if payment else None,
+        })
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -806,9 +1013,10 @@ class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ('list', 'retrieve', 'pdf'):
             return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
-        # Staff can collect payment on-site and generate invoices from a ticket
-        if self.action in ('collect_payment', 'generate_from_ticket'):
+        # Staff can collect payment, generate from ticket, and edit DRAFT invoices
+        if self.action in ('collect_payment', 'generate_from_ticket', 'update', 'partial_update'):
             return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
+        # destroy and all other write actions (issue, void…) require admin
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
     def get_queryset(self):
@@ -842,6 +1050,28 @@ class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         self._apply_vat_and_totals(serializer)
+
+    def perform_update(self, serializer):
+        """Recalculate VAT+totals on PATCH/PUT.
+        Staff may only edit draft invoices; admins may force-edit any status.
+        """
+        inv = serializer.instance
+        if inv.status != Invoice.STATUS_DRAFT and not self._is_admin():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(
+                'Only draft invoices can be edited. Ask an admin to override.'
+            )
+        from .services.invoice_service import compute_invoice_totals
+        t          = self.tenant
+        line_items = serializer.validated_data.get('line_items', inv.line_items)
+        discount   = serializer.validated_data.get('discount',   inv.discount)
+        vat_rate   = t.vat_rate if t and t.vat_enabled else Decimal('0')
+        subtotal, vat_amount, total = compute_invoice_totals(line_items, discount, vat_rate)
+        serializer.save(subtotal=subtotal, vat_rate=vat_rate, vat_amount=vat_amount, total=total)
+
+    def destroy(self, request, *args, **kwargs):
+        """Admin-only. Admins can delete any invoice; warning is shown in UI."""
+        return super().destroy(request, *args, **kwargs)
 
     @action(detail=True, methods=['post'], url_path='issue')
     def issue(self, request, pk=None):
@@ -887,8 +1117,9 @@ class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
         """
         Mark an invoice as paid.
         If there is an outstanding balance, a Payment record is created for the
-        remaining amount (which triggers the Dr Cash / Cr AR journal entry via signal).
-        Optional body: { "method": "cash" | "bank_transfer" | ... }
+        remaining amount (which triggers the Dr Cash/Bank / Cr AR journal entry via signal).
+        Body: { "method": "cash" | "bank_transfer" | "cheque" | ..., "bank_account": <id> }
+        bank_account is required when method != cash.
         """
         inv = self.get_object()
         # BLOCK: marking a DRAFT invoice paid skips the issue step entirely.
@@ -900,13 +1131,26 @@ class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
                 status=400,
             )
 
+        method = request.data.get('method', Payment.METHOD_CASH)
+        if method not in dict(Payment.METHOD_CHOICES):
+            method = Payment.METHOD_CASH
+
+        bank_account = None
+        bank_account_id = request.data.get('bank_account')
+        if bank_account_id:
+            try:
+                bank_account = BankAccount.objects.get(pk=bank_account_id, tenant=self.tenant)
+            except BankAccount.DoesNotExist:
+                return Response({'detail': 'Bank account not found.'}, status=404)
+
+        if method != Payment.METHOD_CASH and not bank_account:
+            return Response({'detail': 'bank_account is required for non-cash payment methods.'}, status=400)
+
         from .services.payment_service import record_payment
         amount_due = inv.amount_due
+        payment = None
         if amount_due > Decimal('0'):
-            method = request.data.get('method', Payment.METHOD_CASH)
-            if method not in dict(Payment.METHOD_CHOICES):
-                method = Payment.METHOD_CASH
-            record_payment(
+            payment = record_payment(
                 tenant=self.tenant,
                 created_by=request.user,
                 payment_type=Payment.TYPE_INCOMING,
@@ -914,7 +1158,9 @@ class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
                 amount=amount_due,
                 date=timezone.localdate(),
                 invoice=inv,
-                notes='Marked paid via admin action.',
+                bank_account=bank_account,
+                reference=inv.invoice_number,
+                notes=f'Invoice payment via {method}.',
             )
         else:
             # Already fully covered by earlier payments / credit notes
@@ -923,7 +1169,10 @@ class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
             inv.save(update_fields=['status', 'paid_at'])
 
         inv.refresh_from_db()
-        return Response(InvoiceSerializer(inv).data)
+        return Response({
+            'invoice': InvoiceSerializer(inv).data,
+            'payment': PaymentSerializer(payment).data if payment else None,
+        })
 
     @action(detail=True, methods=['post'], url_path='void')
     def void_invoice(self, request, pk=None):
@@ -1241,7 +1490,17 @@ class TDSEntryViewSet(TenantMixin, viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ('list', 'retrieve', 'summary'):
             return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        if self.action in ('update', 'partial_update'):
+            # Allow admins to correct TDS entries (supplier name, PAN, rate, period)
+            return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+
+    def perform_update(self, serializer):
+        entry = serializer.instance
+        if entry.status == TDSEntry.STATUS_DEPOSITED:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError('Cannot edit a deposited TDS entry.')
+        serializer.save()
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -1413,11 +1672,82 @@ class RecurringJournalViewSet(TenantMixin, viewsets.ModelViewSet):
         try:
             entry = run_recurring_journal(rec, triggered_by=request.user)
         except ValueError as e:
-            # ValueError = business logic failure (unbalanced entry, bad template, etc.)
-            # Safe to surface as 400. Any other exception is a genuine server error —
-            # let DRF's exception handler convert it to 500 and log it properly.
-            # Returning 400 for all exceptions was masking real crashes as user errors.
             return Response({'detail': str(e)}, status=400)
         from .serializers import JournalEntrySerializer
         return Response(JournalEntrySerializer(entry).data, status=201)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tax Remittance  (VAT + TDS  →  IRD)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class VATRemittanceView(TenantMixin, viewsets.ViewSet):
+    """
+    POST /accounting/vat-remittance/
+    Body: { "amount": "13000.00", "period": "2081-04" }
+    Permission: Manager or Admin.
+
+    Records the payment of collected VAT to IRD.
+    Journal: Dr VAT Payable 2200 / Cr Cash 1100
+    """
+    required_module = 'accounting'
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+
+    def create(self, request):
+        self.ensure_tenant()
+        from decimal import InvalidOperation
+        try:
+            amount = Decimal(str(request.data.get('amount', '0')))
+        except (InvalidOperation, TypeError):
+            return Response({'detail': 'amount must be a valid decimal number.'}, status=400)
+
+        period = request.data.get('period', '')
+        if not period:
+            return Response({'detail': 'period is required (e.g. "2081-04").'}, status=400)
+
+        from .services.journal_service import record_vat_remittance
+        try:
+            entry = record_vat_remittance(self.tenant, amount, period, created_by=request.user)
+        except ValueError as e:
+            return Response({'detail': str(e)}, status=400)
+
+        from .serializers import JournalEntrySerializer
+        return Response({'journal_entry': JournalEntrySerializer(entry).data}, status=201)
+
+
+class TDSRemittanceView(TenantMixin, viewsets.ViewSet):
+    """
+    POST /accounting/tds-remittance/
+    Body: { "amount": "3000.00", "period": "2081-04" }
+    Permission: Manager or Admin.
+
+    Records the deposit of withheld TDS (salary or supplier) to IRD.
+    Journal: Dr TDS Payable 2300 / Cr Cash 1100
+    """
+    required_module = 'accounting'
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+
+    def create(self, request):
+        self.ensure_tenant()
+        from decimal import InvalidOperation
+        try:
+            amount = Decimal(str(request.data.get('amount', '0')))
+        except (InvalidOperation, TypeError):
+            return Response({'detail': 'amount must be a valid decimal number.'}, status=400)
+
+        period = request.data.get('period', '')
+        if not period:
+            return Response({'detail': 'period is required (e.g. "2081-04").'}, status=400)
+
+        from .services.journal_service import record_tds_remittance
+        try:
+            entry = record_tds_remittance(self.tenant, amount, period, created_by=request.user)
+        except ValueError as e:
+            return Response({'detail': str(e)}, status=400)
+
+        from .serializers import JournalEntrySerializer
+        return Response({'journal_entry': JournalEntrySerializer(entry).data}, status=201)
