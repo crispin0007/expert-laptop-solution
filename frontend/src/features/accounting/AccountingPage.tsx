@@ -31,6 +31,7 @@ interface InvoiceItem {
 interface Invoice {
   id: number; invoice_number: string; customer: number | null
   customer_name: string; ticket: number | null; project: number | null
+  ticket_number?: string; project_name?: string
   line_items: InvoiceItem[]; subtotal: string; discount: string
   vat_rate: string; vat_amount: string; total: string; amount_paid: string
   amount_due: string; status: string; finance_status: string;
@@ -3513,10 +3514,6 @@ function DayBookTab() {
 export default function AccountingPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const activeTab = searchParams.get('tab') ?? ''
-
-  function setTab(key: string) {
-    setSearchParams(key ? { tab: key } : {}, { replace: true })
-  }
 
   function renderTab() {
     switch (activeTab) {
