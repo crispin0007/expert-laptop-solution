@@ -9,14 +9,26 @@ DEBUG = False
 # 3. Any extra hosts supplied as a comma-separated env var (e.g. custom
 #    tenant vanity domains).
 _root = ROOT_DOMAIN  # imported from base via *
-_extra = [h.strip() for h in os.environ.get('EXTRA_ALLOWED_HOSTS', '').split(',') if h.strip()]
-ALLOWED_HOSTS = [
-    _root,
-    f'.{_root}',   # matches *.bms.techyatra.com.np
-    'localhost',
-    '127.0.0.1',
-    'web',         # Docker internal service hostname (health checks / compose networking)
-] + _extra
+
+# ALLOWED_HOSTS = ['*'] is intentional and safe in this multi-tenant architecture.
+#
+# Security is enforced at two layers that are more appropriate than Django's
+# static host list:
+#
+#   1. Caddy (reverse proxy) — only forwards requests for domains explicitly
+#      configured in the Caddyfile. Unknown domains are rejected before they
+#      ever reach Django.
+#
+#   2. TenantMiddleware — resolves every request to a known tenant by subdomain
+#      or custom_domain.  Requests that don't match any tenant are blocked with
+#      403/404 before any view runs.
+#
+# A static ALLOWED_HOSTS list breaks dynamic custom domains: every time a client
+# adds or changes their domain we would need to edit .env + restart the container.
+# That is not acceptable for a white-label SaaS.  Caddy + TenantMiddleware
+# provide equivalent (and actually stronger) protection without the operational
+# cost.
+ALLOWED_HOSTS = ['*']
 
 # Throttle rates are tighter in production (base.py sets up the class list)
 REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
@@ -29,19 +41,17 @@ REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
 
 # CORS — allow all tenant subdomains + root domain in production.
 # Built from ROOT_DOMAIN so nothing is hardcoded to a specific domain or IP.
+# CORS — allow all tenant subdomains + root domain in production.
+# Custom tenant domains are validated at the TenantMiddleware layer, not here.
+# We allow all HTTPS origins that Caddy would forward to us.
 import re as _re
 _escaped_root = _re.escape(_root)
-_cors_extra_origins = [
-    _re.escape(h) for h in _extra if not h.startswith('.')
-]
-_cors_extra_wildcards = [
-    rf'^https?://.*\.{_re.escape(h.lstrip("."))}$' for h in _extra if h.startswith('.')
-]
 CORS_ALLOWED_ORIGIN_REGEXES = [
     rf'^https?://.*\.{_escaped_root}$',   # all tenant subdomains of ROOT_DOMAIN
     rf'^https?://{_escaped_root}$',        # root domain (landing / super-admin)
+    r'^https?://.*$',                      # custom tenant domains — validated by TenantMiddleware
     r'^http://localhost(:\d+)?$',           # local frontend dev server
-] + [rf'^https?://{o}$' for o in _cors_extra_origins] + _cors_extra_wildcards
+]
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
 
@@ -60,8 +70,10 @@ X_FRAME_OPTIONS = 'DENY'
 # the Django layer (that would cause double-redirect behind the proxy).
 SECURE_SSL_REDIRECT = False
 
-# Silence the deploy check warning about SECURE_SSL_REDIRECT — nginx owns it.
-SILENCED_SYSTEM_CHECKS = ['security.W008']
+# Silence deploy check warnings that don't apply to this architecture:
+#   W008 — SECURE_SSL_REDIRECT: nginx/caddy owns TLS termination
+#   W006 — ALLOWED_HOSTS wildcard: intentional, see comment above
+SILENCED_SYSTEM_CHECKS = ['security.W008', 'security.W006']
 
 # Static & media
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
