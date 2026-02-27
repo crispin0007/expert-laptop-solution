@@ -1,6 +1,8 @@
+from django.db import IntegrityError
 from django.utils import timezone
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from core.mixins import TenantMixin
 from core.permissions import make_role_permission, STAFF_ROLES, MANAGER_ROLES, ALL_ROLES
@@ -139,7 +141,10 @@ class ProjectProductViewSet(TenantMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         project_pk = self.kwargs.get('project_pk')
         project = Project.objects.get(pk=project_pk, tenant=self.request.tenant)
-        serializer.save(tenant=self.tenant, created_by=self.request.user, project=project)
+        try:
+            serializer.save(tenant=self.tenant, created_by=self.request.user, project=project)
+        except IntegrityError:
+            raise ValidationError({'product': 'This product is already added to the project.'})
 
 
 class ProjectProductRequestViewSet(TenantMixin, viewsets.ModelViewSet):
