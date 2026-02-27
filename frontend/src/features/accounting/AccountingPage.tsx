@@ -14,7 +14,7 @@ import {
   BookOpen, Layers, Building2, Coins, BarChart2, ArrowLeftRight,
   Loader2, CheckCircle, XCircle, Download, Plus, X,
   ChevronRight, AlertCircle, TrendingUp, TrendingDown, Trash2,
-  FileSpreadsheet, Printer,
+  FileSpreadsheet, Printer, ShieldCheck, Banknote,
 } from 'lucide-react'
 
 // ─── Shared types ──────────────────────────────────────────────────────────
@@ -28,8 +28,9 @@ interface Invoice {
   customer_name: string; ticket: number | null; project: number | null
   line_items: InvoiceItem[]; subtotal: string; discount: string
   vat_rate: string; vat_amount: string; total: string; amount_paid: string
-  amount_due: string; status: string; due_date: string | null
-  paid_at: string | null; notes: string; created_at: string
+  amount_due: string; status: string; finance_status: string;
+  finance_notes: string; finance_reviewed_at: string | null
+  due_date: string | null; paid_at: string | null; notes: string; created_at: string
 }
 interface Bill {
   id: number; bill_number: string; supplier: number | null
@@ -83,6 +84,13 @@ interface CoinTx {
 }
 interface Customer { id: number; name: string }
 interface ApiPage<T> { results: T[]; count: number }
+
+/** Normalise a backend response that may be a plain array or a paginated object. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toPage<T = any>(raw: any): ApiPage<T> {
+  if (Array.isArray(raw)) return { results: raw as T[], count: raw.length }
+  return { results: raw?.results ?? [], count: raw?.count ?? 0 }
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -164,16 +172,17 @@ const selectCls = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg
 // ─── Tab definitions ─────────────────────────────────────────────────────────
 
 const TABS = [
-  { key: '',             label: 'Dashboard',         icon: LayoutDashboard },
-  { key: 'invoices',     label: 'Invoices',           icon: Receipt         },
-  { key: 'bills',        label: 'Bills',              icon: FileText        },
-  { key: 'payments',     label: 'Payments',           icon: CreditCard      },
-  { key: 'credit-notes', label: 'Credit Notes',       icon: RotateCcw       },
-  { key: 'journals',     label: 'Journals',           icon: BookOpen        },
-  { key: 'accounts',     label: 'Chart of Accounts',  icon: Layers          },
-  { key: 'banks',        label: 'Bank Accounts',      icon: Building2       },
-  { key: 'payslips',     label: 'Payslips & Coins',   icon: Coins           },
-  { key: 'reports',      label: 'Reports',            icon: BarChart2       },
+  { key: '',               label: 'Dashboard',         icon: LayoutDashboard },
+  { key: 'invoices',       label: 'Invoices',           icon: Receipt         },
+  { key: 'finance-review', label: 'Finance Review',     icon: ShieldCheck     },
+  { key: 'bills',          label: 'Bills',              icon: FileText        },
+  { key: 'payments',       label: 'Payments',           icon: CreditCard      },
+  { key: 'credit-notes',   label: 'Credit Notes',       icon: RotateCcw       },
+  { key: 'journals',       label: 'Journals',           icon: BookOpen        },
+  { key: 'accounts',       label: 'Chart of Accounts',  icon: Layers          },
+  { key: 'banks',          label: 'Bank Accounts',      icon: Building2       },
+  { key: 'payslips',       label: 'Payslips & Coins',   icon: Coins           },
+  { key: 'reports',        label: 'Reports',            icon: BarChart2       },
 ] as const
 
 // ─── Dashboard Tab ─────────────────────────────────────────────────────────
@@ -181,11 +190,11 @@ const TABS = [
 function DashboardTab() {
   const { data: invoices } = useQuery<ApiPage<Invoice>>({
     queryKey: ['invoices', 'recent'],
-    queryFn: () => apiClient.get(ACCOUNTING.INVOICES + '?page_size=10&ordering=-created_at').then(r => r.data),
+    queryFn: () => apiClient.get(ACCOUNTING.INVOICES + '?page_size=10&ordering=-created_at').then(r => toPage<Invoice>(r.data)),
   })
   const { data: bills } = useQuery<ApiPage<Bill>>({
     queryKey: ['bills', 'recent'],
-    queryFn: () => apiClient.get(ACCOUNTING.BILLS + '?page_size=10&ordering=-created_at').then(r => r.data),
+    queryFn: () => apiClient.get(ACCOUNTING.BILLS + '?page_size=10&ordering=-created_at').then(r => toPage<Bill>(r.data)),
   })
 
   const cards = [
@@ -270,7 +279,7 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
 
   const { data: customers } = useQuery<ApiPage<Customer>>({
     queryKey: ['customers', 'all'],
-    queryFn: () => apiClient.get('/customers/?page_size=200').then(r => r.data),
+    queryFn: () => apiClient.get('/customers/?page_size=200').then(r => toPage<Customer>(r.data)),
   })
 
   const mutation = useMutation({
@@ -409,7 +418,7 @@ function InvoicesTab() {
   const [showCreate, setShowCreate] = useState(false)
   const { data, isLoading } = useQuery<ApiPage<Invoice>>({
     queryKey: ['invoices', statusFilter],
-    queryFn: () => apiClient.get(ACCOUNTING.INVOICES + (statusFilter ? `?status=${statusFilter}` : '')).then(r => r.data),
+    queryFn: () => apiClient.get(ACCOUNTING.INVOICES + (statusFilter ? `?status=${statusFilter}` : '')).then(r => toPage<Invoice>(r.data)),
   })
 
   const mutatePaid = useMutation({
@@ -623,7 +632,7 @@ function BillsTab() {
   const [showCreate, setShowCreate] = useState(false)
   const { data, isLoading } = useQuery<ApiPage<Bill>>({
     queryKey: ['bills', statusFilter],
-    queryFn: () => apiClient.get(ACCOUNTING.BILLS + (statusFilter ? `?status=${statusFilter}` : '')).then(r => r.data),
+    queryFn: () => apiClient.get(ACCOUNTING.BILLS + (statusFilter ? `?status=${statusFilter}` : '')).then(r => toPage<Bill>(r.data)),
   })
 
   const approve  = useMutation({
@@ -713,7 +722,7 @@ function BillsTab() {
 function PaymentsTab() {
   const { data, isLoading } = useQuery<ApiPage<Payment>>({
     queryKey: ['payments'],
-    queryFn: () => apiClient.get(ACCOUNTING.PAYMENTS).then(r => r.data),
+    queryFn: () => apiClient.get(ACCOUNTING.PAYMENTS).then(r => toPage<Payment>(r.data)),
   })
 
   return (
@@ -759,7 +768,7 @@ function CreditNotesTab() {
   const qc = useQueryClient()
   const { data, isLoading } = useQuery<ApiPage<CreditNote>>({
     queryKey: ['credit-notes'],
-    queryFn: () => apiClient.get(ACCOUNTING.CREDIT_NOTES).then(r => r.data),
+    queryFn: () => apiClient.get(ACCOUNTING.CREDIT_NOTES).then(r => toPage<CreditNote>(r.data)),
   })
   const mutateIssue = useMutation({
     mutationFn: (id: number) => apiClient.post(ACCOUNTING.CREDIT_NOTE_ISSUE(id)),
@@ -827,7 +836,7 @@ function JournalCreateModal({ onClose }: { onClose: () => void }) {
 
   const { data: accounts } = useQuery<ApiPage<Account>>({
     queryKey: ['accounts'],
-    queryFn: () => apiClient.get(ACCOUNTING.ACCOUNTS + '?page_size=500').then(r => r.data),
+    queryFn: () => apiClient.get(ACCOUNTING.ACCOUNTS + '?page_size=500').then(r => toPage<Account>(r.data)),
   })
 
   const mutation = useMutation({
@@ -977,7 +986,7 @@ function JournalsTab() {
   const [showCreate, setShowCreate] = useState(false)
   const { data, isLoading } = useQuery<ApiPage<JournalEntry>>({
     queryKey: ['journals'],
-    queryFn: () => apiClient.get(ACCOUNTING.JOURNALS).then(r => r.data),
+    queryFn: () => apiClient.get(ACCOUNTING.JOURNALS).then(r => toPage<JournalEntry>(r.data)),
   })
   const mutatePost = useMutation({
     mutationFn: (id: number) => apiClient.post(ACCOUNTING.JOURNAL_POST(id)),
@@ -1068,7 +1077,7 @@ function JournalsTab() {
 function AccountsTab() {
   const { data, isLoading } = useQuery<ApiPage<Account>>({
     queryKey: ['accounts'],
-    queryFn: () => apiClient.get(ACCOUNTING.ACCOUNTS).then(r => r.data),
+    queryFn: () => apiClient.get(ACCOUNTING.ACCOUNTS).then(r => toPage<Account>(r.data)),
   })
 
   const grouped: Record<string, Account[]> = {}
@@ -1270,12 +1279,12 @@ function BanksTab() {
 
   const { data: bankData, isLoading: bankLoading } = useQuery<ApiPage<BankAccount>>({
     queryKey: ['bank-accounts'],
-    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS).then(r => r.data),
+    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS).then(r => toPage<BankAccount>(r.data)),
   })
 
   const { data: cashData, isLoading: cashLoading } = useQuery<ApiPage<Payment>>({
     queryKey: ['cash-ledger'],
-    queryFn: () => apiClient.get(`${ACCOUNTING.PAYMENTS}?method=cash&page_size=100&ordering=-date`).then(r => r.data),
+    queryFn: () => apiClient.get(`${ACCOUNTING.PAYMENTS}?method=cash&page_size=100&ordering=-date`).then(r => toPage<Payment>(r.data)),
   })
 
   // Compute cash summary
@@ -1429,11 +1438,11 @@ function PayslipsTab() {
 
   const { data: payslips, isLoading: psLoading } = useQuery<ApiPage<Payslip>>({
     queryKey: ['payslips'],
-    queryFn: () => apiClient.get(ACCOUNTING.PAYSLIPS).then(r => r.data),
+    queryFn: () => apiClient.get(ACCOUNTING.PAYSLIPS).then(r => toPage<Payslip>(r.data)),
   })
   const { data: coins, isLoading: coinsLoading } = useQuery<ApiPage<CoinTx>>({
     queryKey: ['coins'],
-    queryFn: () => apiClient.get(ACCOUNTING.COINS).then(r => r.data),
+    queryFn: () => apiClient.get(ACCOUNTING.COINS).then(r => toPage<CoinTx>(r.data)),
   })
 
   const mutateIssue = useMutation({
@@ -2185,6 +2194,172 @@ ${el.innerHTML}
   )
 }
 
+// ─── Finance Review Tab ──────────────────────────────────────────────────────
+
+const FIN_STATUS_CFG: Record<string, { label: string; cls: string }> = {
+  draft:     { label: 'Pending Payment',  cls: 'bg-gray-100 text-gray-500'      },
+  submitted: { label: 'Awaiting Review',  cls: 'bg-yellow-100 text-yellow-700'  },
+  approved:  { label: 'Approved',         cls: 'bg-emerald-100 text-emerald-700'},
+  rejected:  { label: 'Rejected',         cls: 'bg-red-100 text-red-600'        },
+}
+
+function FinanceReviewTab() {
+  const qc = useQueryClient()
+  const [finNotes, setFinNotes] = useState<Record<number, string>>({})
+  const [reviewing, setReviewing] = useState<number | null>(null)
+
+  const { data: submitted = [], isLoading } = useQuery<Invoice[]>({
+    queryKey: ['invoices', 'finance-review'],
+    queryFn: () =>
+      apiClient
+        .get(ACCOUNTING.INVOICES_PENDING_FINANCE)
+        .then(r => (Array.isArray(r.data) ? r.data : (r.data.results ?? []))),
+    refetchInterval: 30_000,
+  })
+
+  function handleReview(inv: Invoice, action: 'approve' | 'reject') {
+    const notes = finNotes[inv.id] ?? ''
+    if (action === 'reject' && !notes.trim()) {
+      toast.error('Notes are required when rejecting')
+      return
+    }
+    setReviewing(inv.id)
+    apiClient
+      .post(ACCOUNTING.INVOICE_FINANCE_REVIEW(inv.id), { action, notes })
+      .then(() => {
+        toast.success(action === 'approve'
+          ? `Invoice ${inv.invoice_number} approved — ticket closed & coins queued`
+          : `Invoice ${inv.invoice_number} rejected`)
+        setReviewing(null)
+        qc.invalidateQueries({ queryKey: ['invoices', 'finance-review'] })
+      })
+      .catch((err: any) => {
+        toast.error(err?.response?.data?.detail || 'Review failed')
+        setReviewing(null)
+      })
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center py-20">
+        <Loader2 size={28} className="animate-spin text-indigo-400" />
+      </div>
+    )
+  }
+
+  if (submitted.length === 0) {
+    return (
+      <div className="text-center py-20 text-gray-400">
+        <ShieldCheck size={36} className="mx-auto mb-3 text-emerald-400" />
+        <p className="font-medium text-gray-500">No invoices pending finance review</p>
+        <p className="text-sm mt-1">All submitted invoices have been processed.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 mb-2">
+        <ShieldCheck size={16} className="text-yellow-600" />
+        <p className="text-sm text-gray-600 font-medium">
+          {submitted.length} invoice{submitted.length !== 1 ? 's' : ''} awaiting finance review
+        </p>
+      </div>
+
+      {submitted.map(inv => {
+        const fsCfg = FIN_STATUS_CFG[inv.finance_status] ?? { label: inv.finance_status, cls: 'bg-gray-100 text-gray-500' }
+        const isProcessing = reviewing === inv.id
+        return (
+          <div key={inv.id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+            {/* Header */}
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="font-semibold text-gray-800 text-sm font-mono">#{inv.invoice_number}</span>
+                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${fsCfg.cls}`}>
+                    {fsCfg.label}
+                  </span>
+                </div>
+                <p className="text-sm text-gray-500">{inv.customer_name || '—'}</p>
+                {inv.ticket && (
+                  <p className="text-xs text-indigo-500 mt-0.5">Ticket #{inv.ticket}</p>
+                )}
+              </div>
+              <div className="text-right shrink-0">
+                <p className="text-xl font-bold text-gray-800">Rs. {parseFloat(inv.total).toFixed(2)}</p>
+                <p className="text-xs text-gray-400">Paid: Rs. {parseFloat(inv.amount_paid).toFixed(2)}</p>
+                {parseFloat(inv.amount_due) > 0 && (
+                  <p className="text-xs text-red-500 font-medium">Due: Rs. {parseFloat(inv.amount_due).toFixed(2)}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Line items summary */}
+            <div className="bg-gray-50 rounded-lg p-3 divide-y divide-gray-100 text-sm">
+              {inv.line_items.map((li, i) => (
+                <div key={i} className="flex justify-between py-1.5">
+                  <span className="text-gray-600">
+                    {li.description ?? li.name}
+                    {(li as any).line_type && (
+                      <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded font-medium
+                        ${(li as any).line_type === 'service' ? 'bg-blue-100 text-blue-600' : 'bg-amber-100 text-amber-600'}`}>
+                        {(li as any).line_type}
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-gray-700 font-medium">
+                    {li.total ? `Rs. ${parseFloat(li.total).toFixed(2)}` : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Totals row */}
+            <div className="flex gap-6 text-sm text-gray-500">
+              <span>Subtotal: <strong className="text-gray-700">Rs. {parseFloat(inv.subtotal).toFixed(2)}</strong></span>
+              <span>VAT: <strong className="text-gray-700">Rs. {parseFloat(inv.vat_amount).toFixed(2)}</strong></span>
+              <span>Created: <strong className="text-gray-700">{inv.created_at?.slice(0, 10)}</strong></span>
+            </div>
+
+            {/* Notes input + approve/reject */}
+            <div className="space-y-2 pt-1 border-t border-gray-100">
+              <textarea
+                rows={2}
+                value={finNotes[inv.id] ?? ''}
+                onChange={e => setFinNotes(prev => ({ ...prev, [inv.id]: e.target.value }))}
+                placeholder="Finance notes (required when rejecting)…"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleReview(inv, 'approve')}
+                  disabled={isProcessing}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 transition"
+                >
+                  {isProcessing
+                    ? <Loader2 size={13} className="animate-spin" />
+                    : <CheckCircle size={13} />}
+                  Approve — Close Ticket
+                </button>
+                <button
+                  onClick={() => handleReview(inv, 'reject')}
+                  disabled={isProcessing || !(finNotes[inv.id] ?? '').trim()}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 disabled:opacity-50 transition"
+                >
+                  {isProcessing
+                    ? <Loader2 size={13} className="animate-spin" />
+                    : <XCircle size={13} />}
+                  Reject
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── Main Page ──────────────────────────────────────────────────────────────
 
 export default function AccountingPage() {
@@ -2198,8 +2373,9 @@ export default function AccountingPage() {
   function renderTab() {
     switch (activeTab) {
       case '':             return <DashboardTab />
-      case 'invoices':     return <InvoicesTab />
-      case 'bills':        return <BillsTab />
+      case 'invoices':       return <InvoicesTab />
+      case 'finance-review': return <FinanceReviewTab />
+      case 'bills':          return <BillsTab />
       case 'payments':     return <PaymentsTab />
       case 'credit-notes': return <CreditNotesTab />
       case 'journals':     return <JournalsTab />

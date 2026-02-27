@@ -205,6 +205,9 @@ REST_FRAMEWORK = {
         # before any view or permission class executes.
         'accounts.authentication.TenantJWTAuthentication',
     ],
+    # Pagination — every list endpoint returns { results: [], count: N, next, previous }
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 25,
     # Rate limiting — three layers: per-IP (anon), per-user, per-tenant.
     # Anon: 10/min (login attempts).  User: 1000/day (normal API usage).
     # Tenant: 2000/min aggregate (overridden to 1000/min in prod).

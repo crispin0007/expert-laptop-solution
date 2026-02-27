@@ -185,34 +185,6 @@ class PayslipSerializer(serializers.ModelSerializer):
 
 # ─── Invoices ────────────────────────────────────────────────────────────────
 
-class InvoiceSerializer(serializers.ModelSerializer):
-    customer_name = serializers.CharField(source='customer.name',         read_only=True, default='')
-    ticket_number = serializers.CharField(source='ticket.ticket_number',  read_only=True, default='')
-    project_name  = serializers.CharField(source='project.name',          read_only=True, default='')
-    amount_paid   = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
-    amount_due    = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
-
-    class Meta:
-        model  = Invoice
-        fields = (
-            'id', 'invoice_number',
-            'customer', 'customer_name',
-            'ticket', 'ticket_number',
-            'project', 'project_name',
-            'line_items', 'subtotal', 'discount', 'vat_rate',
-            'vat_amount', 'total', 'amount_paid', 'amount_due',
-            'status', 'due_date', 'paid_at',
-            'bill_address', 'payment_terms', 'reference',
-            'notes', 'created_at', 'updated_at',
-        )
-        read_only_fields = (
-            'invoice_number', 'vat_rate', 'vat_amount', 'subtotal',
-            'total', 'amount_paid', 'amount_due', 'paid_at',
-            'created_at', 'updated_at',
-        )
-
-
-
 class CoinTransactionSerializer(serializers.ModelSerializer):
     staff_name = serializers.CharField(source='staff.full_name', read_only=True, default='')
     approved_by_name = serializers.CharField(source='approved_by.full_name', read_only=True, default='')
@@ -226,26 +198,14 @@ class CoinTransactionSerializer(serializers.ModelSerializer):
         read_only_fields = ('status', 'approved_by', 'approved_by_name', 'created_at')
 
 
-class PayslipSerializer(serializers.ModelSerializer):
-    staff_name = serializers.CharField(source='staff.full_name', read_only=True, default='')
-
-    class Meta:
-        model = Payslip
-        fields = (
-            'id', 'staff', 'staff_name', 'period_start', 'period_end',
-            'total_coins', 'coin_to_money_rate', 'gross_amount',
-            'status', 'issued_at', 'paid_at', 'created_at',
-        )
-        read_only_fields = (
-            'total_coins', 'coin_to_money_rate', 'gross_amount',
-            'issued_at', 'paid_at', 'created_at',
-        )
-
-
 class InvoiceSerializer(serializers.ModelSerializer):
-    customer_name = serializers.CharField(source='customer.name', read_only=True, default='')
-    ticket_number = serializers.CharField(source='ticket.ticket_number', read_only=True, default='')
-    project_name  = serializers.CharField(source='project.name', read_only=True, default='')
+    customer_name             = serializers.CharField(source='customer.name',        read_only=True, default='')
+    ticket_number             = serializers.CharField(source='ticket.ticket_number', read_only=True, default='')
+    project_name              = serializers.CharField(source='project.name',         read_only=True, default='')
+    amount_paid               = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    amount_due                = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    payment_received_by_name  = serializers.SerializerMethodField()
+    finance_reviewed_by_name  = serializers.SerializerMethodField()
 
     class Meta:
         model = Invoice
@@ -255,13 +215,34 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'ticket', 'ticket_number',
             'project', 'project_name',
             'line_items', 'subtotal', 'discount', 'vat_rate',
-            'vat_amount', 'total', 'status', 'due_date', 'paid_at',
+            'vat_amount', 'total', 'amount_paid', 'amount_due',
+            'status', 'due_date', 'paid_at',
+            'bill_address', 'payment_terms', 'reference',
             'notes', 'created_at', 'updated_at',
+            # Billing workflow fields
+            'finance_status',
+            'payment_received', 'payment_method',
+            'payment_received_at', 'payment_received_by', 'payment_received_by_name',
+            'finance_reviewed_by', 'finance_reviewed_by_name',
+            'finance_reviewed_at', 'finance_notes',
         )
         read_only_fields = (
             'invoice_number', 'vat_rate', 'vat_amount', 'subtotal',
-            'total', 'paid_at', 'created_at', 'updated_at',
+            'total', 'amount_paid', 'amount_due', 'paid_at',
+            'created_at', 'updated_at',
+            'payment_received_at', 'payment_received_by',
+            'finance_reviewed_by', 'finance_reviewed_at',
         )
+
+    def get_payment_received_by_name(self, obj):
+        if obj.payment_received_by:
+            return obj.payment_received_by.get_full_name() or obj.payment_received_by.email
+        return ''
+
+    def get_finance_reviewed_by_name(self, obj):
+        if obj.finance_reviewed_by:
+            return obj.finance_reviewed_by.get_full_name() or obj.finance_reviewed_by.email
+        return ''
 
 
 # ─── Quotations ──────────────────────────────────────────────────────────────
