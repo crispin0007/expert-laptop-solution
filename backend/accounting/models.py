@@ -137,6 +137,9 @@ class JournalEntry(TenantModel):
     REF_DEBIT_NOTE   = 'debit_note'
     REF_PAYSLIP      = 'payslip'
     REF_MANUAL       = 'manual'
+    REF_COGS         = 'cogs'
+    REF_VAT_REM      = 'vat_remittance'
+    REF_TDS_REM      = 'tds_remittance'
 
     REF_CHOICES = [
         (REF_INVOICE,     'Invoice'),
@@ -146,6 +149,9 @@ class JournalEntry(TenantModel):
         (REF_DEBIT_NOTE,  'Debit Note'),
         (REF_PAYSLIP,     'Payslip'),
         (REF_MANUAL,      'Manual'),
+        (REF_COGS,        'COGS'),
+        (REF_VAT_REM,     'VAT Remittance'),
+        (REF_TDS_REM,     'TDS Remittance'),
     ]
 
     entry_number   = models.CharField(max_length=32, blank=True, db_index=True)

@@ -308,6 +308,76 @@ def create_credit_note_journal(credit_note, created_by=None):
     )
 
 
+def reverse_credit_note_journal(credit_note, created_by=None):
+    """
+    Credit note voided after being issued — mirror of create_credit_note_journal.
+    Restores AR and reverses the revenue / VAT reductions:
+
+      Dr  Accounts Receivable  1200  (total      — customer owes us again)
+      Cr  Service Revenue      4100  (service portion, if any)
+      Cr  Product Revenue      4200  (product portion, if any)
+      Cr  VAT Payable          2200  (vat_amount — restore the VAT liability)
+    """
+    tenant   = credit_note.tenant
+    ar       = _get_account(tenant, '1200')
+    svc_rev  = _get_account(tenant, '4100')
+    prod_rev = _get_account(tenant, '4200')
+    vat_pay  = _get_account(tenant, '2200')
+
+    service_total, product_total = _split_revenue(
+        credit_note.line_items, credit_note.subtotal
+    )
+
+    lines = [
+        (ar, credit_note.total, Decimal('0'), f"VOID CN AR – {credit_note.credit_note_number}"),
+    ]
+    if service_total:
+        lines.append((svc_rev, Decimal('0'), service_total,
+                      f"VOID CN Service Rev – {credit_note.credit_note_number}"))
+    if product_total:
+        lines.append((prod_rev, Decimal('0'), product_total,
+                      f"VOID CN Product Rev – {credit_note.credit_note_number}"))
+    if credit_note.vat_amount:
+        lines.append((vat_pay, Decimal('0'), credit_note.vat_amount,
+                      f"VOID CN VAT – {credit_note.credit_note_number}"))
+
+    return _make_entry(
+        tenant, created_by, timezone.localdate(),
+        f"Credit Note {credit_note.credit_note_number} voided (reversal)",
+        'credit_note', credit_note.pk, lines,
+    )
+
+
+def reverse_debit_note_journal(debit_note, created_by=None):
+    """
+    Debit note voided after being issued — mirror of create_debit_note_journal.
+    Reversal restores AP and the supplier expense / VAT:
+
+      Dr  Other Expenses  5300  (restore expense, subtype of Dr AP reversal)
+      Dr  VAT Payable     2200  (restore input VAT we can still reclaim)
+      Cr  Accounts Payable 2100 (restore what we owe the supplier)
+    """
+    t = debit_note.tenant
+    ap_acc      = _get_account(t, '2100')
+    expense_acc = _get_account(t, '5300')
+    vat_acc     = _get_account(t, '2200')
+
+    lines = [
+        (expense_acc, debit_note.subtotal, Decimal('0'),   'VOID DN – Expense restore'),
+        (ap_acc,      Decimal('0'),        debit_note.total, 'VOID DN – AP restore'),
+    ]
+    if debit_note.vat_amount:
+        lines.append(
+            (vat_acc, debit_note.vat_amount, Decimal('0'), 'VOID DN – VAT restore')
+        )
+
+    return _make_entry(
+        t, created_by, timezone.localdate(),
+        f"Debit Note {debit_note.debit_note_number} voided (reversal)",
+        'debit_note', debit_note.pk, lines,
+    )
+
+
 # ─── Payslip ─────────────────────────────────────────────────────────────────
 
 def create_payslip_journal(payslip, created_by=None):

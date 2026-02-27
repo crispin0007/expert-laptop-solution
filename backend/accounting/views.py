@@ -817,13 +817,19 @@ class PayslipViewSet(TenantMixin, viewsets.ModelViewSet):
         serializer.save(tenant=self.tenant, created_by=self.request.user)
 
     def perform_update(self, serializer):
-        """Recompute net_pay after admin edits base_salary/bonus/deductions."""
+        """Recompute net_pay after admin edits base_salary/bonus/deductions.
+
+        net_pay = base_salary + bonus + gross_amount(coins) − tds_amount − deductions
+        tds_amount is stored separately from deductions (which is 'other deductions'
+        like advances / damages).  Omitting tds_amount causes net_pay to be overstated
+        by the TDS amount whenever an admin edits a draft payslip.
+        """
         from rest_framework.exceptions import ValidationError
         p = serializer.instance
         if p.status != Payslip.STATUS_DRAFT:
             raise ValidationError('Only draft payslips can be edited.')
         p = serializer.save()
-        p.net_pay = p.base_salary + p.bonus + p.gross_amount - p.deductions
+        p.net_pay = p.base_salary + p.bonus + p.gross_amount - p.tds_amount - p.deductions
         p.save(update_fields=['net_pay'])
 
     @action(detail=False, methods=['post'], url_path='generate')
@@ -1016,6 +1022,10 @@ class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
         # Staff can collect payment, generate from ticket, and edit DRAFT invoices
         if self.action in ('collect_payment', 'generate_from_ticket', 'update', 'partial_update'):
             return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
+        # Finance managers (role='manager') must be able to approve/reject submitted
+        # invoices — they are the finance reviewers by design.
+        if self.action in ('finance_review',):
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
         # destroy and all other write actions (issue, void…) require admin
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 

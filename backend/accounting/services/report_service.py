@@ -14,19 +14,33 @@ def _zero():
 
 
 def _account_balance(tenant, account_code, date_from=None, date_to=None):
-    """Sum debit - credit for a single account code within a date range."""
-    from accounting.models import JournalLine
+    """
+    Net balance for a single account code within a date range, including
+    Account.opening_balance so migrated tenants with seeded opening balances
+    show correct figures.  Returns debit-normal (dr - cr) for asset/expense
+    and credit-normal (cr - dr) for liability/equity/revenue.
+    """
+    from accounting.models import Account, JournalLine
+    try:
+        acc = Account.objects.get(tenant=tenant, code=account_code)
+    except Account.DoesNotExist:
+        return _zero()
     qs = JournalLine.objects.filter(
         entry__tenant=tenant,
         entry__is_posted=True,
-        account__code=account_code,
+        account=acc,
     )
     if date_from:
         qs = qs.filter(entry__date__gte=date_from)
     if date_to:
         qs = qs.filter(entry__date__lte=date_to)
     d = qs.aggregate(debit=Sum('debit'), credit=Sum('credit'))
-    return (d['debit'] or _zero()) - (d['credit'] or _zero())
+    dr = d['debit']  or _zero()
+    cr = d['credit'] or _zero()
+    ob = acc.opening_balance or _zero()
+    if acc.type in ('asset', 'expense'):
+        return ob + dr - cr
+    return ob + cr - dr
 
 
 def _accounts_by_type(tenant, acct_type, date_from=None, date_to=None):
@@ -61,10 +75,13 @@ def _accounts_by_type(tenant, acct_type, date_from=None, date_to=None):
         dr = d['debit'] or _zero()
         cr = d['credit'] or _zero()
 
+        # Include Account.opening_balance so migrated tenants with seeded
+        # opening balances show correct figures in all reports.
+        ob = acc.opening_balance or _zero()
         if acct_type in ('asset', 'expense'):
-            balance = dr - cr
+            balance = ob + dr - cr
         else:
-            balance = cr - dr
+            balance = ob + cr - dr
 
         result.append({'code': acc.code, 'name': acc.name, 'balance': balance})
 
@@ -167,6 +184,15 @@ def trial_balance(tenant, date_from, date_to):
         d = qs.aggregate(debit=Sum('debit'), credit=Sum('credit'))
         dr = d['debit'] or _zero()
         cr = d['credit'] or _zero()
+
+        # Bring in the account's opening balance so the trial balance
+        # reflects all historical balances, not just the period movements.
+        ob = acc.opening_balance or _zero()
+        if acc.type in ('asset', 'expense'):
+            dr += ob
+        else:
+            cr += ob
+
         if dr or cr:
             rows.append({'code': acc.code, 'name': acc.name, 'debit': dr, 'credit': cr})
             total_dr += dr
@@ -329,11 +355,13 @@ def cash_flow(tenant, date_from, date_to):
     from accounting.models import Payment
     from django.db.models import Sum as DSum
 
+    # credit_note payments are accounting settlements with no actual cash movement.
+    # Exclude them so the cash flow statement reflects only real money in/out.
     payments = Payment.objects.filter(
         tenant=tenant,
         date__gte=date_from,
         date__lte=date_to,
-    )
+    ).exclude(method='credit_note')
 
     incoming = payments.filter(type='incoming').aggregate(t=DSum('amount'))['t'] or _zero()
     outgoing = payments.filter(type='outgoing').aggregate(t=DSum('amount'))['t'] or _zero()

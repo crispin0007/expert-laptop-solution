@@ -161,6 +161,13 @@ def handle_payment_created(sender, instance, created, **kwargs):
     if (instance.reference or '').startswith('PAYSLIP-'):
         return
 
+    # Credit note application: no cash changes hands — the credit note's own
+    # journal (Dr Revenue / Cr AR) was posted by handle_credit_note_issued when
+    # the credit note was issued.  Posting an additional Dr Cash / Cr AR here
+    # would create a phantom cash receipt and double-clear the AR.
+    if (instance.method or '') == 'credit_note':
+        return
+
     from accounting.services.journal_service import create_payment_journal
     try:
         create_payment_journal(instance, created_by=instance.created_by)
@@ -172,12 +179,17 @@ def handle_payment_created(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender='accounting.CreditNote')
 def handle_credit_note_issued(sender, instance, created, **kwargs):
-    """Issued → create reversal journal entry."""
+    """Issued → create reversal journal entry.
+    Void (after issued) → reverse the issued journal so books are restored.
+    """
     if created:
         return
 
     from accounting.models import JournalEntry
-    from accounting.services.journal_service import create_credit_note_journal
+    from accounting.services.journal_service import (
+        create_credit_note_journal,
+        reverse_credit_note_journal,
+    )
 
     already_posted = JournalEntry.objects.filter(
         tenant=instance.tenant,
@@ -191,6 +203,22 @@ def handle_credit_note_issued(sender, instance, created, **kwargs):
             create_credit_note_journal(instance, created_by=instance.created_by)
         except Exception as e:
             log.error("Credit note journal failed for CN %s: %s", instance.pk, e, exc_info=True)
+
+    elif instance.status == 'void' and already_posted:
+        # Only reverse if an issued journal was actually posted.
+        # Voiding a draft CN (which was never issued) has no journal to reverse.
+        # Guard: avoid double-reversals by checking reference_type’s entry count.
+        void_already_reversed = JournalEntry.objects.filter(
+            tenant=instance.tenant,
+            reference_type='credit_note',
+            reference_id=instance.pk,
+            is_posted=True,
+        ).count() >= 2   # 1 = original, 2+ = already has a reversal
+        if not void_already_reversed:
+            try:
+                reverse_credit_note_journal(instance, created_by=instance.created_by)
+            except Exception as e:
+                log.error("Credit note void-reversal failed for CN %s: %s", instance.pk, e, exc_info=True)
 
 
 # ─── Payslip: journal on paid ─────────────────────────────────────────────────
@@ -251,12 +279,16 @@ def handle_debit_note_issued(sender, instance, created, **kwargs):
     """
     Issued → reverse the AP and Expense journal entries from the original Bill.
     Creates: Dr AP / Cr Expense + Cr VAT Recoverable  (mirror of bill_journal).
+    Void (after issued) → reverse the issued debit note journal.
     """
     if created:
         return
 
     from accounting.models import JournalEntry
-    from accounting.services.journal_service import create_debit_note_journal
+    from accounting.services.journal_service import (
+        create_debit_note_journal,
+        reverse_debit_note_journal,
+    )
 
     already_posted = JournalEntry.objects.filter(
         tenant=instance.tenant,
@@ -270,6 +302,19 @@ def handle_debit_note_issued(sender, instance, created, **kwargs):
             create_debit_note_journal(instance, created_by=instance.created_by)
         except Exception as e:
             log.error("Debit note journal failed for DN %s: %s", instance.pk, e, exc_info=True)
+
+    elif instance.status == 'void' and already_posted:
+        void_already_reversed = JournalEntry.objects.filter(
+            tenant=instance.tenant,
+            reference_type='debit_note',
+            reference_id=instance.pk,
+            is_posted=True,
+        ).count() >= 2
+        if not void_already_reversed:
+            try:
+                reverse_debit_note_journal(instance, created_by=instance.created_by)
+            except Exception as e:
+                log.error("Debit note void-reversal failed for DN %s: %s", instance.pk, e, exc_info=True)
 
 
 # ─── Bill approved: auto-create TDS entry if applicable ──────────────────────────
