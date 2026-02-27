@@ -140,9 +140,17 @@ class ProjectProductViewSet(TenantMixin, viewsets.ModelViewSet):
         """
         Upsert: if the product is already linked to this project, increment
         quantity_planned instead of raising a duplicate-key error.
+
+        Race-safe: uses select_for_update() inside an atomic block so concurrent
+        requests from multiple gunicorn workers cannot race to INSERT the same row
+        and hit the unique_together('project', 'product') constraint → 500.
+        Uses get_object_or_404 so an invalid project_pk returns 404, not 500.
         """
+        from django.db import IntegrityError, transaction
+        from django.shortcuts import get_object_or_404
+
         project_pk = self.kwargs.get('project_pk')
-        project = Project.objects.get(pk=project_pk, tenant=self.tenant)
+        project = get_object_or_404(Project, pk=project_pk, tenant=self.tenant)
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -150,19 +158,33 @@ class ProjectProductViewSet(TenantMixin, viewsets.ModelViewSet):
         product = serializer.validated_data['product']
         qty = serializer.validated_data.get('quantity_planned', 1)
 
-        existing = ProjectProduct.objects.filter(
-            tenant=self.tenant, project=project, product=product
-        ).first()
+        with transaction.atomic():
+            existing = (
+                ProjectProduct.objects
+                .select_for_update()
+                .filter(tenant=self.tenant, project=project, product=product)
+                .first()
+            )
 
-        if existing:
-            # Increment quantity on the existing record
-            existing.quantity_planned += qty
-            existing.save(update_fields=['quantity_planned', 'updated_at'])
-            out = self.get_serializer(existing)
-            return Response(out.data, status=status.HTTP_200_OK)
+            if existing:
+                existing.quantity_planned += qty
+                existing.save(update_fields=['quantity_planned', 'updated_at'])
+                out = self.get_serializer(existing)
+                return Response(out.data, status=status.HTTP_200_OK)
 
-        # First time — create fresh
-        serializer.save(tenant=self.tenant, created_by=request.user, project=project)
+            try:
+                serializer.save(tenant=self.tenant, created_by=request.user, project=project)
+            except IntegrityError:
+                # Lost the race — another worker inserted between our filter and save.
+                # Retry as an update.
+                existing = ProjectProduct.objects.get(
+                    tenant=self.tenant, project=project, product=product
+                )
+                existing.quantity_planned += qty
+                existing.save(update_fields=['quantity_planned', 'updated_at'])
+                out = self.get_serializer(existing)
+                return Response(out.data, status=status.HTTP_200_OK)
+
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 

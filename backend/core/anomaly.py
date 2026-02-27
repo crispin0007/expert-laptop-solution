@@ -73,6 +73,9 @@ class BannedIP(models.Model):
     )
 
     class Meta:
+        app_label = 'core'
+        managed = False  # table was originally created by core migrations; kept here for code organisation
+        db_table = 'core_bannedip'
         ordering = ['-banned_at']
         indexes = [
             models.Index(fields=['ip', 'expires_at'], name='bannedip_ip_expires_idx'),

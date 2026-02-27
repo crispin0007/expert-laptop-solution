@@ -798,6 +798,74 @@ class TicketProductViewSet(TenantMixin, viewsets.ModelViewSet):
             qs = qs.filter(ticket_id=ticket_pk)
         return qs
 
+    def create(self, request, *args, **kwargs):
+        """
+        Upsert: if the product is already on this ticket, increment quantity and
+        create a delta StockMovement instead of adding a duplicate row.
+        (post_save signal only fires on created=True, so we create the movement
+        manually for the incremented delta.)
+        """
+        self.ensure_tenant()
+        ticket_pk = self.kwargs.get('ticket_pk')
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        if ticket_pk:
+            product = serializer.validated_data['product']
+            qty = serializer.validated_data.get('quantity', 1)
+
+            existing = (
+                TicketProduct.objects
+                .filter(tenant=self.tenant, ticket_id=ticket_pk, product=product)
+                .select_related('product')
+                .first()
+            )
+
+            if existing:
+                existing.quantity += qty
+                existing.save(update_fields=['quantity', 'updated_at'])
+
+                # Manually create the stock-out movement for the incremented qty
+                # (signal only fires on created=True and cannot see the delta)
+                if not product.is_service:
+                    try:
+                        from inventory.models import StockMovement
+                        StockMovement.objects.create(
+                            tenant=self.tenant,
+                            created_by=self.request.user,
+                            product=product,
+                            movement_type=StockMovement.MOVEMENT_OUT,
+                            quantity=qty,
+                            reference_type='ticket_product',
+                            reference_id=existing.pk,
+                            notes=f'Qty increment: TicketProduct #{existing.pk} on Ticket #{ticket_pk}',
+                        )
+                    except Exception:
+                        pass
+
+                # Timeline entry
+                try:
+                    TicketTimeline.objects.create(
+                        tenant=self.tenant,
+                        ticket_id=ticket_pk,
+                        event_type=TicketTimeline.EVENT_PRODUCT_ADDED,
+                        description=f"Product '{product.name}' qty updated to ×{existing.quantity}.",
+                        actor=self.request.user,
+                        created_by=self.request.user,
+                    )
+                except Exception:
+                    pass
+
+                out = self.get_serializer(existing)
+                return Response(out.data, status=status.HTTP_200_OK)
+
+        # New product on this ticket — standard path
+        # (post_save signal creates StockMovement automatically)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
     def perform_create(self, serializer):
         self.ensure_tenant()
         ticket_pk = self.kwargs.get('ticket_pk')
