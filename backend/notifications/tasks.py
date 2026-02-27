@@ -104,19 +104,23 @@ def task_send_staff_invite(self, user_id: int, tenant_id: int, temp_password: st
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def task_send_staff_password_reset(self, user_id: int, tenant_id: int, new_password: str) -> None:
-    """Notify staff member that their password was reset by an admin."""
-    try:
-        from accounts.models import User
-        from tenants.models import Tenant
-        from notifications.email import send_staff_password_reset
+def task_send_staff_password_reset(self, user_id: int, tenant_id: int) -> None:
+    """
+    STUB — intentionally does NOT accept a new_password parameter.
 
-        user = User.objects.get(pk=user_id)
-        tenant = Tenant.objects.get(pk=tenant_id)
-        send_staff_password_reset(user, tenant, new_password)
-    except Exception as exc:
-        logger.error("task_send_staff_password_reset failed: %s", exc, exc_info=True)
-        raise self.retry(exc=exc)
+    Passwords must never be passed through Celery task args because args are
+    serialised and stored in the Redis broker in plaintext.  The
+    StaffViewSet.reset_password action sends the password-reset email directly
+    via notifications.email.send_staff_password_reset().  This task exists
+    only so that legacy call-sites importing it do not get an ImportError;
+    it logs a warning and does nothing.
+    """
+    logger.warning(
+        "task_send_staff_password_reset: this task cannot carry a plaintext "
+        "password. Call notifications.email.send_staff_password_reset() "
+        "directly from the view/service instead. user_id=%s tenant_id=%s",
+        user_id, tenant_id,
+    )
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)

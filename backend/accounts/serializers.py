@@ -229,6 +229,25 @@ class InviteStaffSerializer(serializers.Serializer):
     join_date = serializers.DateField(required=False, allow_null=True)
     is_admin = serializers.BooleanField(default=False)
 
+    def validate_department(self, value):
+        """
+        Reject departments that belong to a different tenant.
+
+        ``department`` is accepted as a raw PK via PrimaryKeyRelatedField whose
+        queryset is ``Department.objects.all()`` (unscoped) so that DRF can
+        resolve the PK.  Without this explicit cross-tenant check an admin of
+        tenant A could assign a department from tenant B on a staff member,
+        leaking cross-tenant structure.
+        """
+        if value is None:
+            return value
+        tenant = self.context.get('tenant')
+        if tenant is not None and getattr(value, 'tenant_id', None) != tenant.pk:
+            raise serializers.ValidationError(
+                'Department does not belong to this workspace.'
+            )
+        return value
+
     def validate_email(self, value):
         tenant = self.context.get('tenant')
         # Only block if there is an *active* membership — inactive means previously removed
@@ -279,21 +298,15 @@ class InviteStaffSerializer(serializers.Serializer):
                 is_admin=validated_data.get('is_admin', False),
             )
 
-        # Send invitation email — try Celery first, fall back to synchronous send
+        # SECURITY: never pass plaintext passwords to Celery.  Celery task args
+        # are serialised and stored in the Redis broker in plaintext.  Send the
+        # invite email synchronously so the password is never persisted beyond
+        # this call stack (same reasoning as StaffViewSet.reset_password).
         try:
-            from notifications.tasks import task_send_staff_invite
-            task_send_staff_invite.delay(
-                user_id=user.pk,
-                tenant_id=tenant.pk,
-                temp_password=password if is_new_user else '(your existing password)',
-            )
+            from notifications.email import send_staff_invite
+            send_staff_invite(user, tenant, password if is_new_user else '(your existing password)')
         except Exception:
-            # Celery unavailable — send directly so the email is never silently dropped
-            try:
-                from notifications.email import send_staff_invite
-                send_staff_invite(user, tenant, password if is_new_user else '(your existing password)')
-            except Exception:
-                pass  # Email failure must never block the invite flow
+            pass  # Email failure must never block the invite flow
 
         return user
 
@@ -310,6 +323,20 @@ class UpdateStaffSerializer(serializers.ModelSerializer):
     join_date = serializers.DateField(required=False, allow_null=True)
     is_admin = serializers.BooleanField(required=False)
     membership_active = serializers.BooleanField(required=False)
+
+    def validate_department(self, value):
+        """
+        Reject departments that belong to a different tenant (same guard as
+        InviteStaffSerializer.validate_department).
+        """
+        if value is None:
+            return value
+        tenant = self.context.get('tenant')
+        if tenant is not None and getattr(value, 'tenant_id', None) != tenant.pk:
+            raise serializers.ValidationError(
+                'Department does not belong to this workspace.'
+            )
+        return value
 
     class Meta:
         model = User
