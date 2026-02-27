@@ -165,8 +165,14 @@ class TenantMiddleware(MiddlewareMixin):
 
         # --- 2. Subdomain (e.g. els.bms.techyatra.com.np) ---
         if tenant is None:
+            from django.conf import settings as _s
+            root_domain = _s.ROOT_DOMAIN.lower()
             parts = host.split('.')
-            if len(parts) > 2:
+            # Only attempt slug extraction when the host is a proper subdomain
+            # of root_domain — i.e. host ends with .<root_domain> and has at
+            # least one extra label. Accessing root_domain itself must NOT be
+            # treated as a probe (it IS the main / super-admin domain).
+            if host != root_domain and host.endswith(f'.{root_domain}'):
                 slug = parts[0]
                 tenant = _resolve_tenant(slug)
                 if tenant is None:
