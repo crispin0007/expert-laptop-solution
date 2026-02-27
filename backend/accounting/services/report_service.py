@@ -33,12 +33,17 @@ def _accounts_by_type(tenant, acct_type, date_from=None, date_to=None):
     """
     Return list of {code, name, balance} for all accounts of a given type.
     Balance sign: asset/expense = debit-credit; liability/equity/revenue = credit-debit.
+
+    Includes ALL accounts of the given type — both parent/header accounts and
+    leaf accounts — so that journal entries posted to any account in the hierarchy
+    always appear in reports.  (Previously leaf-only filtering silently omitted
+    entries posted to parent accounts or system accounts that gained custom children.)
     """
     from accounting.models import Account, JournalLine
 
     accounts = Account.objects.filter(
         tenant=tenant, type=acct_type, is_active=True
-    ).exclude(children__isnull=False).order_by('code')  # leaf accounts only
+    ).order_by('code')  # all accounts, not just leaves
 
     result = []
     for acc in accounts:

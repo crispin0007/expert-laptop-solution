@@ -1299,60 +1299,187 @@ function JournalsTab() {
 
 // ─── Chart of Accounts Tab ─────────────────────────────────────────────────
 
+// ─── Add Account Modal ─────────────────────────────────────────────────────
+
+function AccountCreateModal({ accounts, onClose }: { accounts: Account[]; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [code, setCode]                   = useState('')
+  const [name, setName]                   = useState('')
+  const [type, setType]                   = useState('asset')
+  const [parent, setParent]               = useState<string>('')
+  const [description, setDescription]     = useState('')
+  const [openingBalance, setOpeningBalance] = useState('0')
+
+  const mutation = useMutation({
+    mutationFn: (payload: unknown) => apiClient.post(ACCOUNTING.ACCOUNTS, payload),
+    onSuccess: () => {
+      toast.success('Account created')
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      onClose()
+    },
+    onError: (e: { response?: { data?: { detail?: string; code?: string[] } } }) => {
+      const msg = e?.response?.data?.detail ?? e?.response?.data?.code?.[0] ?? 'Failed to create account'
+      toast.error(msg)
+    },
+  })
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    mutation.mutate({
+      code: code.trim(),
+      name: name.trim(),
+      type,
+      parent: parent ? Number(parent) : null,
+      description,
+      opening_balance: openingBalance || '0',
+    })
+  }
+
+  const parentOptions = accounts.filter(a => a.is_active)
+
+  return (
+    <Modal title="Add Account" onClose={onClose}>
+      <form onSubmit={submit} className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Account Code *" hint="e.g. 4110, 5105">
+            <input value={code} onChange={e => setCode(e.target.value)} placeholder="4110"
+              className={inputCls} required />
+          </Field>
+          <Field label="Account Name *">
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Consulting Revenue"
+              className={inputCls} required />
+          </Field>
+          <Field label="Type *">
+            <select value={type} onChange={e => setType(e.target.value)} className={selectCls}>
+              <option value="asset">Asset</option>
+              <option value="liability">Liability</option>
+              <option value="equity">Equity</option>
+              <option value="revenue">Revenue</option>
+              <option value="expense">Expense</option>
+            </select>
+          </Field>
+          <Field label="Parent Account" hint="Optional — creates a sub-account">
+            <select value={parent} onChange={e => setParent(e.target.value)} className={selectCls}>
+              <option value="">— None (top level) —</option>
+              {parentOptions.map(a => (
+                <option key={a.id} value={a.id}>{a.code} – {a.name}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Opening Balance">
+            <input type="number" step="0.01" value={openingBalance}
+              onChange={e => setOpeningBalance(e.target.value)} className={inputCls} />
+          </Field>
+        </div>
+        <Field label="Description">
+          <input value={description} onChange={e => setDescription(e.target.value)}
+            placeholder="Optional notes about this account" className={inputCls} />
+        </Field>
+        <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">Cancel</button>
+          <button type="submit" disabled={mutation.isPending}
+            className="px-5 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2">
+            {mutation.isPending && <Loader2 size={14} className="animate-spin" />}
+            Create Account
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 function AccountsTab() {
+  const qc = useQueryClient()
   const { data, isLoading } = useQuery<ApiPage<Account>>({
     queryKey: ['accounts'],
     queryFn: () => apiClient.get(ACCOUNTING.ACCOUNTS).then(r => toPage<Account>(r.data)),
   })
+  const [showCreate, setShowCreate] = useState(false)
 
-  const grouped: Record<string, Account[]> = {}
-  data?.results?.forEach(a => {
-    if (!grouped[a.type]) grouped[a.type] = []
-    grouped[a.type].push(a)
-  })
+  const allAccounts = data?.results ?? []
 
+  // Build parent-id → depth map to indent sub-accounts
+  function getDepth(acc: Account, visited = new Set<number>()): number {
+    if (!acc.parent || visited.has(acc.id)) return 0
+    visited.add(acc.id)
+    const p = allAccounts.find(a => a.id === acc.parent)
+    return p ? 1 + getDepth(p, visited) : 1
+  }
+
+  const typeOrder = ['asset', 'liability', 'equity', 'revenue', 'expense']
   const typeLabels: Record<string, string> = {
     asset: 'Assets', liability: 'Liabilities',
     equity: 'Equity', revenue: 'Revenue', expense: 'Expenses',
   }
 
+  const grouped: Record<string, Account[]> = {}
+  allAccounts.forEach(a => {
+    if (!grouped[a.type]) grouped[a.type] = []
+    grouped[a.type].push(a)
+  })
+
   return (
     <div>
+      <div className="flex justify-end mb-4">
+        <button onClick={() => setShowCreate(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700">
+          <Plus size={14} /> Add Account
+        </button>
+      </div>
+
+      {showCreate && (
+        <AccountCreateModal
+          accounts={allAccounts}
+          onClose={() => setShowCreate(false)}
+        />
+      )}
+
       {isLoading ? <Spinner /> : (
         <div className="space-y-4">
-          {Object.entries(grouped).map(([type, accounts]) => (
+          {typeOrder.filter(t => grouped[t]?.length).map(type => (
             <div key={type} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div className="px-5 py-3 bg-gray-50 border-b border-gray-100 font-semibold text-gray-700 text-sm">
-                {typeLabels[type] ?? type.charAt(0).toUpperCase() + type.slice(1)}
+                {typeLabels[type]}
               </div>
               <table className="w-full text-sm">
                 <thead className="border-b border-gray-50">
                   <tr>
-                    {['Code','Account Name','Balance','System','Active'].map(h => (
+                    {['Code', 'Account Name', 'Parent', 'Balance', 'Status'].map(h => (
                       <th key={h} className="px-4 py-2 text-left text-xs text-gray-400 font-medium">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {accounts.map(a => (
-                    <tr key={a.id} className="hover:bg-gray-50/50">
-                      <td className="px-4 py-2 font-mono text-xs text-indigo-600">{a.code}</td>
-                      <td className="px-4 py-2 text-gray-700">{a.name}</td>
-                      <td className="px-4 py-2 text-gray-800 font-medium text-xs">{npr(a.balance)}</td>
-                      <td className="px-4 py-2 text-xs">{a.is_system ? <span className="text-gray-400">System</span> : ''}</td>
-                      <td className="px-4 py-2 text-xs">
-                        {a.is_active
-                          ? <span className="text-green-600 font-medium">Active</span>
-                          : <span className="text-gray-400">Inactive</span>
-                        }
-                      </td>
-                    </tr>
-                  ))}
+                  {grouped[type].map(a => {
+                    const depth = getDepth(a)
+                    const indent = depth * 20
+                    return (
+                      <tr key={a.id} className="hover:bg-gray-50/50">
+                        <td className="px-4 py-2 font-mono text-xs text-indigo-600" style={{ paddingLeft: `${16 + indent}px` }}>
+                          {depth > 0 && <span className="text-gray-300 mr-1">{'└'.padStart(depth, '│')}</span>}
+                          {a.code}
+                        </td>
+                        <td className="px-4 py-2 text-gray-700" style={{ paddingLeft: `${indent}px` }}>
+                          {a.name}
+                          {a.is_system && <span className="ml-2 text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">system</span>}
+                        </td>
+                        <td className="px-4 py-2 text-xs text-gray-400">
+                          {a.parent ? (allAccounts.find(p => p.id === a.parent)?.code ?? '—') : '—'}
+                        </td>
+                        <td className="px-4 py-2 text-gray-800 font-medium text-xs">{npr(a.balance)}</td>
+                        <td className="px-4 py-2 text-xs">
+                          {a.is_active
+                            ? <span className="text-green-600 font-medium">Active</span>
+                            : <span className="text-gray-400">Inactive</span>}
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
           ))}
-          {!data?.results?.length && <EmptyState message="No accounts. Chart of Accounts is seeded automatically when the accounting module is enabled." />}
+          {!allAccounts.length && <EmptyState message="No accounts. Chart of Accounts is seeded automatically when the accounting module is enabled." />}
         </div>
       )}
     </div>
