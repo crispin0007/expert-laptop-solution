@@ -226,9 +226,9 @@ class BillViewSet(TenantMixin, viewsets.ModelViewSet):
         self._compute_and_save(serializer)
 
     def perform_update(self, serializer):
-        bill = self.get_object()
-        if bill.status != Bill.STATUS_DRAFT:
-            raise Exception('Only draft bills can be edited.')
+        if serializer.instance.status != Bill.STATUS_DRAFT:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError('Only draft bills can be edited.')
         self._compute_and_save(serializer)
 
     @action(detail=True, methods=['post'], url_path='approve')
@@ -246,18 +246,51 @@ class BillViewSet(TenantMixin, viewsets.ModelViewSet):
         bill = self.get_object()
         if bill.status == Bill.STATUS_VOID:
             return Response({'detail': 'Already voided.'}, status=400)
+        # BLOCK: paid bills already have AP-clearing payment journals posted.
+        # Voiding without reversing payments would leave AP debited with no matching credit.
+        if bill.status == Bill.STATUS_PAID:
+            return Response(
+                {'detail': 'Paid bills cannot be voided. Create a debit note or reverse the payment instead.'},
+                status=400,
+            )
         bill.status = Bill.STATUS_VOID
         bill.save(update_fields=['status'])
         return Response(BillSerializer(bill).data)
 
     @action(detail=True, methods=['post'], url_path='mark-paid')
     def mark_paid(self, request, pk=None):
+        """
+        Mark a bill as paid.
+        Creates an outgoing Payment record for the remaining amount so the journal
+        (Dr AP / Cr Cash) is auto-created by the Payment signal.
+        Optional body: { "method": "cash" | "bank_transfer" | ... }
+        """
         bill = self.get_object()
         if bill.status != Bill.STATUS_APPROVED:
             return Response({'detail': 'Only approved bills can be marked as paid.'}, status=400)
-        bill.status = Bill.STATUS_PAID
-        bill.paid_at = timezone.now()
-        bill.save(update_fields=['status', 'paid_at'])
+
+        from .services.payment_service import record_payment
+        amount_due = bill.amount_due
+        if amount_due > Decimal('0'):
+            method = request.data.get('method', Payment.METHOD_CASH)
+            if method not in dict(Payment.METHOD_CHOICES):
+                method = Payment.METHOD_CASH
+            record_payment(
+                tenant=self.tenant,
+                created_by=request.user,
+                payment_type=Payment.TYPE_OUTGOING,
+                method=method,
+                amount=amount_due,
+                date=timezone.localdate(),
+                bill=bill,
+                notes='Marked paid via admin action.',
+            )
+        else:
+            bill.status  = Bill.STATUS_PAID
+            bill.paid_at = timezone.now()
+            bill.save(update_fields=['status', 'paid_at'])
+
+        bill.refresh_from_db()
         return Response(BillSerializer(bill).data)
 
 
@@ -604,6 +637,12 @@ class CoinTransactionViewSet(TenantMixin, viewsets.ModelViewSet):
             staff = User.objects.get(pk=staff_id)
         except User.DoesNotExist:
             return Response({'detail': 'Staff not found.'}, status=404)
+        # Verify the staff member belongs to this tenant
+        from accounts.models import TenantMembership
+        if not TenantMembership.objects.filter(
+            user=staff, tenant=self.tenant, is_active=True
+        ).exists():
+            return Response({'detail': 'Staff member is not part of this workspace.'}, status=403)
         source_type = request.data.get('source_type', CoinTransaction.SOURCE_MANUAL)
         if source_type not in dict(CoinTransaction.SOURCE_TYPES):
             source_type = CoinTransaction.SOURCE_MANUAL
@@ -682,6 +721,12 @@ class PayslipViewSet(TenantMixin, viewsets.ModelViewSet):
             staff = User.objects.get(pk=staff_id)
         except User.DoesNotExist:
             return Response({'detail': 'Staff not found.'}, status=404)
+        # Verify staff belongs to this tenant
+        from accounts.models import TenantMembership
+        if not TenantMembership.objects.filter(
+            user=staff, tenant=self.tenant, is_active=True
+        ).exists():
+            return Response({'detail': 'Staff member is not part of this workspace.'}, status=403)
         try:
             ps = dt.fromisoformat(period_start)
             pe = dt.fromisoformat(period_end)
@@ -744,9 +789,12 @@ class PayslipViewSet(TenantMixin, viewsets.ModelViewSet):
 class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
     """
     POST /invoices/generate/                  create + immediately issue
-    POST /invoices/generate-from-ticket/      build from ticket products
+    POST /invoices/generate-from-ticket/      build draft from ticket (service + products)
+    POST /invoices/{id}/issue/                move draft to issued
     POST /invoices/{id}/mark-paid/            mark paid
     POST /invoices/{id}/void/                 void
+    POST /invoices/{id}/collect-payment/      staff records customer payment on-site
+    POST /invoices/{id}/finance-review/       finance approve or reject submitted invoice
     GET  /invoices/{id}/pdf/                  download PDF
     POST /invoices/{id}/send/                 email PDF to customer
     """
@@ -758,6 +806,9 @@ class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ('list', 'retrieve', 'pdf'):
             return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        # Staff can collect payment on-site and generate invoices from a ticket
+        if self.action in ('collect_payment', 'generate_from_ticket'):
+            return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
     def get_queryset(self):
@@ -767,8 +818,12 @@ class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
         ).prefetch_related('payments').order_by('-created_at')
         if s := self.request.query_params.get('status'):
             qs = qs.filter(status=s)
+        if fs := self.request.query_params.get('finance_status'):
+            qs = qs.filter(finance_status=fs)
         if c := self.request.query_params.get('customer'):
             qs = qs.filter(customer_id=c)
+        if t := self.request.query_params.get('ticket'):
+            qs = qs.filter(ticket_id=t)
         return qs
 
     def _apply_vat_and_totals(self, serializer, *, issue=False):
@@ -829,12 +884,45 @@ class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='mark-paid')
     def mark_paid(self, request, pk=None):
+        """
+        Mark an invoice as paid.
+        If there is an outstanding balance, a Payment record is created for the
+        remaining amount (which triggers the Dr Cash / Cr AR journal entry via signal).
+        Optional body: { "method": "cash" | "bank_transfer" | ... }
+        """
         inv = self.get_object()
-        if inv.status not in (Invoice.STATUS_ISSUED, Invoice.STATUS_DRAFT):
-            return Response({'detail': 'Only draft or issued invoices can be marked as paid.'}, status=400)
-        inv.status = Invoice.STATUS_PAID
-        inv.paid_at = timezone.now()
-        inv.save(update_fields=['status', 'paid_at'])
+        # BLOCK: marking a DRAFT invoice paid skips the issue step entirely.
+        # The issue signal creates Dr AR / Cr Revenue; without it, recording a
+        # Dr Cash / Cr AR payment leaves AR credited with no matching debit — invalid.
+        if inv.status != Invoice.STATUS_ISSUED:
+            return Response(
+                {'detail': 'Only issued invoices can be marked as paid. Issue the invoice first.'},
+                status=400,
+            )
+
+        from .services.payment_service import record_payment
+        amount_due = inv.amount_due
+        if amount_due > Decimal('0'):
+            method = request.data.get('method', Payment.METHOD_CASH)
+            if method not in dict(Payment.METHOD_CHOICES):
+                method = Payment.METHOD_CASH
+            record_payment(
+                tenant=self.tenant,
+                created_by=request.user,
+                payment_type=Payment.TYPE_INCOMING,
+                method=method,
+                amount=amount_due,
+                date=timezone.localdate(),
+                invoice=inv,
+                notes='Marked paid via admin action.',
+            )
+        else:
+            # Already fully covered by earlier payments / credit notes
+            inv.status  = Invoice.STATUS_PAID
+            inv.paid_at = timezone.now()
+            inv.save(update_fields=['status', 'paid_at'])
+
+        inv.refresh_from_db()
         return Response(InvoiceSerializer(inv).data)
 
     @action(detail=True, methods=['post'], url_path='void')
@@ -842,8 +930,86 @@ class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
         inv = self.get_object()
         if inv.status == Invoice.STATUS_VOID:
             return Response({'detail': 'Already voided.'}, status=400)
+        # BLOCK: paid invoices have payment journals (Dr Cash / Cr AR) already posted.
+        # Voiding only reverses the invoice journal (Dr Revenue Cr AR), leaving
+        # the cash journal intact — this would leave the ledger in an impossible state.
+        if inv.status == Invoice.STATUS_PAID:
+            return Response(
+                {'detail': 'Paid invoices cannot be voided. Create a credit note or refund payment instead.'},
+                status=400,
+            )
         inv.status = Invoice.STATUS_VOID
         inv.save(update_fields=['status'])
+        return Response(InvoiceSerializer(inv).data)
+
+    @action(detail=True, methods=['post'], url_path='collect-payment')
+    def collect_payment(self, request, pk=None):
+        """
+        POST /invoices/{id}/collect-payment/
+        Staff records customer payment on-site.
+        Body: { method, amount, bank_account (optional), reference (optional), notes (optional) }
+        """
+        inv = self.get_object()
+        method = request.data.get('method')
+        amount = request.data.get('amount')
+        if not method:
+            return Response({'detail': '"method" is required (cash/bank_transfer/esewa/khalti/cheque).'}, status=400)
+        if not amount:
+            return Response({'detail': '"amount" is required.'}, status=400)
+
+        bank_account_id = request.data.get('bank_account')
+        bank_account = None
+        if bank_account_id:
+            from accounting.models import BankAccount
+            try:
+                bank_account = BankAccount.objects.get(pk=bank_account_id, tenant=self.tenant)
+            except BankAccount.DoesNotExist:
+                return Response({'detail': 'Bank account not found.'}, status=404)
+
+        from accounting.services.ticket_invoice_service import submit_invoice_payment
+        try:
+            submit_invoice_payment(
+                invoice=inv,
+                collected_by=request.user,
+                method=method,
+                amount=amount,
+                bank_account=bank_account,
+                reference=request.data.get('reference', ''),
+                notes=request.data.get('notes', ''),
+            )
+        except ValueError as e:
+            return Response({'detail': str(e)}, status=400)
+        inv.refresh_from_db()
+        return Response(InvoiceSerializer(inv).data)
+
+    @action(detail=True, methods=['post'], url_path='finance-review')
+    def finance_review(self, request, pk=None):
+        """
+        POST /invoices/{id}/finance-review/
+        Finance approves or rejects a submitted invoice.
+        Body: { "action": "approve" | "reject", "notes": "..." }
+        Requires manager or admin role.
+        """
+        inv = self.get_object()
+        action_str = request.data.get('action')
+        notes      = request.data.get('notes', '')
+
+        if action_str not in ('approve', 'reject'):
+            return Response({'detail': '"action" must be "approve" or "reject".'}, status=400)
+
+        from accounting.services.ticket_invoice_service import (
+            finance_approve_invoice,
+            finance_reject_invoice,
+        )
+        try:
+            if action_str == 'approve':
+                finance_approve_invoice(inv, request.user, notes)
+            else:
+                finance_reject_invoice(inv, request.user, notes)
+        except ValueError as e:
+            return Response({'detail': str(e)}, status=400)
+
+        inv.refresh_from_db()
         return Response(InvoiceSerializer(inv).data)
 
     @action(detail=True, methods=['get'], url_path='pdf')
@@ -868,7 +1034,14 @@ class InvoiceViewSet(TenantMixin, viewsets.ModelViewSet):
             from notifications.service import send_invoice_email
             send_invoice_email(inv)
         except Exception as e:
-            return Response({'detail': f'Email failed: {e}'}, status=500)
+            import logging
+            logging.getLogger(__name__).error(
+                "Invoice email failed for invoice %s: %s", inv.pk, e, exc_info=True
+            )
+            return Response(
+                {'detail': 'Failed to send invoice email. Check server logs or contact support.'},
+                status=500,
+            )
         return Response({'detail': 'Invoice sent successfully.'})
 
 
@@ -1239,7 +1412,11 @@ class RecurringJournalViewSet(TenantMixin, viewsets.ModelViewSet):
         rec = self.get_object()
         try:
             entry = run_recurring_journal(rec, triggered_by=request.user)
-        except Exception as e:
+        except ValueError as e:
+            # ValueError = business logic failure (unbalanced entry, bad template, etc.)
+            # Safe to surface as 400. Any other exception is a genuine server error —
+            # let DRF's exception handler convert it to 500 and log it properly.
+            # Returning 400 for all exceptions was masking real crashes as user errors.
             return Response({'detail': str(e)}, status=400)
         from .serializers import JournalEntrySerializer
         return Response(JournalEntrySerializer(entry).data, status=201)

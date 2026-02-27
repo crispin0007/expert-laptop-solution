@@ -235,24 +235,30 @@ class ProjectProductRequestViewSet(TenantMixin, viewsets.ModelViewSet):
     def approve(self, request, project_pk=None, pk=None):
         """POST /projects/{id}/product-requests/{pk}/approve/"""
         from django.utils import timezone
+        from django.db import transaction as _tx
         req = self.get_object()
         if req.status != ProjectProductRequest.STATUS_PENDING:
             return Response({'detail': 'Only pending requests can be approved.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        req.status = ProjectProductRequest.STATUS_APPROVED
-        req.reviewed_by = request.user
-        req.reviewed_at = timezone.now()
-        req.save()
+        # Wrap in atomic: if the ProjectProduct upsert fails after req.save(),
+        # the request must roll back to STATUS_PENDING so it can be retried.
+        # Without this, a failed upsert leaves req forever approved but no
+        # product record is ever created — silent data loss.
+        with _tx.atomic():
+            req.status = ProjectProductRequest.STATUS_APPROVED
+            req.reviewed_by = request.user
+            req.reviewed_at = timezone.now()
+            req.save()
 
-        # Upsert a ProjectProduct entry
-        pp, created = ProjectProduct.objects.get_or_create(
-            project=req.project,
-            product=req.product,
-            defaults={'tenant': req.tenant, 'created_by': request.user, 'quantity_planned': req.quantity},
-        )
-        if not created:
-            pp.quantity_planned += req.quantity
-            pp.save(update_fields=['quantity_planned'])
+            # Upsert a ProjectProduct entry
+            pp, created = ProjectProduct.objects.get_or_create(
+                project=req.project,
+                product=req.product,
+                defaults={'tenant': req.tenant, 'created_by': request.user, 'quantity_planned': req.quantity},
+            )
+            if not created:
+                pp.quantity_planned += req.quantity
+                pp.save(update_fields=['quantity_planned'])
 
         return Response(ProjectProductRequestSerializer(req).data)
 
