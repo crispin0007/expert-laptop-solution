@@ -28,7 +28,7 @@ import {
 
 interface InvoiceItem {
   description?: string; name?: string; qty?: number; quantity?: number
-  unit_price: string; discount?: string; total?: string
+  unit_price: string; discount?: string; total?: string; line_type?: string
 }
 interface Invoice {
   id: number; invoice_number: string; customer: number | null
@@ -633,7 +633,7 @@ function InvoiceEditModal({ inv, onClose }: { inv: Invoice; onClose: () => void 
           qty:         String(l.qty ?? l.quantity ?? 1),
           unit_price:  String(l.unit_price || ''),
           discount:    String(l.discount || '0'),
-          line_type:   ((l as Record<string, unknown>).line_type as 'service' | 'product') || 'service',
+          line_type:   (l.line_type as 'service' | 'product') || 'service',
         }))
       : [emptyLine()]
   )
@@ -1381,7 +1381,7 @@ function PaymentsTab() {
                   <td className="px-4 py-3 text-gray-500 text-xs">{p.bill ?? '—'}</td>
                   <td className="px-4 py-3">
                     {isAdmin(user) && (
-                      <button onClick={() => confirm({ title: 'Delete Payment', message: `Delete payment ${p.payment_number}? The linked journal entry will NOT be auto-reversed — post a manual reversing entry if needed.`, confirmLabel: 'Delete', danger: true }).then(ok => { if (ok) mutateDeletePayment.mutate(p.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
+                      <button onClick={() => confirm({ title: 'Delete Payment', message: `Delete payment ${p.payment_number}? The linked journal entry will NOT be auto-reversed — post a manual reversing entry if needed.`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDeletePayment.mutate(p.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
                     )}
                   </td>
                 </tr>
@@ -2143,7 +2143,7 @@ interface InlineAddState {
 }
 
 function InlineAddRow({
-  state, allAccounts, onSave, onCancel,
+  state, allAccounts: _allAccounts, onSave, onCancel,
 }: {
   state: InlineAddState
   allAccounts: Account[]
@@ -2755,7 +2755,7 @@ function BanksTab() {
                         {isAdmin(user) && (
                           <>
                             <button onClick={() => setEditBank(b)} title="Edit" className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"><Pencil size={13} /></button>
-                            <button onClick={() => confirm({ title: 'Delete Bank Account', message: `Delete "${b.name}"? Linked payments and reconciliations may be affected.`, confirmLabel: 'Delete', danger: true }).then(ok => { if (ok) mutateDeleteBank.mutate(b.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
+                            <button onClick={() => confirm({ title: 'Delete Bank Account', message: `Delete "${b.name}"? Linked payments and reconciliations may be affected.`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDeleteBank.mutate(b.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
                           </>
                         )}
                       </div>
@@ -3258,7 +3258,7 @@ function PayslipsTab() {
                         <button onClick={() => setMarkPaidPayslip(p)} className="px-2 py-1 text-xs bg-green-50 text-green-700 rounded hover:bg-green-100">Mark Paid</button>
                       )}
                       {p.status === 'draft' && isAdmin(user) && (
-                        <button onClick={() => confirm({ title: 'Delete Payslip', message: `Delete payslip for ${p.staff_name}? This cannot be undone.`, confirmLabel: 'Delete', danger: true }).then(ok => { if (ok) mutateDeletePayslip.mutate(p.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
+                        <button onClick={() => confirm({ title: 'Delete Payslip', message: `Delete payslip for ${p.staff_name}? This cannot be undone.`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDeletePayslip.mutate(p.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
                       )}
                     </div>
                   </td>
@@ -3402,7 +3402,7 @@ function PayslipsTab() {
                               title="Edit" className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"><Pencil size={13} />
                             </button>
                             <button
-                              onClick={() => confirm({ title: 'Delete Salary Profile', message: `Delete salary profile for ${sp.staff_name}?`, confirmLabel: 'Delete', danger: true }).then(ok => { if (ok) mutateSalaryDelete.mutate(sp.id) })}
+                              onClick={() => confirm({ title: 'Delete Salary Profile', message: `Delete salary profile for ${sp.staff_name}?`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateSalaryDelete.mutate(sp.id) })}
                               title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} />
                             </button>
                           </div>
@@ -4577,7 +4577,7 @@ function QuotationsTab() {
                             </button>
                           )}
                           {(q.status === 'draft' || q.status === 'declined' || q.status === 'expired') && isAdmin(user) && (
-                            <button onClick={() => confirm({ title: 'Delete Quotation', message: `Delete ${q.quotation_number}?`, confirmLabel: 'Delete', danger: true }).then(ok => { if (ok) mutateDelete.mutate(q.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
+                            <button onClick={() => confirm({ title: 'Delete Quotation', message: `Delete ${q.quotation_number}?`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDelete.mutate(q.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
                           )}
                         </div>
                       </td>
@@ -5076,7 +5076,7 @@ function TDSTab() {
                             </button>
                           )}
                           {t.status === 'pending' && isAdmin(user) && (
-                            <button onClick={() => confirm({ title: 'Delete TDS Entry', message: `Delete TDS entry for ${t.supplier_name}?`, confirmLabel: 'Delete', danger: true }).then(ok => { if (ok) mutateDeleteTds.mutate(t.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={12} /></button>
+                            <button onClick={() => confirm({ title: 'Delete TDS Entry', message: `Delete TDS entry for ${t.supplier_name}?`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDeleteTds.mutate(t.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={12} /></button>
                           )}
                         </div>
                       </td>
@@ -5227,7 +5227,7 @@ function BankReconciliationTab() {
                 </button>
                 {isAdmin(user) && rec.status !== 'reconciled' && (
                   <div className="px-4 pb-3 flex justify-end border-t border-gray-100 pt-2">
-                    <button onClick={() => confirm({ title: 'Delete Reconciliation', message: `Delete reconciliation for ${rec.bank_account_name} (${fmt(rec.statement_date)})? All statement lines will be removed.`, confirmLabel: 'Delete', danger: true }).then(ok => { if (ok) mutateDeleteRec.mutate(rec.id) })} className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600 transition-colors"><Trash2 size={11} /> Delete</button>
+                    <button onClick={() => confirm({ title: 'Delete Reconciliation', message: `Delete reconciliation for ${rec.bank_account_name} (${fmt(rec.statement_date)})? All statement lines will be removed.`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDeleteRec.mutate(rec.id) })} className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600 transition-colors"><Trash2 size={11} /> Delete</button>
                   </div>
                 )}
               </div>
