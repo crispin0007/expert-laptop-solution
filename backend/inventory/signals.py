@@ -18,8 +18,25 @@ logger = logging.getLogger(__name__)
 
 @receiver(post_save, sender='inventory.StockMovement')
 def update_stock_level(sender, instance, **kwargs):
-    """Recompute quantity_on_hand from all movements for this product."""
+    """Recompute quantity_on_hand from all movements for this product.
+
+    IMPORTANT — MOVEMENT_ADJUSTMENT is intentionally excluded from this
+    recompute.  Stock-count adjustments are always applied by
+    StockCount.complete() as an explicit delta:
+
+        StockLevel.update(quantity_on_hand=F('quantity_on_hand') + diff)
+
+    The adjustment quantity is stored as abs(diff) so the signal cannot
+    reconstruct the sign.  If we included ADJUSTMENT here, every subsequent
+    count would re-anchor to the raw IN/OUT total, silently discarding all
+    previous adjustment deltas and corrupting stock on the second and later
+    stock counts.
+    """
     from inventory.models import StockLevel, StockMovement
+
+    # Let StockCount.complete() handle the level update for adjustments.
+    if instance.movement_type == StockMovement.MOVEMENT_ADJUSTMENT:
+        return
 
     IN_TYPES  = (StockMovement.MOVEMENT_IN, StockMovement.MOVEMENT_RETURN)
     OUT_TYPES = (StockMovement.MOVEMENT_OUT, StockMovement.MOVEMENT_RETURN_SUPPLIER)

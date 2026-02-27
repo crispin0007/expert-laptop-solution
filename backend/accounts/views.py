@@ -193,10 +193,7 @@ class TenantTokenRefreshView(TokenRefreshView):
                 old_refresh.blacklist()
             except Exception:
                 pass  # token_blacklist app may not be installed
-            new_refresh = TenantRefreshToken.for_user_and_tenant(
-                request._request.user if hasattr(request, '_request') else request.user,
-                request_tenant,
-            ) if False else _rotate_refresh(old_refresh, request_tenant)
+            new_refresh = _rotate_refresh(old_refresh, request_tenant)
             data['refresh'] = str(new_refresh)
 
         return Response(data)
