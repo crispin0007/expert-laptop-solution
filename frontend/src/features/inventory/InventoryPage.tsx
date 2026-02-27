@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from '../../api/client'
 import { INVENTORY } from '../../api/endpoints'
 import Modal from '../../components/Modal'
+import { useConfirm } from '../../components/ConfirmDialog'
 import toast from 'react-hot-toast'
 import {
   Plus, Pencil, Loader2, PackageX, Package, Tag, BarChart2,
@@ -1762,6 +1763,7 @@ function PurchaseOrdersTab({ products, canManage }: { products: Product[]; canMa
 
 function UoMTab({ canManage }: { canManage: boolean }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const [showAdd, setShowAdd] = useState(false)
   const [editing, setEditing] = useState<UnitOfMeasure | null>(null)
   const [form, setForm] = useState({ name: '', abbreviation: '', unit_type: 'unit' as UnitOfMeasure['unit_type'] })
@@ -1829,7 +1831,7 @@ function UoMTab({ canManage }: { canManage: boolean }) {
                     <td className="px-5 py-3 text-right">
                       <div className="flex gap-2 justify-end">
                         <button onClick={() => openEdit(u)} className="p-1.5 rounded-lg hover:bg-indigo-50 text-indigo-400 hover:text-indigo-600 transition"><Pencil size={13} /></button>
-                        <button onClick={() => { if (confirm('Delete this UoM?')) deleteMut.mutate(u.id) }} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600 transition"><Trash2 size={13} /></button>
+                        <button onClick={() => { confirm({ title: 'Delete UoM', message: 'Delete this UoM?', variant: 'danger', confirmLabel: 'Delete' }).then(ok => { if (ok) deleteMut.mutate(u.id) }) }} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600 transition"><Trash2 size={13} /></button>
                       </div>
                     </td>
                   )}
@@ -1878,6 +1880,7 @@ function UoMTab({ canManage }: { canManage: boolean }) {
 
 function VariantsTab({ products, canManage }: { products: Product[]; canManage: boolean }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const [selectedProduct, setSelectedProduct] = useState<number | ''>('')
   const [showAdd, setShowAdd]   = useState(false)
   const [editing, setEditing]   = useState<ProductVariant | null>(null)
@@ -2046,7 +2049,7 @@ function VariantsTab({ products, canManage }: { products: Product[]; canManage: 
                           className="p-1.5 rounded-lg hover:bg-indigo-50 text-indigo-400 hover:text-indigo-600 transition">
                           <Pencil size={13} />
                         </button>
-                        <button onClick={() => { if (confirm('Delete this variant?')) deleteMut.mutate(v.id) }}
+                        <button onClick={() => { confirm({ title: 'Delete Variant', message: 'Delete this variant?', variant: 'danger', confirmLabel: 'Delete' }).then(ok => { if (ok) deleteMut.mutate(v.id) }) }}
                           className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600 transition">
                           <Trash2 size={13} />
                         </button>
@@ -2176,6 +2179,7 @@ function VariantsTab({ products, canManage }: { products: Product[]; canManage: 
 
 function ReturnsTab({ products, canManage }: { products: Product[]; canManage: boolean }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const [showAdd, setShowAdd] = useState(false)
   const [detail, setDetail]   = useState<ReturnOrder | null>(null)
 
@@ -2309,7 +2313,7 @@ function ReturnsTab({ products, canManage }: { products: Product[]; canManage: b
                           </button>
                         )}
                         {(ro.status === 'draft' || ro.status === 'sent') && (
-                          <button onClick={() => { if (confirm('Cancel this return order?')) actionMut.mutate({ id: ro.id, action: 'cancel' }) }}
+                          <button onClick={() => { confirm({ title: 'Cancel Return Order', message: 'Cancel this return order?', variant: 'warning', confirmLabel: 'Cancel Order' }).then(ok => { if (ok) actionMut.mutate({ id: ro.id, action: 'cancel' }) }) }}
                             className="flex items-center gap-1 px-2 py-1 text-xs bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition">
                             <Ban size={11} /> Cancel
                           </button>

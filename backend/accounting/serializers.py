@@ -5,6 +5,7 @@ from .models import (
     Bill, Payment, CreditNote,
     Quotation, DebitNote, TDSEntry,
     BankReconciliation, BankReconciliationLine, RecurringJournal,
+    StaffSalaryProfile,
 )
 
 
@@ -76,6 +77,17 @@ class JournalEntryWriteSerializer(serializers.ModelSerializer):
         for line in lines_data:
             JournalLine.objects.create(entry=entry, **line)
         return entry
+
+    def update(self, instance, validated_data):
+        lines_data = validated_data.pop('lines', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save(update_fields=list(validated_data.keys()) or ['date', 'description'])
+        if lines_data is not None:
+            instance.lines.all().delete()
+            for line in lines_data:
+                JournalLine.objects.create(entry=instance, **line)
+        return instance
 
 
 # ─── Bank Accounts ───────────────────────────────────────────────────────────
@@ -179,20 +191,49 @@ class CoinTransactionSerializer(serializers.ModelSerializer):
 
 # ─── Payslips ────────────────────────────────────────────────────────────────
 
+class StaffSalaryProfileSerializer(serializers.ModelSerializer):
+    staff_name  = serializers.SerializerMethodField()
+    staff_email = serializers.CharField(source='staff.email', read_only=True, default='')
+
+    def get_staff_name(self, obj):
+        if not obj.staff:
+            return ''
+        return obj.staff.full_name or obj.staff.email or ''
+
+    class Meta:
+        model  = StaffSalaryProfile
+        fields = (
+            'id', 'staff', 'staff_name', 'staff_email',
+            'base_salary', 'tds_rate', 'bonus_default',
+            'effective_from', 'notes', 'created_at', 'updated_at',
+        )
+        read_only_fields = ('created_at', 'updated_at')
+
+
 class PayslipSerializer(serializers.ModelSerializer):
-    staff_name = serializers.CharField(source='staff.full_name', read_only=True, default='')
+    staff_name        = serializers.SerializerMethodField()
+    bank_account_name = serializers.CharField(source='bank_account.name', read_only=True, default='')
+
+    def get_staff_name(self, obj):
+        if not obj.staff:
+            return ''
+        return obj.staff.full_name or obj.staff.email or ''
 
     class Meta:
         model  = Payslip
         fields = (
             'id', 'staff', 'staff_name', 'period_start', 'period_end',
             'total_coins', 'coin_to_money_rate', 'gross_amount',
-            'base_salary', 'bonus', 'deductions', 'net_pay',
-            'status', 'issued_at', 'paid_at', 'created_at',
+            'base_salary', 'bonus', 'tds_amount', 'deductions', 'net_pay',
+            'status', 'issued_at', 'paid_at',
+            'payment_method', 'bank_account', 'bank_account_name',
+            'created_at',
         )
         read_only_fields = (
             'total_coins', 'coin_to_money_rate', 'gross_amount', 'net_pay',
-            'issued_at', 'paid_at', 'created_at',
+            'tds_amount',
+            'issued_at', 'paid_at', 'payment_method', 'bank_account',
+            'bank_account_name', 'created_at',
         )
 
 

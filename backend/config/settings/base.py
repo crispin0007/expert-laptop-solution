@@ -173,6 +173,13 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'core.tasks.task_detect_and_ban_probe_ips',
         'schedule': 300,  # 5 minutes
     },
+    # Auto-generate draft payslips on the 1st of each month at 00:05 UTC.
+    # Iterates all StaffSalaryProfiles and creates a Payslip for the previous
+    # calendar month (idempotent — skips if one already exists).
+    'auto-generate-monthly-payslips': {
+        'task': 'accounting.tasks.task_generate_monthly_payslips',
+        'schedule': crontab(day_of_month=1, hour=0, minute=5),
+    },
 }
 
 AUTH_PASSWORD_VALIDATORS = [

@@ -159,6 +159,10 @@ export const ACCOUNTING = {
   PAYSLIP_ISSUE: (id: number) => `/accounting/payslips/${id}/issue/`,
   PAYSLIP_MARK_PAID: (id: number) => `/accounting/payslips/${id}/mark-paid/`,
 
+  // ── Staff Salary Profiles ─────────────────────────────────────────────────
+  SALARY_PROFILES: '/accounting/salary-profiles/',
+  SALARY_PROFILE_DETAIL: (id: number) => `/accounting/salary-profiles/${id}/`,
+
   // ── Invoices ──────────────────────────────────────────────────────────────
   INVOICES: '/accounting/invoices/',
   INVOICE_DETAIL: (id: number) => `/accounting/invoices/${id}/`,

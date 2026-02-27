@@ -129,6 +129,13 @@ class TenantMixin:
         """True if the current user is owner, admin, or manager for this tenant."""
         return self.user_role in MANAGER_ROLES
 
+    def _is_admin(self):
+        """True if the current request user has owner or admin role in this tenant.
+        Superadmins always return True.
+        Used to gate admin-override logic (e.g. editing non-draft invoices).
+        """
+        return self.user_role in {'owner', 'admin'}
+
 
 # ── Module gate mixin ─────────────────────────────────────────────────────────
 

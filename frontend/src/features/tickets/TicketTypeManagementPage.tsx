@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import apiClient from '../../api/client'
 import { TICKETS } from '../../api/endpoints'
+import { useConfirm } from '../../components/ConfirmDialog'
 
 /** Extract the most useful error message from an Axios error response. */
 function apiErrorMessage(err: unknown, fallback: string): string {
@@ -402,6 +403,7 @@ function SubCategoryRow({ categoryId, sub, onDone, onCancel }: SubRowProps) {
 
 function CategoriesTab() {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [showCatForm, setShowCatForm] = useState(false)
   const [editCat, setEditCat] = useState<TicketCategory | null>(null)
@@ -582,9 +584,12 @@ function CategoriesTab() {
                     </button>
                     <button
                       onClick={() => {
-                        if (window.confirm(`Delete "${cat.name}"? This will also delete all its subcategories.`)) {
-                          deleteCatMutation.mutate(cat.id)
-                        }
+                        confirm({
+                          title: 'Delete Category',
+                          message: `Delete "${cat.name}"? This will also delete all its subcategories.`,
+                          variant: 'danger',
+                          confirmLabel: 'Delete',
+                        }).then(ok => { if (ok) deleteCatMutation.mutate(cat.id) })
                       }}
                       className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded"
                       title="Delete"
@@ -660,6 +665,7 @@ const VEHICLE_INIT = { name: '', plate_number: '', type: 'car', fuel_type: 'petr
 
 function VehiclesTab() {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const [showForm, setShowForm] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
   const [form, setForm] = useState({ ...VEHICLE_INIT })
@@ -889,7 +895,14 @@ function VehiclesTab() {
                   <Pencil size={14} />
                 </button>
                 <button
-                  onClick={() => { if (confirm(`Delete "${v.name}"?`)) deleteMutation.mutate(v.id) }}
+                  onClick={() => {
+                    confirm({
+                      title: 'Delete',
+                      message: `Delete "${v.name}"?`,
+                      variant: 'danger',
+                      confirmLabel: 'Delete',
+                    }).then(ok => { if (ok) deleteMutation.mutate(v.id) })
+                  }}
                   className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500"
                 >
                   <Trash2 size={14} />

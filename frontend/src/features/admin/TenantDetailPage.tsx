@@ -12,6 +12,7 @@ import { TENANTS, MODULES } from '../../api/endpoints'
 import { type Tenant } from './EditTenantModal'
 import EditTenantModal from './EditTenantModal'
 import Modal from '../../components/Modal'
+import { useConfirm } from '../../components/ConfirmDialog'
 
 // ─── Module / override types ────────────────────────────────────────────────
 interface ModuleItem {
@@ -240,6 +241,7 @@ function AddMemberModal({ open, onClose, tenantId }: AddMemberModalProps) {
 export default function TenantDetailPage() {
   const { id } = useParams<{ id: string }>()
   const qc = useQueryClient()
+  const confirm = useConfirm()
 
   const [showEdit, setShowEdit] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
@@ -340,9 +342,12 @@ export default function TenantDetailPage() {
   })
 
   function confirmRemove(m: Member) {
-    if (window.confirm(`Remove ${m.full_name || m.email} from this tenant?`)) {
-      removeMember.mutate(m.id)
-    }
+    confirm({
+      title: 'Remove Member',
+      message: `Remove ${m.full_name || m.email} from this tenant?`,
+      variant: 'danger',
+      confirmLabel: 'Remove',
+    }).then(ok => { if (ok) removeMember.mutate(m.id) })
   }
 
   if (tenantLoading) {

@@ -13,6 +13,7 @@ import apiClient from '../../api/client'
 import { PROJECTS, STAFF, INVENTORY } from '../../api/endpoints'
 import { useAuthStore, isManager } from '../../store/authStore'
 import Modal from '../../components/Modal'
+import { useConfirm } from '../../components/ConfirmDialog'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -525,6 +526,7 @@ export default function ProjectDetailPage() {
   const qc = useQueryClient()
   const user = useAuthStore(s => s.user)
   const canManage = isManager(user)
+  const confirm = useConfirm()
 
   const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban')
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
@@ -1143,7 +1145,10 @@ export default function ProjectDetailPage() {
                             task={task}
                             onDragStart={handleDragStart}
                             onClick={setSelectedTask}
-                            onDelete={canManage ? () => { if (confirm('Delete this task?')) deleteTaskMutation.mutate(task.id) } : undefined}
+                            onDelete={canManage ? () => {
+                              confirm({ title: 'Delete Task', message: 'Delete this task?', variant: 'danger', confirmLabel: 'Delete' })
+                                .then(ok => { if (ok) deleteTaskMutation.mutate(task.id) })
+                            } : undefined}
                             canManage={canManage}
                           />
                         </div>
@@ -1231,7 +1236,7 @@ export default function ProjectDetailPage() {
                           <td className="px-4 py-3">
                             {canManage && (
                               <button
-                                onClick={e => { e.stopPropagation(); if (confirm('Delete task?')) deleteTaskMutation.mutate(task.id) }}
+                                onClick={e => { e.stopPropagation(); confirm({ title: 'Delete Task', message: 'Delete task?', variant: 'danger', confirmLabel: 'Delete' }).then(ok => { if (ok) deleteTaskMutation.mutate(task.id) }) }}
                                 className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition p-1"
                               >
                                 <Trash2 size={13} />
@@ -1395,7 +1400,7 @@ export default function ProjectDetailPage() {
                       </div>
                       {canManage && (
                         <button
-                          onClick={() => { if (confirm('Delete milestone?')) deleteMilestoneMutation.mutate(m.id) }}
+                          onClick={() => { confirm({ title: 'Delete Milestone', message: 'Delete milestone?', variant: 'danger', confirmLabel: 'Delete' }).then(ok => { if (ok) deleteMilestoneMutation.mutate(m.id) }) }}
                           className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition shrink-0"
                         >
                           <Trash2 size={12} />
