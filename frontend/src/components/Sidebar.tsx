@@ -31,12 +31,12 @@ import {
   FileText,
   CreditCard,
   BookOpen,
-  FilePlus,
-  FileCheck,
-  Banknote,
-  RefreshCcw,
-  Calendar,
+  FileQuestion,
+  Percent,
+  ArrowRightLeft,
+  Repeat2,
   BookMarked,
+  CalendarDays,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { useTenantStore } from '../store/tenantStore'
@@ -65,7 +65,7 @@ function NavItem({
         `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
           isActive
             ? 'bg-indigo-600 text-white'
-            : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+            : 'text-gray-600 hover:bg-indigo-50 hover:text-indigo-700'
         } ${collapsed ? 'justify-center' : ''}`
       }
     >
@@ -76,10 +76,10 @@ function NavItem({
 }
 
 function SectionLabel({ label, collapsed }: { label: string; collapsed?: boolean }) {
-  if (collapsed) return <div className="mx-2 my-2 border-t border-gray-700" />
+  if (collapsed) return <div className="mx-2 my-2 border-t border-gray-200" />
   return (
     <div className="pt-4 pb-1 px-3">
-      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{label}</p>
+      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{label}</p>
     </div>
   )
 }
@@ -106,8 +106,8 @@ function SubNavItem({ to, label, icon }: { to: string; label: string; icon?: Rea
       to={to}
       className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${
         isActive
-          ? 'text-indigo-400 bg-indigo-950/60'
-          : 'text-gray-500 hover:text-gray-200 hover:bg-gray-800/70'
+          ? 'text-indigo-600 bg-indigo-50 font-semibold'
+          : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
       }`}
     >
       {icon && <span className="shrink-0 opacity-75">{icon}</span>}
@@ -144,8 +144,8 @@ function NavSubSection({
         onClick={() => setOpen(o => !o)}
         className={`flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-semibold transition-colors ${
           isOnGroup
-            ? 'text-indigo-300 bg-indigo-950/40'
-            : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/50'
+            ? 'text-indigo-600 bg-indigo-50'
+            : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'
         }`}
       >
         <span className="flex items-center gap-1.5">
@@ -159,7 +159,7 @@ function NavSubSection({
       </button>
 
       {open && (
-        <div className="mt-0.5 ml-2 pl-2 border-l border-gray-700/50 space-y-0.5 pb-0.5">
+        <div className="mt-0.5 ml-2 pl-2 border-l border-gray-200 space-y-0.5 pb-0.5">
           {children}
         </div>
       )}
@@ -199,7 +199,7 @@ function NavSection({
           `flex items-center justify-center px-3 py-2.5 rounded-lg transition-colors ${
             isActive
               ? 'bg-indigo-600 text-white'
-              : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+              : 'text-gray-600 hover:bg-indigo-50 hover:text-indigo-700'
           }`
         }
       >
@@ -215,8 +215,8 @@ function NavSection({
         onClick={() => setOpen(o => !o)}
         className={`flex items-center justify-between w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
           isOnBase
-            ? 'text-indigo-300 bg-indigo-900/30'
-            : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+            ? 'text-indigo-700 bg-indigo-50'
+            : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
         }`}
       >
         <span className="flex items-center gap-3">
@@ -231,7 +231,7 @@ function NavSection({
 
       {/* Sub-items */}
       {open && (
-        <div className="mt-0.5 ml-3 pl-3 border-l border-gray-700/70 space-y-0.5 pb-1">
+        <div className="mt-0.5 ml-3 pl-3 border-l border-gray-200 space-y-0.5 pb-1">
           {children}
         </div>
       )}
@@ -271,21 +271,21 @@ function SidebarContent({
   }
 
   return (
-    <aside className="flex flex-col h-full bg-gray-900 text-white w-full overflow-hidden">
+    <aside className="flex flex-col h-full bg-white text-gray-900 w-full overflow-hidden border-r border-gray-200">
 
       {/* Brand + collapse toggle */}
       <div
-        className={`flex items-center border-b border-gray-700 shrink-0 min-h-[60px] ${
+        className={`flex items-center border-b border-gray-200 shrink-0 min-h-[60px] ${
           collapsed ? 'px-3 justify-center' : 'px-4 gap-2'
         }`}
       >
         {!collapsed && (
           <div className="flex-1 min-w-0">
-            <p className="text-indigo-400 font-bold text-lg tracking-tight truncate">
+            <p className="text-indigo-600 font-bold text-lg tracking-tight truncate">
               {tenantName || 'NEXUS BMS'}
             </p>
             {tenantName && (
-              <p className="text-gray-500 text-xs mt-0.5">powered by NEXUS BMS</p>
+              <p className="text-gray-400 text-xs mt-0.5">powered by NEXUS BMS</p>
             )}
           </div>
         )}
@@ -294,7 +294,7 @@ function SidebarContent({
           <button
             onClick={onCollapse}
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="flex items-center justify-center w-7 h-7 rounded-lg text-gray-400 hover:bg-gray-800 hover:text-white transition shrink-0"
+            className="flex items-center justify-center w-7 h-7 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition shrink-0"
           >
             {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
           </button>
@@ -303,7 +303,7 @@ function SidebarContent({
         {isMobile && (
           <button
             onClick={onMobileClose}
-            className="flex items-center justify-center w-7 h-7 rounded-lg text-gray-400 hover:bg-gray-800 hover:text-white transition shrink-0"
+            className="flex items-center justify-center w-7 h-7 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition shrink-0"
           >
             <X size={16} />
           </button>
@@ -348,38 +348,39 @@ function SidebarContent({
               <NavSection label="Accounting" icon={Receipt} basePath="/accounting" collapsed={collapsed}>
                 <SubNavItem to="/accounting" label="Dashboard" icon={<LayoutDashboard size={13} />} />
 
-                <NavSubSection label="Sales" icon={<Receipt size={11} />} matchTabs={['quotations','invoices','credit-notes']}>
-                  <SubNavItem to="/accounting?tab=quotations"   label="Quotations"    icon={<FilePlus  size={13} />} />
-                  <SubNavItem to="/accounting?tab=invoices"     label="Invoices"      icon={<Receipt   size={13} />} />
-                  <SubNavItem to="/accounting?tab=credit-notes" label="Credit Notes"  icon={<RotateCcw size={13} />} />
+                <NavSubSection label="Sales" icon={<Receipt size={11} />} matchTabs={['invoices','credit-notes','finance-review','quotations']}>
+                  <SubNavItem to="/accounting?tab=invoices"      label="Invoices"       icon={<Receipt      size={13} />} />
+                  <SubNavItem to="/accounting?tab=credit-notes"  label="Credit Notes"   icon={<RotateCcw    size={13} />} />
+                  <SubNavItem to="/accounting?tab=finance-review" label="Finance Review" icon={<ShieldCheck  size={13} />} />
+                  <SubNavItem to="/accounting?tab=quotations"    label="Quotations"     icon={<FileQuestion size={13} />} />
                 </NavSubSection>
 
                 <NavSubSection label="Purchases" icon={<ShoppingCart size={11} />} matchTabs={['bills','debit-notes','tds']}>
-                  <SubNavItem to="/accounting?tab=bills"        label="Bills"         icon={<FileText  size={13} />} />
-                  <SubNavItem to="/accounting?tab=debit-notes"  label="Debit Notes"   icon={<FileCheck size={13} />} />
-                  <SubNavItem to="/accounting?tab=tds"          label="TDS"           icon={<Banknote  size={13} />} />
+                  <SubNavItem to="/accounting?tab=bills"        label="Bills"        icon={<FileText size={13} />} />
+                  <SubNavItem to="/accounting?tab=debit-notes"  label="Debit Notes"  icon={<FileText size={13} />} />
+                  <SubNavItem to="/accounting?tab=tds"          label="TDS"          icon={<Percent  size={13} />} />
                 </NavSubSection>
 
                 <NavSubSection label="Banking" icon={<Building2 size={11} />} matchTabs={['payments','banks','bank-reconciliation']}>
-                  <SubNavItem to="/accounting?tab=payments"            label="Payments"            icon={<CreditCard  size={13} />} />
-                  <SubNavItem to="/accounting?tab=banks"               label="Bank Accounts"       icon={<Building2   size={13} />} />
-                  <SubNavItem to="/accounting?tab=bank-reconciliation" label="Reconciliation"      icon={<CheckSquare size={13} />} />
+                  <SubNavItem to="/accounting?tab=payments"           label="Payments"         icon={<CreditCard    size={13} />} />
+                  <SubNavItem to="/accounting?tab=banks"              label="Bank Accounts"    icon={<Building2     size={13} />} />
+                  <SubNavItem to="/accounting?tab=bank-reconciliation" label="Reconciliation"  icon={<ArrowRightLeft size={13} />} />
                 </NavSubSection>
 
-                <NavSubSection label="Ledger" icon={<BookOpen size={11} />} matchTabs={['journals','recurring-journals','accounts']}>
-                  <SubNavItem to="/accounting?tab=journals"           label="Journal Entries"    icon={<BookOpen   size={13} />} />
-                  <SubNavItem to="/accounting?tab=recurring-journals" label="Recurring"          icon={<RefreshCcw size={13} />} />
-                  <SubNavItem to="/accounting?tab=accounts"           label="Chart of Accounts"  icon={<Layers     size={13} />} />
+                <NavSubSection label="Ledger" icon={<BookOpen size={11} />} matchTabs={['journals','accounts','recurring-journals','ledger','day-book']}>
+                  <SubNavItem to="/accounting?tab=journals"          label="Journal Entries"    icon={<BookOpen    size={13} />} />
+                  <SubNavItem to="/accounting?tab=accounts"          label="Chart of Accounts"  icon={<Layers      size={13} />} />
+                  <SubNavItem to="/accounting?tab=recurring-journals" label="Recurring Journals" icon={<Repeat2     size={13} />} />
+                  <SubNavItem to="/accounting?tab=ledger"            label="Ledger"             icon={<BookMarked  size={13} />} />
+                  <SubNavItem to="/accounting?tab=day-book"          label="Day Book"           icon={<CalendarDays size={13} />} />
                 </NavSubSection>
 
                 <NavSubSection label="Payroll" icon={<Coins size={11} />} matchTabs={['payslips']}>
                   <SubNavItem to="/accounting?tab=payslips" label="Payslips & Coins" icon={<Coins size={13} />} />
                 </NavSubSection>
 
-                <NavSubSection label="Reports" icon={<BarChart2 size={11} />} matchTabs={['reports','ledger','day-book']}>
-                  <SubNavItem to="/accounting?tab=reports"   label="Financial Reports" icon={<BarChart2   size={13} />} />
-                  <SubNavItem to="/accounting?tab=ledger"    label="Ledger"            icon={<BookMarked  size={13} />} />
-                  <SubNavItem to="/accounting?tab=day-book"  label="Day Book"          icon={<Calendar    size={13} />} />
+                <NavSubSection label="Reports" icon={<BarChart2 size={11} />} matchTabs={['reports']}>
+                  <SubNavItem to="/accounting?tab=reports" label="Financial Reports" icon={<BarChart2 size={13} />} />
                 </NavSubSection>
               </NavSection>
             )}
@@ -434,29 +435,29 @@ function SidebarContent({
 
       {/* User footer */}
       <div
-        className={`border-t border-gray-700 shrink-0 ${
+        className={`border-t border-gray-200 shrink-0 ${
           collapsed ? 'px-2 py-3 flex flex-col items-center gap-2' : 'px-4 py-4'
         }`}
       >
         {!collapsed && (
           <div className="mb-2">
-            <p className="text-xs text-gray-400 truncate">
+            <p className="text-xs text-gray-600 truncate">
               {user?.full_name || user?.email || 'User'}
             </p>
             {roleBadge && (
-              <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-indigo-900 text-indigo-300">
+              <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-indigo-100 text-indigo-600">
                 {roleBadge}
               </span>
             )}
             {isSuperAdmin && (
-              <span className="inline-block mt-0.5 ml-1 text-indigo-400 text-xs">(Super Admin)</span>
+              <span className="inline-block mt-0.5 ml-1 text-indigo-600 text-xs">(Super Admin)</span>
             )}
           </div>
         )}
         <button
           onClick={handleLogout}
           title={collapsed ? 'Sign out' : undefined}
-          className={`flex items-center gap-2 text-sm text-gray-400 hover:text-red-400 transition ${
+          className={`flex items-center gap-2 text-sm text-gray-500 hover:text-red-500 transition ${
             collapsed ? 'justify-center' : ''
           }`}
         >

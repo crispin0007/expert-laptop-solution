@@ -10,60 +10,43 @@ from django.utils import timezone
 def compute_invoice_totals(line_items, discount, vat_rate):
     """
     Return (subtotal, vat_amount, total).
-    line_items: list of dicts with unit_price, qty, discount keys.
+
+    line_items: list of dicts with unit_price, qty, and discount keys.
+      - discount per line is a PERCENTAGE (0–100), e.g. 10 means 10% off.
+    discount: document-level absolute discount deducted from the sum of line totals.
+    vat_rate: e.g. Decimal('0.13') for 13% Nepal VAT.
     """
-    subtotal = sum(
-        Decimal(str(item.get('unit_price', 0))) * int(item.get('qty', 1))
-        - Decimal(str(item.get('discount', 0)))
-        for item in line_items
-    )
-    subtotal = max(subtotal - Decimal(str(discount)), Decimal('0'))
+    try:
+        per_line_sum = sum(
+            Decimal(str(item.get('unit_price', 0)))
+            * Decimal(str(item.get('qty', 1)))
+            * (1 - Decimal(str(item.get('discount', 0))) / 100)
+            for item in line_items
+        )
+    except Exception as exc:
+        raise ValueError(
+            f"Invalid numeric value in line items — unit_price, qty, and discount "
+            f"must all be numbers. Detail: {exc}"
+        ) from exc
+    subtotal   = max(per_line_sum - Decimal(str(discount)), Decimal('0'))
     vat_amount = (subtotal * Decimal(str(vat_rate))).quantize(Decimal('0.01'))
-    total = subtotal + vat_amount
+    total      = subtotal + vat_amount
     return subtotal, vat_amount, total
 
 
 def generate_from_ticket(ticket, tenant, due_date=None, notes='', created_by=None):
     """
-    Auto-build and issue an Invoice from a ticket's products.
+    Auto-build a DRAFT Invoice from a ticket's service charge and/or products.
+    Delegates to ticket_invoice_service.generate_ticket_invoice.
     Returns the created Invoice instance.
     """
-    from tickets.models import TicketProduct
-    from accounting.models import Invoice
-
-    ticket_products = TicketProduct.objects.filter(ticket=ticket).select_related('product')
-    if not ticket_products.exists():
-        raise ValueError("Ticket has no products. Add products first.")
-
-    line_items = [
-        {
-            'description': tp.product.name,
-            'qty': tp.quantity,
-            'unit_price': str(tp.unit_price),
-            'discount': str(tp.discount),
-        }
-        for tp in ticket_products
-    ]
-
-    vat_rate = tenant.vat_rate if tenant.vat_enabled else Decimal('0')
-    subtotal, vat_amount, total = compute_invoice_totals(line_items, Decimal('0'), vat_rate)
-
-    invoice = Invoice.objects.create(
-        tenant=tenant,
-        created_by=created_by,
-        customer=ticket.customer,
-        ticket=ticket,
-        line_items=line_items,
-        subtotal=subtotal,
-        discount=Decimal('0'),
-        vat_rate=vat_rate,
-        vat_amount=vat_amount,
-        total=total,
-        status=Invoice.STATUS_ISSUED,
+    from accounting.services.ticket_invoice_service import generate_ticket_invoice
+    return generate_ticket_invoice(
+        ticket, tenant,
         due_date=due_date,
-        notes=notes or f"Auto-generated from Ticket #{ticket.pk}",
+        notes=notes,
+        created_by=created_by,
     )
-    return invoice
 
 
 def generate_pdf_bytes(invoice):

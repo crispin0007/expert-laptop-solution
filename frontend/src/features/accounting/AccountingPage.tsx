@@ -1,7 +1,9 @@
 /**
  * AccountingPage.tsx — Full multi-tab accounting module UI.
- * Tabs: dashboard | invoices | bills | payments | credit-notes |
- *       journals | accounts | banks | payslips | reports
+ * Tabs: dashboard | invoices | finance-review | bills | payments | credit-notes |
+ *       quotations | debit-notes | tds | journals | accounts | banks |
+ *       bank-reconciliation | recurring-journals | ledger | day-book |
+ *       payslips | reports
  */
 import { useState, useCallback, useRef, Fragment } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -14,7 +16,10 @@ import {
   BookOpen, Layers, Building2, Coins, BarChart2, ArrowLeftRight,
   Loader2, CheckCircle, XCircle, Download, Plus, X,
   ChevronRight, AlertCircle, TrendingUp, TrendingDown, Trash2,
-  FileSpreadsheet, Printer, ShieldCheck, Banknote,
+  FileSpreadsheet, Printer, ShieldCheck,
+  // New icons for extra tabs
+  FileQuestion, Percent, Repeat2, BookMarked, CalendarDays,
+  ArrowRightLeft, ChevronDown, Search, CheckSquare2, Play, Power,
 } from 'lucide-react'
 
 // ─── Shared types ──────────────────────────────────────────────────────────
@@ -83,6 +88,55 @@ interface CoinTx {
   approved_by_name: string | null; created_at: string
 }
 interface Customer { id: number; name: string }
+
+// ── New entity types ──────────────────────────────────────────────────────────
+interface Quotation {
+  id: number; quotation_number: string; customer: number | null; customer_name: string
+  ticket: number | null; project: number | null; line_items: InvoiceItem[]
+  subtotal: string; discount: string; vat_rate: string; vat_amount: string; total: string
+  status: string; valid_until: string | null; notes: string; terms: string
+  sent_at: string | null; accepted_at: string | null
+  converted_invoice: number | null; converted_invoice_number: string
+  created_at: string; updated_at: string
+}
+interface DebitNote {
+  id: number; debit_note_number: string; bill: number; bill_number: string
+  line_items: InvoiceItem[]; subtotal: string; vat_amount: string; total: string
+  reason: string; status: string; issued_at: string | null; created_at: string
+}
+interface TDSEntry {
+  id: number; bill: number | null; bill_number: string
+  supplier_name: string; supplier_pan: string
+  taxable_amount: string; tds_rate: string; tds_amount: string; net_payable: string
+  status: string; period_month: number; period_year: number
+  deposited_at: string | null; deposit_reference: string; created_at: string
+}
+interface BankReconciliationLine {
+  id: number; date: string; description: string; amount: string
+  is_matched: boolean; payment: number | null
+}
+interface BankReconciliation {
+  id: number; bank_account: number; bank_account_name: string
+  statement_date: string; opening_balance: string; closing_balance: string
+  status: string; notes: string; reconciled_at: string | null
+  difference: string; lines: BankReconciliationLine[]; created_at: string
+}
+interface RecurringJournal {
+  id: number; name: string; description: string; frequency: string
+  start_date: string; end_date: string | null; next_date: string
+  is_active: boolean
+  template_lines: Array<{ account_code: string; debit: string; credit: string; description: string }>
+  last_run_at: string | null; created_at: string; updated_at: string
+}
+interface LedgerRow { date: string; entry_number: string; description: string; debit: string; credit: string; balance: string }
+interface LedgerReport {
+  account_code: string; account_name: string; date_from: string; date_to: string
+  opening_balance: string; closing_balance: string; transactions: LedgerRow[]
+}
+interface DayBookLine { account_code: string; account_name: string; description: string; debit: string; credit: string }
+interface DayBookEntry { entry_number: string; description: string; reference_type: string; total_debit: string; total_credit: string; lines: DayBookLine[] }
+interface DayBookReport { date: string; entries: DayBookEntry[]; total_debit: string; total_credit: string }
+
 interface ApiPage<T> { results: T[]; count: number }
 
 /** Normalise a backend response that may be a plain array or a paginated object. */
@@ -181,8 +235,15 @@ const TABS = [
   { key: 'journals',       label: 'Journals',           icon: BookOpen        },
   { key: 'accounts',       label: 'Chart of Accounts',  icon: Layers          },
   { key: 'banks',          label: 'Bank Accounts',      icon: Building2       },
-  { key: 'payslips',       label: 'Payslips & Coins',   icon: Coins           },
-  { key: 'reports',        label: 'Reports',            icon: BarChart2       },
+  { key: 'payslips',           label: 'Payslips & Coins',   icon: Coins           },
+  { key: 'reports',            label: 'Reports',            icon: BarChart2       },
+  { key: 'quotations',         label: 'Quotations',         icon: FileQuestion    },
+  { key: 'debit-notes',        label: 'Debit Notes',        icon: FileText        },
+  { key: 'tds',                label: 'TDS',                icon: Percent         },
+  { key: 'bank-reconciliation',label: 'Reconciliation',     icon: ArrowRightLeft  },
+  { key: 'recurring-journals', label: 'Recurring Journals', icon: Repeat2         },
+  { key: 'ledger',             label: 'Ledger',             icon: BookMarked      },
+  { key: 'day-book',           label: 'Day Book',           icon: CalendarDays    },
 ] as const
 
 // ─── Dashboard Tab ─────────────────────────────────────────────────────────
@@ -267,8 +328,8 @@ function DashboardTab() {
 
 // ─── Invoice Create Modal ──────────────────────────────────────────────────
 
-interface LineItemDraft { description: string; qty: string; unit_price: string; discount: string }
-const emptyLine = (): LineItemDraft => ({ description: '', qty: '1', unit_price: '', discount: '0' })
+interface LineItemDraft { description: string; qty: string; unit_price: string; discount: string; line_type: 'service' | 'product' }
+const emptyLine = (): LineItemDraft => ({ description: '', qty: '1', unit_price: '', discount: '0', line_type: 'service' })
 
 function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
@@ -309,7 +370,7 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
       notes,
       line_items: lines
         .filter(l => l.description && l.unit_price)
-        .map(l => ({ description: l.description, qty: Number(l.qty), unit_price: l.unit_price, discount: l.discount || '0' })),
+        .map(l => ({ description: l.description, qty: Number(l.qty), unit_price: l.unit_price, discount: l.discount || '0', line_type: l.line_type || 'service' })),
     })
   }
 
@@ -349,6 +410,7 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-3 py-2 text-left text-gray-500 font-medium">Description</th>
+                  <th className="px-2 py-2 text-left text-gray-500 font-medium w-24">Type</th>
                   <th className="px-2 py-2 text-right text-gray-500 font-medium w-16">Qty</th>
                   <th className="px-2 py-2 text-right text-gray-500 font-medium w-28">Unit Price</th>
                   <th className="px-2 py-2 text-right text-gray-500 font-medium w-16">Disc%</th>
@@ -361,6 +423,13 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
                     <td className="px-2 py-1.5">
                       <input value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
                         placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" required />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <select value={l.line_type} onChange={e => setLine(i, 'line_type', e.target.value as 'service' | 'product')}
+                        className="w-full border-0 outline-none text-xs bg-transparent">
+                        <option value="service">Service</option>
+                        <option value="product">Product</option>
+                      </select>
                     </td>
                     <td className="px-2 py-1.5">
                       <input type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
@@ -410,6 +479,134 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
   )
 }
 
+// ─── Invoice Detail Modal ─────────────────────────────────────────────────
+
+function InvoiceDetailModal({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
+  const handlePrint = () => window.print()
+  return (
+    <Modal title={`Invoice ${inv.invoice_number}`} onClose={onClose}>
+      <div className="space-y-4 text-sm">
+        {/* Meta row */}
+        <div className="grid grid-cols-2 gap-4 text-xs">
+          <div>
+            <p className="text-gray-400 font-medium uppercase tracking-wide mb-1">Customer</p>
+            <p className="font-semibold text-gray-800">{inv.customer_name || '—'}</p>
+          </div>
+          <div>
+            <p className="text-gray-400 font-medium uppercase tracking-wide mb-1">Status</p>
+            <Badge status={inv.status} />
+          </div>
+          <div>
+            <p className="text-gray-400 font-medium uppercase tracking-wide mb-1">Date</p>
+            <p className="text-gray-700">{fmt(inv.created_at)}</p>
+          </div>
+          <div>
+            <p className="text-gray-400 font-medium uppercase tracking-wide mb-1">Due Date</p>
+            <p className="text-gray-700">{fmt(inv.due_date)}</p>
+          </div>
+          {inv.ticket_number && (
+            <div>
+              <p className="text-gray-400 font-medium uppercase tracking-wide mb-1">Ticket</p>
+              <p className="text-gray-700">{inv.ticket_number}</p>
+            </div>
+          )}
+          {inv.project_name && (
+            <div>
+              <p className="text-gray-400 font-medium uppercase tracking-wide mb-1">Project</p>
+              <p className="text-gray-700">{inv.project_name}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Line items */}
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-gray-50 border-b border-gray-100">
+              <tr>
+                <th className="px-3 py-2 text-left text-gray-500 font-semibold">Description</th>
+                <th className="px-2 py-2 text-right text-gray-500 font-semibold">Type</th>
+                <th className="px-2 py-2 text-right text-gray-500 font-semibold">Qty</th>
+                <th className="px-2 py-2 text-right text-gray-500 font-semibold">Unit Price</th>
+                <th className="px-2 py-2 text-right text-gray-500 font-semibold">Disc%</th>
+                <th className="px-2 py-2 text-right text-gray-500 font-semibold">Line Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {(inv.line_items ?? []).map((item, i) => {
+                const qty = Number(item.qty ?? item.quantity ?? 1)
+                const price = Number(item.unit_price)
+                const disc = Number(item.discount ?? 0)
+                const lineTotal = qty * price * (1 - disc / 100)
+                return (
+                  <tr key={i} className="hover:bg-gray-50">
+                    <td className="px-3 py-2 text-gray-700">{item.description ?? item.name ?? '—'}</td>
+                    <td className="px-2 py-2 text-right text-gray-500 capitalize">{(item as {line_type?: string}).line_type ?? 'service'}</td>
+                    <td className="px-2 py-2 text-right text-gray-700">{qty}</td>
+                    <td className="px-2 py-2 text-right text-gray-700">{npr(price)}</td>
+                    <td className="px-2 py-2 text-right text-gray-500">{disc > 0 ? `${disc}%` : '—'}</td>
+                    <td className="px-2 py-2 text-right font-medium text-gray-800">{npr(lineTotal)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Totals */}
+        <div className="flex justify-end">
+          <div className="w-64 space-y-1 text-xs">
+            <div className="flex justify-between text-gray-600">
+              <span>Subtotal</span><span className="font-medium">{npr(inv.subtotal)}</span>
+            </div>
+            {Number(inv.discount) > 0 && (
+              <div className="flex justify-between text-gray-600">
+                <span>Discount</span><span className="font-medium text-red-600">− {npr(inv.discount)}</span>
+              </div>
+            )}
+            {Number(inv.vat_amount) > 0 && (
+              <div className="flex justify-between text-gray-600">
+                <span>VAT ({Number(inv.vat_rate) * 100}%)</span>
+                <span className="font-medium">{npr(inv.vat_amount)}</span>
+              </div>
+            )}
+            <div className="flex justify-between text-gray-900 font-bold border-t border-gray-200 pt-1">
+              <span>Total</span><span>{npr(inv.total)}</span>
+            </div>
+            {Number(inv.amount_paid) > 0 && (
+              <div className="flex justify-between text-green-700">
+                <span>Paid</span><span>− {npr(inv.amount_paid)}</span>
+              </div>
+            )}
+            {Number(inv.amount_due) > 0 && (
+              <div className="flex justify-between text-red-600 font-semibold">
+                <span>Balance Due</span><span>{npr(inv.amount_due)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Notes */}
+        {inv.notes && (
+          <div className="bg-gray-50 rounded-lg px-3 py-2">
+            <p className="text-xs text-gray-400 font-medium uppercase tracking-wide mb-1">Notes</p>
+            <p className="text-xs text-gray-600 whitespace-pre-line">{inv.notes}</p>
+          </div>
+        )}
+
+        {/* Footer actions */}
+        <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
+          <button onClick={handlePrint}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">
+            <Printer size={14} /> Print
+          </button>
+          <button onClick={onClose}
+            className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">Close</button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 // ─── Invoices Tab ──────────────────────────────────────────────────────────
 
 function InvoicesTab() {
@@ -421,6 +618,14 @@ function InvoicesTab() {
     queryFn: () => apiClient.get(ACCOUNTING.INVOICES + (statusFilter ? `?status=${statusFilter}` : '')).then(r => toPage<Invoice>(r.data)),
   })
 
+  const [detailInvoice, setDetailInvoice] = useState<Invoice | null>(null)
+
+  const mutateIssue = useMutation({
+    mutationFn: (id: number) => apiClient.post(ACCOUNTING.INVOICE_ISSUE(id)),
+    onSuccess: () => { toast.success('Invoice issued — journal entry created'); qc.invalidateQueries({ queryKey: ['invoices'] }) },
+    onError:   (e: { response?: { data?: { detail?: string } } }) =>
+      toast.error(e?.response?.data?.detail ?? 'Failed to issue invoice'),
+  })
   const mutatePaid = useMutation({
     mutationFn: (id: number) => apiClient.post(ACCOUNTING.INVOICE_MARK_PAID(id)),
     onSuccess: () => { toast.success('Invoice marked as paid'); qc.invalidateQueries({ queryKey: ['invoices'] }) },
@@ -447,6 +652,7 @@ function InvoicesTab() {
   return (
     <div className="space-y-4">
       {showCreate && <InvoiceCreateModal onClose={() => setShowCreate(false)} />}
+      {detailInvoice && <InvoiceDetailModal inv={detailInvoice} onClose={() => setDetailInvoice(null)} />}
       <div className="flex items-center justify-between">
         <select
           value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
@@ -468,7 +674,8 @@ function InvoicesTab() {
 
       {isLoading ? <Spinner /> : (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[800px]">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
                 {['Invoice #','Customer','Date','Due','Total','Paid','Balance','Status','Actions'].map(h => (
@@ -479,7 +686,8 @@ function InvoicesTab() {
             <tbody className="divide-y divide-gray-50">
               {data?.results?.map(inv => (
                 <tr key={inv.id} className="hover:bg-gray-50/50 transition-colors">
-                  <td className="px-4 py-3 font-mono text-xs font-medium text-indigo-600">{inv.invoice_number}</td>
+                  <td className="px-4 py-3 font-mono text-xs font-medium text-indigo-600 cursor-pointer hover:underline"
+                    onClick={() => setDetailInvoice(inv)}>{inv.invoice_number}</td>
                   <td className="px-4 py-3 text-gray-700">{inv.customer_name || '—'}</td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{fmt(inv.created_at)}</td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{fmt(inv.due_date)}</td>
@@ -489,9 +697,18 @@ function InvoicesTab() {
                   <td className="px-4 py-3"><Badge status={inv.status} /></td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1">
+                      <button onClick={() => setDetailInvoice(inv)} title="View Detail" className="p-1.5 rounded hover:bg-gray-100 text-gray-500 transition-colors">
+                        <FileText size={14} />
+                      </button>
                       <button onClick={() => downloadPdf(inv)} title="Download PDF" className="p-1.5 rounded hover:bg-indigo-50 text-indigo-500 transition-colors">
                         <Download size={14} />
                       </button>
+                      {inv.status === 'draft' && (
+                        <button onClick={() => { if (confirm('Issue this invoice? This will create a journal entry and send it to the customer.')) mutateIssue.mutate(inv.id) }}
+                          title="Issue Invoice" className="p-1.5 rounded hover:bg-blue-50 text-blue-600 transition-colors">
+                          <Play size={14} />
+                        </button>
+                      )}
                       {inv.status === 'issued' && (
                         <button onClick={() => mutatePaid.mutate(inv.id)} title="Mark Paid" className="p-1.5 rounded hover:bg-green-50 text-green-600 transition-colors">
                           <CheckCircle size={14} />
@@ -508,6 +725,7 @@ function InvoicesTab() {
               ))}
             </tbody>
           </table>
+          </div>
           {!data?.results?.length && <EmptyState message="No invoices found." />}
         </div>
       )}
@@ -675,7 +893,8 @@ function BillsTab() {
 
       {isLoading ? <Spinner /> : (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[720px]">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
                 {['Bill #','Supplier','Date','Due','Total','Balance','Status','Actions'].map(h => (
@@ -710,6 +929,7 @@ function BillsTab() {
               ))}
             </tbody>
           </table>
+          </div>
           {!data?.results?.length && <EmptyState message="No bills found." />}
         </div>
       )}
@@ -733,7 +953,8 @@ function PaymentsTab() {
       </div>
       {isLoading ? <Spinner /> : (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[600px]">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
                 {['Payment #','Date','Type','Method','Amount','Invoice','Bill'].map(h => (
@@ -755,6 +976,7 @@ function PaymentsTab() {
               ))}
             </tbody>
           </table>
+          </div>
           {!data?.results?.length && <EmptyState message="No payments recorded yet." />}
         </div>
       )}
@@ -785,7 +1007,8 @@ function CreditNotesTab() {
     <div>
       {isLoading ? <Spinner /> : (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[560px]">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
                 {['CN #','Invoice','Total','Status','Issued','Actions'].map(h => (
@@ -815,6 +1038,7 @@ function CreditNotesTab() {
               ))}
             </tbody>
           </table>
+          </div>
           {!data?.results?.length && <EmptyState message="No credit notes yet." />}
         </div>
       )}
@@ -2360,6 +2584,930 @@ function FinanceReviewTab() {
   )
 }
 
+// ─── Quotations Tab ──────────────────────────────────────────────────────────
+
+const QUO_STATUS: Record<string, string> = {
+  draft: 'bg-gray-100 text-gray-600', sent: 'bg-blue-100 text-blue-700',
+  accepted: 'bg-emerald-100 text-emerald-700', declined: 'bg-red-100 text-red-600',
+  expired: 'bg-yellow-100 text-yellow-700',
+}
+
+function QuotationsTab() {
+  const qc = useQueryClient()
+  const [statusFilter, setStatusFilter] = useState('')
+
+  const { data, isLoading } = useQuery<ApiPage<Quotation>>({
+    queryKey: ['quotations', statusFilter],
+    queryFn: () => apiClient.get(ACCOUNTING.QUOTATIONS + (statusFilter ? `?status=${statusFilter}` : '')).then(r => toPage<Quotation>(r.data)),
+  })
+
+  const mutateSend    = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.QUOTATION_SEND(id)),    onSuccess: () => { toast.success('Quotation sent'); qc.invalidateQueries({ queryKey: ['quotations'] }) }, onError: () => toast.error('Action failed') })
+  const mutateAccept  = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.QUOTATION_ACCEPT(id)),  onSuccess: () => { toast.success('Quotation accepted'); qc.invalidateQueries({ queryKey: ['quotations'] }) }, onError: () => toast.error('Action failed') })
+  const mutateDecline = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.QUOTATION_DECLINE(id)), onSuccess: () => { toast.success('Quotation declined'); qc.invalidateQueries({ queryKey: ['quotations'] }) }, onError: () => toast.error('Action failed') })
+  const mutateConvert = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.QUOTATION_CONVERT(id)), onSuccess: () => { toast.success('Converted to invoice'); qc.invalidateQueries({ queryKey: ['quotations'] }); qc.invalidateQueries({ queryKey: ['invoices'] }) }, onError: (e: {response?: {data?: {detail?: string}}}) => toast.error(e?.response?.data?.detail ?? 'Convert failed') })
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2">
+          {['', 'draft', 'sent', 'accepted', 'declined', 'expired'].map(s => (
+            <button key={s} onClick={() => setStatusFilter(s)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${statusFilter === s ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-200 text-gray-600 hover:border-indigo-400 hover:text-indigo-600'}`}>
+              {s === '' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
+            </button>
+          ))}
+        </div>
+        <span className="text-sm text-gray-400">{data?.count ?? 0} quotations</span>
+      </div>
+
+      {isLoading ? <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-indigo-400" /></div> : (
+        data?.results?.length === 0 ? (
+          <div className="text-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+            <FileQuestion size={36} className="mx-auto text-gray-300 mb-3" />
+            <p className="text-sm text-gray-500 font-medium">No quotations yet</p>
+            <p className="text-xs text-gray-400 mt-1">Quotations are created from tickets or projects.</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    {['#', 'Customer', 'Total', 'Valid Until', 'Status', 'Converted', 'Actions'].map(h => (
+                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {data?.results?.map(q => (
+                    <tr key={q.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 font-mono font-semibold text-gray-700 whitespace-nowrap">{q.quotation_number}</td>
+                      <td className="px-4 py-3 text-gray-600">{q.customer_name || <span className="text-gray-400">—</span>}</td>
+                      <td className="px-4 py-3 font-semibold text-gray-800 whitespace-nowrap">{npr(q.total)}</td>
+                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{q.valid_until ? fmt(q.valid_until) : '—'}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded-full text-xs font-semibold ${QUO_STATUS[q.status] ?? 'bg-gray-100 text-gray-500'}`}>
+                          {q.status.charAt(0).toUpperCase() + q.status.slice(1)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-500">
+                        {q.converted_invoice_number || <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1 flex-wrap">
+                          {q.status === 'draft' && (
+                            <button onClick={() => mutateSend.mutate(q.id)} className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors whitespace-nowrap">Send</button>
+                          )}
+                          {q.status === 'sent' && (
+                            <>
+                              <button onClick={() => mutateAccept.mutate(q.id)} className="px-2 py-1 text-xs bg-emerald-50 text-emerald-700 rounded-md hover:bg-emerald-100 transition-colors whitespace-nowrap">Accept</button>
+                              <button onClick={() => mutateDecline.mutate(q.id)} className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors whitespace-nowrap">Decline</button>
+                            </>
+                          )}
+                          {q.status === 'accepted' && !q.converted_invoice && (
+                            <button onClick={() => mutateConvert.mutate(q.id)} disabled={mutateConvert.isPending} className="px-2 py-1 text-xs bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition-colors whitespace-nowrap disabled:opacity-50">
+                              {mutateConvert.isPending ? 'Converting…' : 'Convert → Invoice'}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
+// ─── Debit Notes Tab ──────────────────────────────────────────────────────────
+
+const DN_STATUS: Record<string, string> = {
+  draft: 'bg-gray-100 text-gray-600', issued: 'bg-blue-100 text-blue-700',
+  applied: 'bg-emerald-100 text-emerald-700', void: 'bg-red-100 text-red-500',
+}
+
+function DebitNotesTab() {
+  const qc = useQueryClient()
+  const [statusFilter, setStatusFilter] = useState('')
+
+  const { data, isLoading } = useQuery<ApiPage<DebitNote>>({
+    queryKey: ['debit-notes', statusFilter],
+    queryFn: () => apiClient.get(ACCOUNTING.DEBIT_NOTES + (statusFilter ? `?status=${statusFilter}` : '')).then(r => toPage<DebitNote>(r.data)),
+  })
+
+  const mutateIssue = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.DEBIT_NOTE_ISSUE(id)), onSuccess: () => { toast.success('Debit note issued'); qc.invalidateQueries({ queryKey: ['debit-notes'] }) }, onError: (e: {response?: {data?: {detail?: string}}}) => toast.error(e?.response?.data?.detail ?? 'Failed') })
+  const mutateVoid  = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.DEBIT_NOTE_VOID(id)),  onSuccess: () => { toast.success('Debit note voided');  qc.invalidateQueries({ queryKey: ['debit-notes'] }) }, onError: () => toast.error('Failed') })
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2">
+          {['', 'draft', 'issued', 'applied', 'void'].map(s => (
+            <button key={s} onClick={() => setStatusFilter(s)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${statusFilter === s ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-200 text-gray-600 hover:border-indigo-400 hover:text-indigo-600'}`}>
+              {s === '' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
+            </button>
+          ))}
+        </div>
+        <span className="text-sm text-gray-400">{data?.count ?? 0} debit notes</span>
+      </div>
+
+      <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex gap-2 text-sm text-amber-700">
+        <AlertCircle size={16} className="shrink-0 mt-0.5" />
+        <span>Debit notes are raised against approved bills when goods or services are returned to a supplier.</span>
+      </div>
+
+      {isLoading ? <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-indigo-400" /></div> : (
+        data?.results?.length === 0 ? (
+          <div className="text-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+            <Percent size={36} className="mx-auto text-gray-300 mb-3" />
+            <p className="text-sm text-gray-500 font-medium">No debit notes found</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    {['#', 'Bill', 'Total', 'Reason', 'Status', 'Issued', 'Actions'].map(h => (
+                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {data?.results?.map(dn => (
+                    <tr key={dn.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 font-mono font-semibold text-gray-700 whitespace-nowrap">{dn.debit_note_number}</td>
+                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{dn.bill_number}</td>
+                      <td className="px-4 py-3 font-semibold text-gray-800 whitespace-nowrap">{npr(dn.total)}</td>
+                      <td className="px-4 py-3 text-gray-500 max-w-[200px] truncate">{dn.reason || '—'}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded-full text-xs font-semibold ${DN_STATUS[dn.status] ?? 'bg-gray-100 text-gray-500'}`}>
+                          {dn.status.charAt(0).toUpperCase() + dn.status.slice(1)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmt(dn.issued_at)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1">
+                          {dn.status === 'draft' && (
+                            <button onClick={() => mutateIssue.mutate(dn.id)} className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors whitespace-nowrap">Issue</button>
+                          )}
+                          {dn.status !== 'void' && dn.status !== 'applied' && (
+                            <button onClick={() => mutateVoid.mutate(dn.id)} className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors whitespace-nowrap">Void</button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
+// ─── TDS Tab ─────────────────────────────────────────────────────────────────
+
+const NEPALI_MONTHS = ['Baisakh','Jestha','Ashadh','Shrawan','Bhadra','Ashoj','Kartik','Mangsir','Poush','Magh','Falgun','Chaitra']
+
+function TDSTab() {
+  const qc = useQueryClient()
+  const [statusFilter, setStatusFilter] = useState('')
+  const [yearFilter, setYearFilter] = useState('')
+  const thisYear = new Date().getFullYear() + 57
+
+  const { data, isLoading } = useQuery<ApiPage<TDSEntry>>({
+    queryKey: ['tds', statusFilter, yearFilter],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (statusFilter) params.set('status', statusFilter)
+      if (yearFilter)  params.set('year', yearFilter)
+      return apiClient.get(ACCOUNTING.TDS + (params.toString() ? `?${params}` : '')).then(r => toPage<TDSEntry>(r.data))
+    },
+  })
+
+  const { data: summaryData } = useQuery({
+    queryKey: ['tds-summary', yearFilter],
+    queryFn: () => apiClient.get(ACCOUNTING.TDS_SUMMARY + (yearFilter ? `?year=${yearFilter}` : '')).then(r => r.data),
+  })
+
+  const [depRef, setDepRef] = useState<Record<number, string>>({})
+  const mutateDeposit = useMutation({
+    mutationFn: ({ id, ref }: { id: number; ref: string }) => apiClient.post(ACCOUNTING.TDS_MARK_DEPOSITED(id), { deposit_reference: ref }),
+    onSuccess: () => { toast.success('Marked as deposited'); qc.invalidateQueries({ queryKey: ['tds'] }); qc.invalidateQueries({ queryKey: ['tds-summary'] }) },
+    onError: (e: {response?: {data?: {detail?: string}}}) => toast.error(e?.response?.data?.detail ?? 'Failed'),
+  })
+
+  const summary = Array.isArray(summaryData) ? summaryData : []
+  const totalPending   = summary.filter((r: {status: string; total_tds: string}) => r.status === 'pending').reduce((s: number, r: {total_tds: string}) => s + Number(r.total_tds), 0)
+  const totalDeposited = summary.filter((r: {status: string; total_tds: string}) => r.status === 'deposited').reduce((s: number, r: {total_tds: string}) => s + Number(r.total_tds), 0)
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+          <p className="text-xs text-yellow-700 font-semibold uppercase tracking-wide">Pending Deposit to IRD</p>
+          <p className="text-2xl font-bold text-yellow-800 mt-1">{npr(totalPending)}</p>
+        </div>
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+          <p className="text-xs text-emerald-700 font-semibold uppercase tracking-wide">Total Deposited</p>
+          <p className="text-2xl font-bold text-emerald-800 mt-1">{npr(totalDeposited)}</p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          <option value="">All Status</option>
+          <option value="pending">Pending</option>
+          <option value="deposited">Deposited</option>
+        </select>
+        <input type="number" placeholder={`Year (e.g. ${thisYear})`} value={yearFilter} onChange={e => setYearFilter(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-36 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        <span className="text-sm text-gray-400 ml-auto">{data?.count ?? 0} entries</span>
+      </div>
+
+      {isLoading ? <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-indigo-400" /></div> : (
+        data?.results?.length === 0 ? (
+          <div className="text-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+            <Percent size={36} className="mx-auto text-gray-300 mb-3" />
+            <p className="text-sm text-gray-500 font-medium">No TDS entries found</p>
+            <p className="text-xs text-gray-400 mt-1">TDS entries are auto-created when bills with TDS are approved.</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    {['Supplier', 'PAN', 'Taxable', 'Rate', 'TDS', 'Net Payable', 'Period', 'Status', 'Deposit Ref', 'Action'].map(h => (
+                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {data?.results?.map(t => (
+                    <tr key={t.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 font-medium text-gray-700">{t.supplier_name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-500 font-mono text-xs">{t.supplier_pan || '—'}</td>
+                      <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{npr(t.taxable_amount)}</td>
+                      <td className="px-4 py-3 text-gray-600">{(Number(t.tds_rate) * 100).toFixed(1)}%</td>
+                      <td className="px-4 py-3 font-semibold text-red-600 whitespace-nowrap">{npr(t.tds_amount)}</td>
+                      <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{npr(t.net_payable)}</td>
+                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{NEPALI_MONTHS[(t.period_month - 1) % 12]} {t.period_year}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded-full text-xs font-semibold ${t.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                          {t.status === 'pending' ? 'Pending' : 'Deposited'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {t.status === 'deposited' ? (
+                          <span className="text-xs text-gray-500 font-mono">{t.deposit_reference || '—'}</span>
+                        ) : (
+                          <input value={depRef[t.id] ?? ''} onChange={e => setDepRef(p => ({ ...p, [t.id]: e.target.value }))} placeholder="IRD receipt #" className="border border-gray-200 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-indigo-400" />
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {t.status === 'pending' && (
+                          <button onClick={() => mutateDeposit.mutate({ id: t.id, ref: depRef[t.id] ?? '' })} disabled={mutateDeposit.isPending}
+                            className="px-2 py-1 text-xs bg-emerald-50 text-emerald-700 rounded-md hover:bg-emerald-100 transition-colors whitespace-nowrap disabled:opacity-50">
+                            Mark Deposited
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
+// ─── Bank Reconciliation Tab ──────────────────────────────────────────────────
+
+function BankReconciliationTab() {
+  const qc = useQueryClient()
+  const [selected, setSelected] = useState<BankReconciliation | null>(null)
+  const [newLine, setNewLine] = useState({ date: '', description: '', amount: '' })
+  const [showNew, setShowNew] = useState(false)
+  const [newRec, setNewRec] = useState({ bank_account: '', statement_date: '', opening_balance: '', closing_balance: '', notes: '' })
+  const [showCreate, setShowCreate] = useState(false)
+
+  const { data: banks } = useQuery({
+    queryKey: ['bank-accounts'],
+    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS + '?page_size=100').then(r => r.data?.results ?? []),
+  })
+
+  const { data, isLoading } = useQuery<ApiPage<BankReconciliation>>({
+    queryKey: ['bank-reconciliations'],
+    queryFn: () => apiClient.get(ACCOUNTING.BANK_RECONCILIATIONS).then(r => toPage<BankReconciliation>(r.data)),
+  })
+
+  const { data: detail, isLoading: detailLoading } = useQuery<BankReconciliation>({
+    queryKey: ['bank-reconciliation', selected?.id],
+    queryFn: () => apiClient.get(ACCOUNTING.BANK_RECONCILIATION_DETAIL(selected!.id)).then(r => r.data),
+    enabled: !!selected,
+  })
+
+  const mutateCreate = useMutation({
+    mutationFn: (d: typeof newRec) => apiClient.post(ACCOUNTING.BANK_RECONCILIATIONS, d),
+    onSuccess: () => { toast.success('Reconciliation created'); qc.invalidateQueries({ queryKey: ['bank-reconciliations'] }); setShowCreate(false); setNewRec({ bank_account: '', statement_date: '', opening_balance: '', closing_balance: '', notes: '' }) },
+    onError: () => toast.error('Failed to create'),
+  })
+  const mutateAddLine = useMutation({
+    mutationFn: () => apiClient.post(ACCOUNTING.BANK_RECONCILIATION_ADD_LINE(selected!.id), newLine),
+    onSuccess: () => { toast.success('Line added'); qc.invalidateQueries({ queryKey: ['bank-reconciliation', selected?.id] }); setNewLine({ date: '', description: '', amount: '' }); setShowNew(false) },
+    onError: () => toast.error('Failed'),
+  })
+  const mutateMatch = useMutation({
+    mutationFn: (lineId: number) => apiClient.post(ACCOUNTING.BANK_RECONCILIATION_MATCH_LINE(detail!.id), { line_id: lineId }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['bank-reconciliation', selected?.id] }) },
+    onError: () => toast.error('Match failed'),
+  })
+  const mutateUnmatch = useMutation({
+    mutationFn: (lineId: number) => apiClient.post(ACCOUNTING.BANK_RECONCILIATION_UNMATCH_LINE(detail!.id), { line_id: lineId }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['bank-reconciliation', selected?.id] }) },
+    onError: () => toast.error('Unmatch failed'),
+  })
+  const mutateReconcile = useMutation({
+    mutationFn: () => apiClient.post(ACCOUNTING.BANK_RECONCILIATION_RECONCILE(detail!.id)),
+    onSuccess: () => { toast.success('Reconciliation locked ✓'); qc.invalidateQueries({ queryKey: ['bank-reconciliation', selected?.id] }); qc.invalidateQueries({ queryKey: ['bank-reconciliations'] }) },
+    onError: (e: {response?: {data?: {detail?: string}}}) => toast.error(e?.response?.data?.detail ?? 'Failed'),
+  })
+
+  const bankList: Array<{id: number; name: string; bank_name: string}> = Array.isArray(banks) ? banks : []
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-base font-semibold text-gray-800">Bank Reconciliation</h3>
+          <p className="text-xs text-gray-400 mt-0.5">Match system payments to your bank statement lines.</p>
+        </div>
+        <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
+          <Plus size={15} /> New Reconciliation
+        </button>
+      </div>
+
+      {showCreate && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+          <h4 className="text-sm font-semibold text-gray-800 mb-4">Create Reconciliation</h4>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Bank Account</label>
+              <select value={newRec.bank_account} onChange={e => setNewRec(p => ({ ...p, bank_account: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="">Select…</option>
+                {bankList.map(b => <option key={b.id} value={b.id}>{b.name} — {b.bank_name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Statement Date</label>
+              <input type="date" value={newRec.statement_date} onChange={e => setNewRec(p => ({ ...p, statement_date: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Opening Balance</label>
+              <input type="number" step="0.01" value={newRec.opening_balance} onChange={e => setNewRec(p => ({ ...p, opening_balance: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="0.00" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Closing Balance</label>
+              <input type="number" step="0.01" value={newRec.closing_balance} onChange={e => setNewRec(p => ({ ...p, closing_balance: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="0.00" />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+              <textarea rows={2} value={newRec.notes} onChange={e => setNewRec(p => ({ ...p, notes: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+          </div>
+          <div className="flex gap-2 mt-4">
+            <button onClick={() => mutateCreate.mutate(newRec)} disabled={mutateCreate.isPending || !newRec.bank_account || !newRec.statement_date} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50">
+              {mutateCreate.isPending ? 'Creating…' : 'Create'}
+            </button>
+            <button onClick={() => setShowCreate(false)} className="px-4 py-2 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition-colors">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* List */}
+        <div className="space-y-2">
+          {isLoading ? <div className="flex justify-center py-8"><Loader2 size={22} className="animate-spin text-indigo-400" /></div> :
+            data?.results?.length === 0 ? (
+              <div className="text-center py-10 text-gray-400 text-sm">No reconciliations yet</div>
+            ) : data?.results?.map(rec => (
+              <button key={rec.id} onClick={() => setSelected(rec)}
+                className={`w-full text-left p-4 rounded-xl border transition-colors ${selected?.id === rec.id ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-gray-50'}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-800">{rec.bank_account_name}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{fmt(rec.statement_date)}</p>
+                  </div>
+                  <span className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-semibold ${rec.status === 'reconciled' ? 'bg-emerald-100 text-emerald-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                    {rec.status === 'reconciled' ? 'Reconciled' : 'Draft'}
+                  </span>
+                </div>
+                <div className="mt-2 flex gap-4 text-xs text-gray-500">
+                  <span>Open: {npr(rec.opening_balance)}</span>
+                  <span>Close: {npr(rec.closing_balance)}</span>
+                </div>
+              </button>
+            ))
+          }
+        </div>
+
+        {/* Detail pane */}
+        <div className="lg:col-span-2">
+          {!selected ? (
+            <div className="h-full flex flex-col items-center justify-center py-16 text-gray-400">
+              <ArrowRightLeft size={36} className="mb-3 text-gray-300" />
+              <p className="text-sm">Select a reconciliation to view lines</p>
+            </div>
+          ) : detailLoading ? (
+            <div className="flex justify-center py-16"><Loader2 size={24} className="animate-spin text-indigo-400" /></div>
+          ) : detail && (
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="font-semibold text-gray-800">{detail.bank_account_name}</p>
+                  <p className="text-xs text-gray-500">{fmt(detail.statement_date)}</p>
+                </div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className={`px-2 py-1 rounded-full text-xs font-semibold ${Number(detail.difference) === 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                    Difference: {npr(detail.difference)}
+                  </span>
+                  {detail.status === 'draft' && (
+                    <>
+                      <button onClick={() => setShowNew(n => !n)} className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors">
+                        <Plus size={14} /> Add Line
+                      </button>
+                      <button onClick={() => mutateReconcile.mutate()} disabled={Number(detail.difference) !== 0 || mutateReconcile.isPending}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50">
+                        <CheckSquare2 size={14} /> Reconcile
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {showNew && (
+                <div className="px-5 py-4 bg-gray-50 border-b border-gray-100">
+                  <div className="flex flex-wrap gap-3 items-end">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Date</label>
+                      <input type="date" value={newLine.date} onChange={e => setNewLine(p => ({ ...p, date: e.target.value }))} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                    <div className="flex-1 min-w-[160px]">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
+                      <input value={newLine.description} onChange={e => setNewLine(p => ({ ...p, description: e.target.value }))} placeholder="e.g. Customer payment" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Amount</label>
+                      <input type="number" step="0.01" value={newLine.amount} onChange={e => setNewLine(p => ({ ...p, amount: e.target.value }))} placeholder="+ inflow, − outflow" className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-36 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                    <button onClick={() => mutateAddLine.mutate()} disabled={mutateAddLine.isPending || !newLine.date || !newLine.description || !newLine.amount}
+                      className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50">
+                      {mutateAddLine.isPending ? 'Adding…' : 'Add'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-100">
+                    <tr>
+                      {['Date', 'Description', 'Amount', 'Matched', 'Action'].map(h => (
+                        <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {detail.lines.length === 0 ? (
+                      <tr><td colSpan={5} className="text-center py-8 text-gray-400 text-sm">No statement lines yet. Add lines above.</td></tr>
+                    ) : detail.lines.map(line => (
+                      <tr key={line.id} className={`transition-colors ${line.is_matched ? 'bg-emerald-50/40' : 'hover:bg-gray-50'}`}>
+                        <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmt(line.date)}</td>
+                        <td className="px-4 py-3 text-gray-700">{line.description}</td>
+                        <td className={`px-4 py-3 font-semibold whitespace-nowrap ${Number(line.amount) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                          {Number(line.amount) >= 0 ? '+' : ''}{npr(line.amount)}
+                        </td>
+                        <td className="px-4 py-3">
+                          {line.is_matched
+                            ? <span className="flex items-center gap-1 text-emerald-600 text-xs font-medium"><CheckCircle size={13} /> Matched</span>
+                            : <span className="text-gray-400 text-xs">Unmatched</span>}
+                        </td>
+                        <td className="px-4 py-3">
+                          {detail.status === 'draft' && (
+                            line.is_matched
+                              ? <button onClick={() => mutateUnmatch.mutate(line.id)} className="text-xs text-gray-500 hover:text-red-500 transition-colors">Unmatch</button>
+                              : <button onClick={() => mutateMatch.mutate(line.id)} className="text-xs text-indigo-600 hover:text-indigo-800 transition-colors">Match</button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Recurring Journals Tab ───────────────────────────────────────────────────
+
+const FREQ_LABELS: Record<string, string> = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly' }
+
+function RecurringJournalsTab() {
+  const qc = useQueryClient()
+  const [expanded, setExpanded] = useState<number | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [form, setForm] = useState({ name: '', description: '', frequency: 'monthly', start_date: '', end_date: '' })
+  const [templateLines, setTemplateLines] = useState([{ account_code: '', debit: '', credit: '', description: '' }])
+
+  const { data, isLoading } = useQuery<ApiPage<RecurringJournal>>({
+    queryKey: ['recurring-journals'],
+    queryFn: () => apiClient.get(ACCOUNTING.RECURRING_JOURNALS).then(r => toPage<RecurringJournal>(r.data)),
+  })
+
+  const mutateCreate = useMutation({
+    mutationFn: (payload: unknown) => apiClient.post(ACCOUNTING.RECURRING_JOURNALS, payload),
+    onSuccess: () => { toast.success('Recurring journal created'); qc.invalidateQueries({ queryKey: ['recurring-journals'] }); setShowCreate(false) },
+    onError: () => toast.error('Failed to create'),
+  })
+  const mutateRun = useMutation({
+    mutationFn: (id: number) => apiClient.post(ACCOUNTING.RECURRING_JOURNAL_RUN(id)),
+    onSuccess: () => { toast.success('Journal entry created'); qc.invalidateQueries({ queryKey: ['recurring-journals'] }); qc.invalidateQueries({ queryKey: ['journals'] }) },
+    onError: (e: {response?: {data?: {detail?: string}}}) => toast.error(e?.response?.data?.detail ?? 'Run failed'),
+  })
+  const mutateToggle = useMutation({
+    mutationFn: ({ id, active }: { id: number; active: boolean }) => apiClient.patch(ACCOUNTING.RECURRING_JOURNAL_DETAIL(id), { is_active: active }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['recurring-journals'] }) },
+    onError: () => toast.error('Failed'),
+  })
+
+  function addTemplateLine() { setTemplateLines(p => [...p, { account_code: '', debit: '', credit: '', description: '' }]) }
+  function updateTemplateLine(i: number, field: string, value: string) {
+    setTemplateLines(p => p.map((l, idx) => idx === i ? { ...l, [field]: value } : l))
+  }
+  function removeTemplateLine(i: number) { setTemplateLines(p => p.filter((_, idx) => idx !== i)) }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-gray-500">Templates for recurring entries — rent, subscriptions, depreciation, etc.</p>
+        <button onClick={() => setShowCreate(s => !s)} className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
+          <Plus size={15} /> New Template
+        </button>
+      </div>
+
+      {showCreate && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+          <h4 className="text-sm font-semibold text-gray-800">New Recurring Journal</h4>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
+              <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g. Monthly Office Rent" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Frequency</label>
+              <select value={form.frequency} onChange={e => setForm(p => ({ ...p, frequency: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                {Object.entries(FREQ_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Start Date *</label>
+              <input type="date" value={form.start_date} onChange={e => setForm(p => ({ ...p, start_date: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">End Date (optional)</label>
+              <input type="date" value={form.end_date} onChange={e => setForm(p => ({ ...p, end_date: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
+              <input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g. Monthly office rent — payable on 1st of each month" />
+            </div>
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Journal Lines</label>
+              <button onClick={addTemplateLine} className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1"><Plus size={12} /> Add Line</button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-gray-50">
+                  <tr>{['Account Code', 'Description', 'Debit', 'Credit', ''].map(h => <th key={h} className="px-2 py-2 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {templateLines.map((l, i) => (
+                    <tr key={i}>
+                      <td className="px-2 py-1"><input value={l.account_code} onChange={e => updateTemplateLine(i, 'account_code', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="1001" /></td>
+                      <td className="px-2 py-1"><input value={l.description} onChange={e => updateTemplateLine(i, 'description', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-40 focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="Description" /></td>
+                      <td className="px-2 py-1"><input type="number" step="0.01" value={l.debit} onChange={e => updateTemplateLine(i, 'debit', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="0.00" /></td>
+                      <td className="px-2 py-1"><input type="number" step="0.01" value={l.credit} onChange={e => updateTemplateLine(i, 'credit', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="0.00" /></td>
+                      <td className="px-2 py-1">{templateLines.length > 1 && <button onClick={() => removeTemplateLine(i)} className="text-red-400 hover:text-red-600"><X size={13} /></button>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => mutateCreate.mutate({ ...form, template_lines: templateLines, next_date: form.start_date })} disabled={mutateCreate.isPending || !form.name || !form.start_date}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50">
+              {mutateCreate.isPending ? 'Creating…' : 'Create Template'}
+            </button>
+            <button onClick={() => setShowCreate(false)} className="px-4 py-2 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50 transition-colors">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {isLoading ? <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-indigo-400" /></div> : (
+        data?.results?.length === 0 ? (
+          <div className="text-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+            <Repeat2 size={36} className="mx-auto text-gray-300 mb-3" />
+            <p className="text-sm text-gray-500 font-medium">No recurring journals yet</p>
+            <p className="text-xs text-gray-400 mt-1">Create templates for rent, subscriptions, depreciation, etc.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {data?.results?.map(rj => (
+              <div key={rj.id} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="px-5 py-4 flex items-center gap-4 flex-wrap cursor-pointer" onClick={() => setExpanded(e => e === rj.id ? null : rj.id)}>
+                  <div className={`w-2 h-2 rounded-full shrink-0 ${rj.is_active ? 'bg-emerald-500' : 'bg-gray-300'}`} />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-gray-800 text-sm">{rj.name}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {FREQ_LABELS[rj.frequency]} · Next: {fmt(rj.next_date)}
+                      {rj.last_run_at && ` · Last run: ${fmt(rj.last_run_at)}`}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                    <button onClick={() => mutateToggle.mutate({ id: rj.id, active: !rj.is_active })}
+                      className={`flex items-center gap-1 px-2 py-1 text-xs rounded-md transition-colors ${rj.is_active ? 'bg-gray-100 text-gray-600 hover:bg-gray-200' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}>
+                      <Power size={12} /> {rj.is_active ? 'Pause' : 'Activate'}
+                    </button>
+                    {rj.is_active && (
+                      <button onClick={() => mutateRun.mutate(rj.id)} disabled={mutateRun.isPending}
+                        className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition-colors disabled:opacity-50">
+                        <Play size={12} /> Run Now
+                      </button>
+                    )}
+                    <ChevronDown size={16} className={`text-gray-400 transition-transform ${expanded === rj.id ? '' : '-rotate-90'}`} />
+                  </div>
+                </div>
+                {expanded === rj.id && (
+                  <div className="px-5 pb-4 border-t border-gray-100 pt-3">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Template Lines</p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead><tr className="text-gray-500">
+                          <th className="py-1 text-left font-medium">Account</th>
+                          <th className="py-1 text-left font-medium px-2">Description</th>
+                          <th className="py-1 text-right font-medium">Debit</th>
+                          <th className="py-1 text-right font-medium">Credit</th>
+                        </tr></thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {rj.template_lines.map((l, i) => (
+                            <tr key={i}>
+                              <td className="py-1 font-mono text-gray-700">{l.account_code}</td>
+                              <td className="py-1 text-gray-500 px-2">{l.description || '—'}</td>
+                              <td className="py-1 text-right text-gray-700">{Number(l.debit) > 0 ? npr(l.debit) : '—'}</td>
+                              <td className="py-1 text-right text-gray-700">{Number(l.credit) > 0 ? npr(l.credit) : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
+// ─── Ledger Tab ───────────────────────────────────────────────────────────────
+
+function LedgerTab() {
+  const { data: accounts } = useQuery<ApiPage<Account>>({
+    queryKey: ['accounts'],
+    queryFn: () => apiClient.get(ACCOUNTING.ACCOUNTS + '?page_size=500').then(r => toPage<Account>(r.data)),
+  })
+
+  const [accountCode, setAccountCode] = useState('')
+  const [dateFrom, setDateFrom] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10))
+  const [dateTo, setDateTo]     = useState(() => new Date().toISOString().slice(0, 10))
+  const [submitted, setSubmitted] = useState(false)
+
+  const { data: ledger, isLoading, isFetching } = useQuery<LedgerReport>({
+    queryKey: ['ledger', accountCode, dateFrom, dateTo],
+    queryFn: () => apiClient.get(`${ACCOUNTING.REPORT_LEDGER}?account_code=${accountCode}&date_from=${dateFrom}&date_to=${dateTo}`).then(r => r.data),
+    enabled: submitted && !!accountCode,
+  })
+
+  const accList = accounts?.results ?? []
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-end">
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Account</label>
+            <select value={accountCode} onChange={e => { setAccountCode(e.target.value); setSubmitted(false) }}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              <option value="">Select account…</option>
+              {accList.map(a => <option key={a.id} value={a.code}>{a.code} — {a.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
+            <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setSubmitted(false) }} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
+            <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setSubmitted(false) }} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+        </div>
+        <button onClick={() => { if (!accountCode) { toast.error('Select an account'); return } setSubmitted(true) }} disabled={!accountCode || isFetching}
+          className="mt-4 flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50">
+          {(isLoading || isFetching) ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+          Run Ledger
+        </button>
+      </div>
+
+      {submitted && (isLoading || isFetching) && <div className="flex justify-center py-10"><Loader2 size={28} className="animate-spin text-indigo-400" /></div>}
+
+      {ledger && !isLoading && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-start justify-between flex-wrap gap-3">
+            <div>
+              <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">Account Ledger</p>
+              <h2 className="text-base font-bold text-gray-800">{ledger.account_code} — {ledger.account_name}</h2>
+              <p className="text-xs text-gray-500 mt-0.5">{fmt(ledger.date_from)} → {fmt(ledger.date_to)}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-gray-500">Opening: <strong className="text-gray-800">{npr(ledger.opening_balance)}</strong></p>
+              <p className="text-xs text-gray-500">Closing: <strong className="text-gray-800">{npr(ledger.closing_balance)}</strong></p>
+            </div>
+          </div>
+          {ledger.transactions.length === 0 ? (
+            <div className="text-center py-10 text-gray-400 text-sm">No transactions in this period</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-100">
+                  <tr>
+                    {['Date', 'Entry #', 'Description', 'Debit', 'Credit', 'Balance'].map(h => (
+                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {ledger.transactions.map((row, i) => (
+                    <tr key={i} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmt(row.date)}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-gray-600">{row.entry_number}</td>
+                      <td className="px-4 py-3 text-gray-700">{row.description || '—'}</td>
+                      <td className="px-4 py-3 text-emerald-700 font-medium whitespace-nowrap">{Number(row.debit)  > 0 ? npr(row.debit)  : '—'}</td>
+                      <td className="px-4 py-3 text-red-600    font-medium whitespace-nowrap">{Number(row.credit) > 0 ? npr(row.credit) : '—'}</td>
+                      <td className="px-4 py-3 font-semibold text-gray-800 whitespace-nowrap">{npr(row.balance)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Day Book Tab ─────────────────────────────────────────────────────────────
+
+function DayBookTab() {
+  const today = new Date().toISOString().slice(0, 10)
+  const [date, setDate]          = useState(today)
+  const [submitted, setSubmitted] = useState(false)
+  const [expandedEntry, setExpandedEntry] = useState<string | null>(null)
+
+  const { data: dayBook, isLoading, isFetching } = useQuery<DayBookReport>({
+    queryKey: ['day-book', date],
+    queryFn: () => apiClient.get(`${ACCOUNTING.REPORT_DAY_BOOK}?date=${date}`).then(r => r.data),
+    enabled: submitted,
+  })
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
+        <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Date</label>
+            <input type="date" value={date} onChange={e => { setDate(e.target.value); setSubmitted(false) }}
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <button onClick={() => setSubmitted(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
+            {(isLoading || isFetching) ? <Loader2 size={14} className="animate-spin" /> : <CalendarDays size={14} />}
+            Load Day Book
+          </button>
+        </div>
+      </div>
+
+      {submitted && (isLoading || isFetching) && <div className="flex justify-center py-10"><Loader2 size={28} className="animate-spin text-indigo-400" /></div>}
+
+      {dayBook && !isLoading && (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+              <p className="text-xs text-gray-500 font-medium">Date</p>
+              <p className="text-base font-bold text-gray-800 mt-0.5">{fmt(dayBook.date)}</p>
+            </div>
+            <div className="bg-emerald-50 rounded-xl border border-emerald-100 p-4">
+              <p className="text-xs text-emerald-700 font-medium">Total Debit</p>
+              <p className="text-base font-bold text-emerald-800 mt-0.5">{npr(dayBook.total_debit)}</p>
+            </div>
+            <div className="bg-red-50 rounded-xl border border-red-100 p-4">
+              <p className="text-xs text-red-700 font-medium">Total Credit</p>
+              <p className="text-base font-bold text-red-800 mt-0.5">{npr(dayBook.total_credit)}</p>
+            </div>
+          </div>
+
+          {dayBook.entries.length === 0 ? (
+            <div className="text-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+              <CalendarDays size={36} className="mx-auto text-gray-300 mb-3" />
+              <p className="text-sm text-gray-500 font-medium">No journal entries on {fmt(dayBook.date)}</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {dayBook.entries.map(entry => (
+                <div key={entry.entry_number} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                  <button className="w-full px-5 py-4 text-left flex items-center gap-4 hover:bg-gray-50 transition-colors"
+                    onClick={() => setExpandedEntry(e => e === entry.entry_number ? null : entry.entry_number)}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-xs text-gray-500">{entry.entry_number}</span>
+                        {entry.reference_type && (
+                          <span className="bg-indigo-50 text-indigo-600 text-[11px] px-1.5 py-0.5 rounded font-medium">{entry.reference_type}</span>
+                        )}
+                        <span className="text-sm font-medium text-gray-800 truncate">{entry.description || 'No description'}</span>
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right hidden sm:block">
+                      <span className="text-xs text-gray-500">Dr: </span>
+                      <span className="text-xs font-semibold text-emerald-700">{npr(entry.total_debit)}</span>
+                      <span className="text-xs text-gray-400 mx-1">·</span>
+                      <span className="text-xs text-gray-500">Cr: </span>
+                      <span className="text-xs font-semibold text-red-600">{npr(entry.total_credit)}</span>
+                    </div>
+                    <ChevronDown size={15} className={`shrink-0 text-gray-400 transition-transform ${expandedEntry === entry.entry_number ? '' : '-rotate-90'}`} />
+                  </button>
+                  {expandedEntry === entry.entry_number && (
+                    <div className="border-t border-gray-100">
+                      <table className="w-full text-xs">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            {['Account', 'Description', 'Debit', 'Credit'].map(h => (
+                              <th key={h} className="px-4 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {entry.lines.map((l, i) => (
+                            <tr key={i} className="hover:bg-gray-50">
+                              <td className="px-4 py-2 font-mono">{l.account_code} <span className="text-gray-500 font-sans">{l.account_name}</span></td>
+                              <td className="px-4 py-2 text-gray-500">{l.description || '—'}</td>
+                              <td className="px-4 py-2 text-emerald-700 font-medium text-right">{Number(l.debit)  > 0 ? npr(l.debit)  : '—'}</td>
+                              <td className="px-4 py-2 text-red-600    font-medium text-right">{Number(l.credit) > 0 ? npr(l.credit) : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 // ─── Main Page ──────────────────────────────────────────────────────────────
 
 export default function AccountingPage() {
@@ -2378,11 +3526,18 @@ export default function AccountingPage() {
       case 'bills':          return <BillsTab />
       case 'payments':     return <PaymentsTab />
       case 'credit-notes': return <CreditNotesTab />
-      case 'journals':     return <JournalsTab />
-      case 'accounts':     return <AccountsTab />
-      case 'banks':        return <BanksTab />
-      case 'payslips':     return <PayslipsTab />
-      case 'reports':      return <ReportsTab />
+      case 'journals':              return <JournalsTab />
+      case 'accounts':              return <AccountsTab />
+      case 'banks':                 return <BanksTab />
+      case 'payslips':              return <PayslipsTab />
+      case 'reports':               return <ReportsTab />
+      case 'quotations':            return <QuotationsTab />
+      case 'debit-notes':           return <DebitNotesTab />
+      case 'tds':                   return <TDSTab />
+      case 'bank-reconciliation':   return <BankReconciliationTab />
+      case 'recurring-journals':    return <RecurringJournalsTab />
+      case 'ledger':                return <LedgerTab />
+      case 'day-book':              return <DayBookTab />
       default:             return <DashboardTab />
     }
   }
@@ -2395,23 +3550,6 @@ export default function AccountingPage() {
         <div className="max-w-screen-xl mx-auto">
           <h1 className="text-xl font-bold text-gray-900">Accounting</h1>
           <p className="text-sm text-gray-400 mt-0.5">Double-entry bookkeeping · Invoices · Bills · Payments · Reports</p>
-        </div>
-      </div>
-
-      <div className="bg-white border-b border-gray-200 px-6">
-        <div className="max-w-screen-xl mx-auto flex gap-0 overflow-x-auto">
-          {TABS.map(tab => (
-            <button key={tab.key} onClick={() => setTab(tab.key)}
-              className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                activeTab === tab.key
-                  ? 'border-indigo-600 text-indigo-700'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              <tab.icon size={15} />
-              {tab.label}
-            </button>
-          ))}
         </div>
       </div>
 

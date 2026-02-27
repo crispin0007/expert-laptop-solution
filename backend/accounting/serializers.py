@@ -57,6 +57,19 @@ class JournalEntryWriteSerializer(serializers.ModelSerializer):
         model  = JournalEntry
         fields = ('date', 'description', 'lines')
 
+    def validate_lines(self, lines):
+        """Ensure every referenced account belongs to the requesting tenant."""
+        request = self.context.get('request')
+        if request and getattr(request, 'tenant', None):
+            tenant = request.tenant
+            for line in lines:
+                account = line.get('account')
+                if account and getattr(account, 'tenant_id', None) != tenant.pk:
+                    raise serializers.ValidationError(
+                        f"Account '{getattr(account, 'code', account)}' does not belong to this workspace."
+                    )
+        return lines
+
     def create(self, validated_data):
         lines_data   = validated_data.pop('lines')
         entry        = JournalEntry.objects.create(**validated_data)
@@ -185,18 +198,6 @@ class PayslipSerializer(serializers.ModelSerializer):
 
 # ─── Invoices ────────────────────────────────────────────────────────────────
 
-class CoinTransactionSerializer(serializers.ModelSerializer):
-    staff_name = serializers.CharField(source='staff.full_name', read_only=True, default='')
-    approved_by_name = serializers.CharField(source='approved_by.full_name', read_only=True, default='')
-
-    class Meta:
-        model = CoinTransaction
-        fields = (
-            'id', 'staff', 'staff_name', 'amount', 'source_type', 'source_id',
-            'status', 'approved_by', 'approved_by_name', 'note', 'created_at',
-        )
-        read_only_fields = ('status', 'approved_by', 'approved_by_name', 'created_at')
-
 
 class InvoiceSerializer(serializers.ModelSerializer):
     customer_name             = serializers.CharField(source='customer.name',        read_only=True, default='')
@@ -319,6 +320,10 @@ class BankReconciliationLineSerializer(serializers.ModelSerializer):
     class Meta:
         model  = BankReconciliationLine
         fields = ('id', 'date', 'description', 'amount', 'is_matched', 'payment')
+        # payment is set exclusively via the match-line action, which validates
+        # tenant=self.tenant. Making it read-only here prevents cross-tenant
+        # payment linkage through the add-line endpoint.
+        read_only_fields = ('is_matched', 'payment')
 
 
 class BankReconciliationSerializer(serializers.ModelSerializer):

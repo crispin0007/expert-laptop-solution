@@ -120,18 +120,20 @@ class JournalEntry(TenantModel):
       - Payslip paid             (debit Salary Expense, credit Cash/Bank)
     """
 
-    REF_INVOICE     = 'invoice'
-    REF_BILL        = 'bill'
-    REF_PAYMENT     = 'payment'
-    REF_CREDIT_NOTE = 'credit_note'
-    REF_PAYSLIP     = 'payslip'
-    REF_MANUAL      = 'manual'
+    REF_INVOICE      = 'invoice'
+    REF_BILL         = 'bill'
+    REF_PAYMENT      = 'payment'
+    REF_CREDIT_NOTE  = 'credit_note'
+    REF_DEBIT_NOTE   = 'debit_note'
+    REF_PAYSLIP      = 'payslip'
+    REF_MANUAL       = 'manual'
 
     REF_CHOICES = [
         (REF_INVOICE,     'Invoice'),
         (REF_BILL,        'Bill'),
         (REF_PAYMENT,     'Payment'),
         (REF_CREDIT_NOTE, 'Credit Note'),
+        (REF_DEBIT_NOTE,  'Debit Note'),
         (REF_PAYSLIP,     'Payslip'),
         (REF_MANUAL,      'Manual'),
     ]
@@ -286,6 +288,10 @@ class Invoice(TenantModel):
     """
     Issued to a customer for ticket work, project work, or ad-hoc items.
     VAT is never hardcoded — always read from tenant.vat_rate.
+
+    Finance workflow (ticket invoices):
+      draft → submitted → approved → issued/paid
+                         └ rejected → back to staff
     """
 
     STATUS_DRAFT = 'draft'
@@ -298,6 +304,19 @@ class Invoice(TenantModel):
         (STATUS_ISSUED, 'Issued'),
         (STATUS_PAID, 'Paid'),
         (STATUS_VOID, 'Void'),
+    ]
+
+    # Finance approval workflow (used when invoice is generated from a ticket)
+    FINANCE_DRAFT     = 'draft'
+    FINANCE_SUBMITTED = 'submitted'   # Staff collected payment, submitted for review
+    FINANCE_APPROVED  = 'approved'    # Finance approved → ticket closes, coins awarded
+    FINANCE_REJECTED  = 'rejected'    # Finance rejected → staff must correct
+
+    FINANCE_STATUS_CHOICES = [
+        (FINANCE_DRAFT,     'Draft'),
+        (FINANCE_SUBMITTED, 'Submitted for Finance Review'),
+        (FINANCE_APPROVED,  'Finance Approved'),
+        (FINANCE_REJECTED,  'Finance Rejected'),
     ]
 
     invoice_number = models.CharField(max_length=32, blank=True, db_index=True)
@@ -336,6 +355,30 @@ class Invoice(TenantModel):
     bill_address  = models.TextField(blank=True)
     payment_terms = models.PositiveIntegerField(default=30)   # days net
     reference     = models.CharField(max_length=64, blank=True)  # PO ref
+
+    # ── Finance workflow ─────────────────────────────────────────────────────
+    finance_status = models.CharField(
+        max_length=16, choices=FINANCE_STATUS_CHOICES, default=FINANCE_DRAFT,
+        help_text='Approval state for ticket-linked invoices.',
+    )
+    payment_received    = models.BooleanField(default=False)
+    payment_method      = models.CharField(max_length=20, blank=True,
+        help_text='Method used when staff collected payment (cash/bank_transfer/esewa/…)')
+    payment_received_at = models.DateTimeField(null=True, blank=True)
+    payment_received_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='payments_collected_invoices',
+    )
+    finance_reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='finance_reviewed_invoices',
+    )
+    finance_reviewed_at = models.DateTimeField(null=True, blank=True)
+    finance_notes       = models.TextField(blank=True)
 
     @property
     def amount_paid(self):

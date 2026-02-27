@@ -36,28 +36,66 @@ def _make_entry(tenant, created_by, date, description, reference_type, reference
     """
     Create a JournalEntry + JournalLines and immediately post it.
 
+    Wrapped in transaction.atomic so that a DB error on any JournalLine
+    creation (or a balance failure in post()) rolls back the entire entry —
+    preventing partial / unbalanced journal entries from persisting.
+
     lines : list of (account, debit, credit, description)
     """
     from accounting.models import JournalEntry, JournalLine
+    from django.db import transaction
 
-    entry = JournalEntry.objects.create(
-        tenant=tenant,
-        created_by=created_by,
-        date=date,
-        description=description,
-        reference_type=reference_type,
-        reference_id=reference_id,
-    )
-    for account, debit, credit, line_desc in lines:
-        JournalLine.objects.create(
-            entry=entry,
-            account=account,
-            debit=debit,
-            credit=credit,
-            description=line_desc,
+    with transaction.atomic():
+        entry = JournalEntry.objects.create(
+            tenant=tenant,
+            created_by=created_by,
+            date=date,
+            description=description,
+            reference_type=reference_type,
+            reference_id=reference_id,
         )
-    entry.post()   # validates balance, sets is_posted=True
+        for account, debit, credit, line_desc in lines:
+            JournalLine.objects.create(
+                entry=entry,
+                account=account,
+                debit=debit,
+                credit=credit,
+                description=line_desc,
+            )
+        entry.post()   # validates balance, sets is_posted=True
     return entry
+
+
+def _split_revenue(line_items, stored_subtotal):
+    """
+    Split stored_subtotal between service revenue and product revenue
+    proportionally based on line_type in line_items.
+
+    Returns (service_total, product_total) that sum exactly to stored_subtotal.
+    This avoids re-computing totals and guarantees the journal balances.
+    """
+    service_raw = Decimal('0')
+    product_raw = Decimal('0')
+    for item in (line_items or []):
+        qty       = Decimal(str(item.get('qty', 1)))
+        price     = Decimal(str(item.get('unit_price', '0')))
+        pct_disc  = Decimal(str(item.get('discount', '0'))) / Decimal('100')
+        line_net  = max(qty * price * (1 - pct_disc), Decimal('0'))
+        if item.get('line_type') == 'product':
+            product_raw += line_net
+        else:
+            service_raw += line_net
+
+    raw_total = service_raw + product_raw
+    if raw_total == Decimal('0'):
+        # No computable lines; entire stored subtotal goes to service revenue.
+        return stored_subtotal, Decimal('0')
+
+    # Scale proportionally to stored_subtotal (handles doc-level discounts + rounding).
+    ratio         = stored_subtotal / raw_total
+    service_total = (service_raw * ratio).quantize(Decimal('0.01'))
+    product_total = stored_subtotal - service_total   # remainder ensures exact sum
+    return service_total, product_total
 
 
 # ─── Invoice ──────────────────────────────────────────────────────────────────
@@ -65,25 +103,38 @@ def _make_entry(tenant, created_by, date, description, reference_type, reference
 def create_invoice_journal(invoice, created_by=None):
     """
     Invoice issued:
-      Dr  Accounts Receivable   (total)
-      Cr  Service Revenue       (subtotal after discount)
-      Cr  VAT Payable           (vat_amount)
+      Dr  Accounts Receivable 1200  (total)
+      Cr  Service Revenue     4100  (service-line portion of subtotal)
+      Cr  Product Revenue     4200  (product-line portion of subtotal, if any)
+      Cr  VAT Payable         2200  (vat_amount)
+
+    Uses stored invoice.subtotal / invoice.total as ground truth so the entry
+    always balances, regardless of document-level discounts or rounding.
     """
-    tenant = invoice.tenant
-    ar      = _get_account(tenant, '1200')
-    revenue = _get_account(tenant, '4100')
-    vat_pay = _get_account(tenant, '2200')
+    tenant   = invoice.tenant
+    ar       = _get_account(tenant, '1200')
+    svc_rev  = _get_account(tenant, '4100')
+    prod_rev = _get_account(tenant, '4200')
+    vat_pay  = _get_account(tenant, '2200')
+
+    service_total, product_total = _split_revenue(invoice.line_items, invoice.subtotal)
 
     lines = [
-        (ar,      invoice.total,      Decimal('0'),       f"AR – {invoice.invoice_number}"),
-        (revenue, Decimal('0'),       invoice.subtotal,   f"Revenue – {invoice.invoice_number}"),
+        (ar, invoice.total, Decimal('0'), f"AR – {invoice.invoice_number}"),
     ]
+    if service_total:
+        lines.append((svc_rev, Decimal('0'), service_total,
+                      f"Service Revenue – {invoice.invoice_number}"))
+    if product_total:
+        lines.append((prod_rev, Decimal('0'), product_total,
+                      f"Product Revenue – {invoice.invoice_number}"))
     if invoice.vat_amount:
-        lines.append(
-            (vat_pay, Decimal('0'), invoice.vat_amount, f"VAT – {invoice.invoice_number}")
-        )
+        lines.append((vat_pay, Decimal('0'), invoice.vat_amount,
+                      f"VAT – {invoice.invoice_number}"))
+
     return _make_entry(
-        tenant, created_by, invoice.created_at.date() if invoice.created_at else timezone.localdate(),
+        tenant, created_by,
+        invoice.created_at.date() if invoice.created_at else timezone.localdate(),
         f"Invoice {invoice.invoice_number} issued",
         'invoice', invoice.pk, lines,
     )
@@ -91,21 +142,33 @@ def create_invoice_journal(invoice, created_by=None):
 
 def reverse_invoice_journal(invoice, created_by=None):
     """
-    Invoice voided: reverse the original entry (credit AR, debit Revenue/VAT).
+    Invoice voided: exact mirror of create_invoice_journal — each Cr becomes Dr.
+      Dr  Service Revenue  4100  (service portion of subtotal)
+      Dr  Product Revenue  4200  (product portion, if any)
+      Dr  VAT Payable      2200  (vat_amount)
+      Cr  Accounts Receivable 1200 (total)
     """
-    tenant = invoice.tenant
-    ar      = _get_account(tenant, '1200')
-    revenue = _get_account(tenant, '4100')
-    vat_pay = _get_account(tenant, '2200')
+    tenant   = invoice.tenant
+    ar       = _get_account(tenant, '1200')
+    svc_rev  = _get_account(tenant, '4100')
+    prod_rev = _get_account(tenant, '4200')
+    vat_pay  = _get_account(tenant, '2200')
+
+    service_total, product_total = _split_revenue(invoice.line_items, invoice.subtotal)
 
     lines = [
-        (ar,      Decimal('0'),       invoice.total,      f"VOID AR – {invoice.invoice_number}"),
-        (revenue, invoice.subtotal,   Decimal('0'),       f"VOID Revenue – {invoice.invoice_number}"),
+        (ar, Decimal('0'), invoice.total, f"VOID AR – {invoice.invoice_number}"),
     ]
+    if service_total:
+        lines.append((svc_rev, service_total, Decimal('0'),
+                      f"VOID Service Revenue – {invoice.invoice_number}"))
+    if product_total:
+        lines.append((prod_rev, product_total, Decimal('0'),
+                      f"VOID Product Revenue – {invoice.invoice_number}"))
     if invoice.vat_amount:
-        lines.append(
-            (vat_pay, invoice.vat_amount, Decimal('0'), f"VOID VAT – {invoice.invoice_number}")
-        )
+        lines.append((vat_pay, invoice.vat_amount, Decimal('0'),
+                      f"VOID VAT – {invoice.invoice_number}"))
+
     return _make_entry(
         tenant, created_by, timezone.localdate(),
         f"Invoice {invoice.invoice_number} voided (reversal)",
@@ -191,24 +254,35 @@ def create_payment_journal(payment, created_by=None):
 
 def create_credit_note_journal(credit_note, created_by=None):
     """
-    Credit note issued — reversal of revenue + VAT, reduce AR.
-      Dr  Service Revenue  (subtotal)
-      Dr  VAT Payable      (vat_amount)
-      Cr  Accounts Receivable (total)
+    Credit note issued — exact mirror of the relevant Invoice journal lines.
+      Dr  Service Revenue  4100  (service portion of credit_note.subtotal)
+      Dr  Product Revenue  4200  (product portion, if any)
+      Dr  VAT Payable      2200  (vat_amount  — reduces what we collected)
+      Cr  Accounts Receivable 1200 (total      — customer owes us less)
     """
-    tenant  = credit_note.tenant
-    ar      = _get_account(tenant, '1200')
-    revenue = _get_account(tenant, '4100')
-    vat_pay = _get_account(tenant, '2200')
+    tenant   = credit_note.tenant
+    ar       = _get_account(tenant, '1200')
+    svc_rev  = _get_account(tenant, '4100')
+    prod_rev = _get_account(tenant, '4200')
+    vat_pay  = _get_account(tenant, '2200')
+
+    service_total, product_total = _split_revenue(
+        credit_note.line_items, credit_note.subtotal
+    )
 
     lines = [
-        (revenue, credit_note.subtotal,   Decimal('0'),             f"CN revenue – {credit_note.credit_note_number}"),
-        (ar,      Decimal('0'),           credit_note.total,        f"CN AR – {credit_note.credit_note_number}"),
+        (ar, Decimal('0'), credit_note.total, f"CN AR – {credit_note.credit_note_number}"),
     ]
+    if service_total:
+        lines.append((svc_rev, service_total, Decimal('0'),
+                      f"CN Service Rev – {credit_note.credit_note_number}"))
+    if product_total:
+        lines.append((prod_rev, product_total, Decimal('0'),
+                      f"CN Product Rev – {credit_note.credit_note_number}"))
     if credit_note.vat_amount:
-        lines.append(
-            (vat_pay, credit_note.vat_amount, Decimal('0'), f"CN VAT – {credit_note.credit_note_number}")
-        )
+        lines.append((vat_pay, credit_note.vat_amount, Decimal('0'),
+                      f"CN VAT – {credit_note.credit_note_number}"))
+
     return _make_entry(
         tenant, created_by, timezone.localdate(),
         f"Credit Note {credit_note.credit_note_number} issued",

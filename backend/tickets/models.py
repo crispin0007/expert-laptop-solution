@@ -70,6 +70,20 @@ class TicketType(TenantModel):
     requires_product = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
 
+    # ── Billing configuration per ticket type ───────────────────────────────
+    is_free_service = models.BooleanField(
+        default=False,
+        help_text='When true, no invoice is generated. Coins still awarded at service rate.',
+    )
+    coin_service_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, default=25,
+        help_text='% of service charge value awarded as coins (e.g. 25 = 25%).',
+    )
+    coin_product_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, default=1,
+        help_text='% of product sale value awarded as coins (e.g. 1 = 1%).',
+    )
+
     class Meta:
         ordering = ['name']
         unique_together = ('tenant', 'name')
@@ -188,6 +202,14 @@ class Ticket(TenantModel):
     sla_deadline = models.DateTimeField(null=True, blank=True)
     resolved_at  = models.DateTimeField(null=True, blank=True)
     closed_at    = models.DateTimeField(null=True, blank=True)
+
+    # ── Billing ──────────────────────────────────────────────────────────────
+    # Service charge is the labour/visit fee, separate from product costs.
+    # Product costs come from TicketProduct.unit_price * quantity.
+    service_charge = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        help_text='Service/labour fee for this ticket (separate from product costs).',
+    )
 
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
@@ -358,9 +380,12 @@ class TicketProduct(TenantModel):
         on_delete=models.PROTECT,
         related_name='ticket_usages',
     )
-    quantity = models.PositiveIntegerField(default=1)
+    quantity   = models.PositiveIntegerField(default=1)
     unit_price = models.DecimalField(max_digits=12, decimal_places=2)
-    discount = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    discount   = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0,
+        help_text="Discount percentage (0–100). e.g. 10 = 10% off unit_price.",
+    )
 
     class Meta:
         ordering = ['created_at']

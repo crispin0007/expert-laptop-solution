@@ -7,7 +7,7 @@ import {
   ArrowLeft, Send, UserCheck, ArrowRightLeft, AlertCircle,
   Clock, CheckCircle2, CircleDot, Loader2, Lock, MessageSquare,
   Package, Plus, Trash2, FileText, Coins, Paperclip, Users, X, Download, Phone,
-  Car, MapPin,
+  Car, MapPin, Banknote, CreditCard, CheckCircle, XCircle, ShieldCheck,
 } from 'lucide-react'
 import apiClient from '../../api/client'
 import { TICKETS, ACCOUNTING, INVENTORY, DEPARTMENTS } from '../../api/endpoints'
@@ -103,6 +103,40 @@ interface Product {
   unit_price: string
   is_service: boolean
   is_active: boolean
+}
+
+interface TicketInvoiceLineItem {
+  line_type?: string
+  description?: string
+  qty?: number
+  quantity?: number
+  unit_price: string
+  discount?: string
+  total?: string
+}
+
+interface TicketInvoice {
+  id: number
+  invoice_number: string
+  status: string
+  finance_status: string
+  subtotal: string
+  vat_amount: string
+  total: string
+  amount_paid: string
+  amount_due: string
+  line_items: TicketInvoiceLineItem[]
+  finance_notes: string
+  finance_reviewed_by_name?: string
+  finance_reviewed_at?: string | null
+  created_at: string
+}
+
+interface BankAccountOption {
+  id: number
+  name: string
+  bank_name: string
+  account_number: string
 }
 
 interface Vehicle {
@@ -205,9 +239,9 @@ function AssignModal({
     onError: () => toast.error('Failed to assign ticket'),
   })
 
-  // Team members - via PATCH on the ticket
+  // Team members - via the assign action (same endpoint, correct field name)
   const teamMutation = useMutation({
-    mutationFn: () => apiClient.patch(TICKETS.DETAIL(ticketId), { team_members: teamIds }),
+    mutationFn: () => apiClient.post(TICKETS.ASSIGN(ticketId), { team_member_ids: teamIds }),
     onSuccess: () => { toast.success('Team members updated') },
     onError: () => toast.error('Failed to update team members'),
   })
@@ -355,8 +389,18 @@ function TicketProductsPanel({
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [showDropdown, setShowDropdown] = useState(false)
   const [qty, setQty] = useState(1)
-  const [generatingInvoice, setGeneratingInvoice] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+
+  // Lock panel once an invoice has been generated (shares cache with TicketInvoicePanel)
+  const { data: invoiceListForLock = [] } = useQuery<TicketInvoice[]>({
+    queryKey: ['ticket-invoice', ticketId],
+    queryFn: () =>
+      apiClient
+        .get(ACCOUNTING.INVOICES_BY_TICKET(ticketId))
+        .then(r => (Array.isArray(r.data) ? r.data : (r.data.results ?? []))),
+    enabled: !!ticketId,
+  })
+  const isLocked = invoiceListForLock.length > 0
 
   // Debounce search by 350ms
   useEffect(() => {
@@ -420,22 +464,7 @@ function TicketProductsPanel({
     onError: () => toast.error('Failed to remove product'),
   })
 
-  const generateInvoiceMutation = useMutation({
-    mutationFn: () =>
-      apiClient.post(ACCOUNTING.INVOICE_GENERATE_FROM_TICKET, { ticket: ticketId }),
-    onSuccess: (res) => {
-      const inv = res.data
-      toast.success(`Invoice ${inv.invoice_number || '#' + inv.id} generated!`)
-      setGeneratingInvoice(false)
-      qc.invalidateQueries({ queryKey: ['invoices'] })
-    },
-    onError: (err: any) => {
-      toast.error(err?.response?.data?.detail || 'Failed to generate invoice')
-      setGeneratingInvoice(false)
-    },
-  })
-
-  const isClosed = ['closed', 'cancelled'].includes(ticketStatus)
+  const isClosed = ['closed', 'cancelled'].includes(ticketStatus) || isLocked
 
   const grandTotal = products.reduce((sum, p) => sum + parseFloat(p.line_total || '0'), 0)
 
@@ -445,18 +474,10 @@ function TicketProductsPanel({
         <h2 className="font-semibold text-gray-800 flex items-center gap-2">
           <Package size={16} className="text-amber-500" /> Products &amp; Parts
         </h2>
-        {products.length > 0 && (
-          <button
-            onClick={() => { setGeneratingInvoice(true); generateInvoiceMutation.mutate() }}
-            disabled={generateInvoiceMutation.isPending || generatingInvoice}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition"
-          >
-            {generateInvoiceMutation.isPending
-              ? <Loader2 size={11} className="animate-spin" />
-              : <FileText size={11} />
-            }
-            Generate Invoice
-          </button>
+        {isLocked && (
+          <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg font-medium">
+            Invoice generated — locked
+          </span>
         )}
       </div>
 
@@ -564,6 +585,412 @@ function TicketProductsPanel({
           </button>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Ticket Invoice Panel ──────────────────────────────────────────────────────
+
+const PAYMENT_METHODS = [
+  { value: 'cash',          label: 'Cash' },
+  { value: 'bank_transfer', label: 'Bank Transfer' },
+  { value: 'cheque',        label: 'Cheque' },
+  { value: 'esewa',         label: 'eSewa' },
+  { value: 'khalti',        label: 'Khalti' },
+]
+
+const FINANCE_STATUS_CFG: Record<string, { label: string; cls: string }> = {
+  draft:     { label: 'Pending Payment',    cls: 'bg-gray-100 text-gray-600'    },
+  submitted: { label: 'Finance Review',     cls: 'bg-yellow-100 text-yellow-700' },
+  approved:  { label: 'Finance Approved',   cls: 'bg-emerald-100 text-emerald-700' },
+  rejected:  { label: 'Finance Rejected',   cls: 'bg-red-100 text-red-600'      },
+}
+
+function TicketInvoicePanel({ ticketId, ticketStatus }: { ticketId: number; ticketStatus: string }) {
+  const qc = useQueryClient()
+  const { isManager } = usePermissions()
+
+  // Payment modal state
+  const [showPayModal, setShowPayModal] = useState(false)
+  const [payMethod, setPayMethod]       = useState('cash')
+  const [payAmount, setPayAmount]       = useState('')
+  const [payBankId, setPayBankId]       = useState<number | ''>('')
+  const [payRef, setPayRef]             = useState('')
+  const [payNotes, setPayNotes]         = useState('')
+
+  // Finance review state
+  const [finNotes, setFinNotes]   = useState('')
+
+  // Generate invoice state
+  const [serviceCharge, setServiceCharge] = useState('')
+  const [genNotes, setGenNotes]           = useState('')
+
+  // Fetch invoice for this ticket
+  const { data: invoiceList = [], isLoading } = useQuery<TicketInvoice[]>({
+    queryKey: ['ticket-invoice', ticketId],
+    queryFn: () =>
+      apiClient
+        .get(ACCOUNTING.INVOICES_BY_TICKET(ticketId))
+        .then(r => (Array.isArray(r.data) ? r.data : (r.data.results ?? []))),
+    enabled: !!ticketId,
+  })
+
+  // Fetch bank accounts for payment method = bank_transfer
+  const { data: bankAccounts = [] } = useQuery<BankAccountOption[]>({
+    queryKey: ['bank-accounts'],
+    queryFn: () =>
+      apiClient
+        .get(ACCOUNTING.BANK_ACCOUNTS)
+        .then(r => (Array.isArray(r.data) ? r.data : (r.data.results ?? []))),
+    enabled: showPayModal && payMethod === 'bank_transfer',
+  })
+
+  const inv = invoiceList[0] ?? null
+
+  // Collect payment mutation
+  const collectPaymentMutation = useMutation({
+    mutationFn: () =>
+      apiClient.post(ACCOUNTING.INVOICE_COLLECT_PAYMENT(inv!.id), {
+        method: payMethod,
+        amount: payAmount,
+        ...(payMethod === 'bank_transfer' && payBankId ? { bank_account: payBankId } : {}),
+        reference: payRef,
+        notes: payNotes,
+      }),
+    onSuccess: () => {
+      toast.success('Payment recorded — invoice submitted for finance review')
+      setShowPayModal(false)
+      setPayAmount(''); setPayRef(''); setPayNotes(''); setPayBankId('')
+      qc.invalidateQueries({ queryKey: ['ticket-invoice', ticketId] })
+    },
+    onError: (err: any) =>
+      toast.error(err?.response?.data?.detail || 'Failed to record payment'),
+  })
+
+  // Finance review mutation — action passed directly (setState is async, can't use state in same click handler)
+  const financeReviewMutation = useMutation({
+    mutationFn: (action: 'approve' | 'reject') =>
+      apiClient.post(ACCOUNTING.INVOICE_FINANCE_REVIEW(inv!.id), {
+        action,
+        notes: finNotes,
+      }),
+    onSuccess: (_data, action) => {
+      toast.success(action === 'approve' ? 'Invoice approved — ticket closed' : 'Invoice rejected')
+      setFinNotes('')
+      qc.invalidateQueries({ queryKey: ['ticket-invoice', ticketId] })
+      qc.invalidateQueries({ queryKey: ['ticket', String(ticketId)] })
+    },
+    onError: (err: any) =>
+      toast.error(err?.response?.data?.detail || 'Finance review failed'),
+  })
+
+  // Generate invoice mutation
+  const generateMutation = useMutation({
+    mutationFn: async () => {
+      // Patch service_charge onto ticket first (backend reads it when building invoice)
+      if (serviceCharge) {
+        await apiClient.patch(`/tickets/${ticketId}/`, { service_charge: serviceCharge })
+      }
+      return apiClient.post(ACCOUNTING.INVOICE_GENERATE_FROM_TICKET, {
+        ticket: ticketId,
+        notes: genNotes || undefined,
+      })
+    },
+    onSuccess: () => {
+      toast.success('Invoice generated')
+      setServiceCharge('')
+      setGenNotes('')
+      qc.invalidateQueries({ queryKey: ['ticket-invoice', ticketId] })
+      qc.invalidateQueries({ queryKey: ['ticket', String(ticketId)] })
+    },
+    onError: (err: any) =>
+      toast.error(err?.response?.data?.detail || 'Failed to generate invoice'),
+  })
+
+  if (isLoading) return null
+
+  // No invoice yet — show generation UI
+  if (!inv) {
+    const canGenerate = ticketStatus !== 'cancelled'
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+        <h2 className="font-semibold text-gray-800 flex items-center gap-2 mb-4">
+          <FileText size={16} className="text-indigo-500" />
+          Invoice &amp; Payment
+        </h2>
+        <p className="text-sm text-gray-500 mb-4">
+          No invoice has been generated for this ticket yet.
+        </p>
+        {canGenerate && (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Service Charge (optional)
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="e.g. 500.00"
+                value={serviceCharge}
+                onChange={e => setServiceCharge(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Notes (optional)
+              </label>
+              <input
+                type="text"
+                placeholder="Invoice notes…"
+                value={genNotes}
+                onChange={e => setGenNotes(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+            </div>
+            <button
+              onClick={() => generateMutation.mutate()}
+              disabled={generateMutation.isPending}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {generateMutation.isPending
+                ? <Loader2 size={14} className="animate-spin" />
+                : <FileText size={14} />}
+              Generate Invoice
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const fsCfg = FINANCE_STATUS_CFG[inv.finance_status] ?? { label: inv.finance_status, cls: 'bg-gray-100 text-gray-600' }
+  const canCollectPayment = inv.status === 'issued' && inv.finance_status === 'draft' && parseFloat(inv.amount_due ?? '0') > 0
+  const canFinanceReview  = isManager && inv.finance_status === 'submitted'
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h2 className="font-semibold text-gray-800 flex items-center gap-2">
+          <FileText size={16} className="text-indigo-500" />
+          Invoice
+          <span className="text-xs font-mono text-gray-500">#{inv.invoice_number}</span>
+        </h2>
+        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${fsCfg.cls}`}>
+          {fsCfg.label}
+        </span>
+      </div>
+
+      {/* Line items */}
+      <div className="divide-y divide-gray-100 text-sm">
+        {inv.line_items.map((li, i) => (
+          <div key={i} className="flex justify-between py-1.5">
+            <span className="text-gray-700">
+              {li.description}
+              {li.line_type && (
+                <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded font-medium
+                  ${li.line_type === 'service' ? 'bg-blue-100 text-blue-600' : 'bg-amber-100 text-amber-600'}`}>
+                  {li.line_type}
+                </span>
+              )}
+            </span>
+            <span className="text-gray-600 font-medium">
+              {li.total ? `Rs. ${parseFloat(li.total).toFixed(2)}` : ''}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Totals */}
+      <div className="border-t border-gray-100 pt-3 space-y-1 text-sm">
+        <div className="flex justify-between text-gray-500">
+          <span>Subtotal</span><span>Rs. {parseFloat(inv.subtotal).toFixed(2)}</span>
+        </div>
+        {parseFloat(inv.vat_amount) > 0 && (
+          <div className="flex justify-between text-gray-500">
+            <span>VAT</span><span>Rs. {parseFloat(inv.vat_amount).toFixed(2)}</span>
+          </div>
+        )}
+        <div className="flex justify-between font-semibold text-gray-800 text-base">
+          <span>Total</span><span>Rs. {parseFloat(inv.total).toFixed(2)}</span>
+        </div>
+        {parseFloat(inv.amount_paid) > 0 && (
+          <div className="flex justify-between text-emerald-600 font-medium">
+            <span>Paid</span><span>Rs. {parseFloat(inv.amount_paid).toFixed(2)}</span>
+          </div>
+        )}
+        {parseFloat(inv.amount_due) > 0 && (
+          <div className="flex justify-between text-red-600 font-medium">
+            <span>Due</span><span>Rs. {parseFloat(inv.amount_due).toFixed(2)}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Finance notes if rejected */}
+      {inv.finance_status === 'rejected' && inv.finance_notes && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+          <strong>Rejected:</strong> {inv.finance_notes}
+        </div>
+      )}
+
+      {/* Collect Payment button */}
+      {canCollectPayment && (
+        <button
+          onClick={() => { setPayAmount(inv.amount_due || inv.total); setShowPayModal(true) }}
+          className="w-full flex items-center justify-center gap-2 py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition"
+        >
+          <Banknote size={15} />
+          Collect Payment &amp; Submit for Finance Review
+        </button>
+      )}
+
+      {/* Finance Review (manager only, submitted invoices) */}
+      {canFinanceReview && (
+        <div className="border border-yellow-200 bg-yellow-50 rounded-xl p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-yellow-800 flex items-center gap-1.5">
+            <ShieldCheck size={14} /> Finance Review Required
+          </h3>
+          <textarea
+            rows={2}
+            value={finNotes}
+            onChange={e => setFinNotes(e.target.value)}
+            placeholder="Notes (required for rejection, optional for approval)…"
+            className="w-full border border-yellow-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 bg-white"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={() => financeReviewMutation.mutate('approve')}
+              disabled={financeReviewMutation.isPending}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 transition"
+            >
+              {financeReviewMutation.isPending
+                ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle size={13} />}
+              Approve
+            </button>
+            <button
+              onClick={() => financeReviewMutation.mutate('reject')}
+              disabled={financeReviewMutation.isPending || !finNotes.trim()}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 disabled:opacity-50 transition"
+            >
+              {financeReviewMutation.isPending
+                ? <Loader2 size={13} className="animate-spin" /> : <XCircle size={13} />}
+              Reject
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Collect Payment Modal */}
+      <Modal open={showPayModal} onClose={() => setShowPayModal(false)} title="Record Customer Payment">
+        <div className="space-y-4 min-w-[340px]">
+          {/* Method */}
+          <div>
+            <label className="block text-xs text-gray-500 mb-1.5 font-medium">Payment Method</label>
+            <div className="grid grid-cols-3 gap-2">
+              {PAYMENT_METHODS.map(m => (
+                <button
+                  key={m.value}
+                  onClick={() => setPayMethod(m.value)}
+                  className={`py-2 rounded-lg text-xs font-medium border transition ${
+                    payMethod === m.value
+                      ? 'bg-indigo-600 border-indigo-600 text-white'
+                      : 'bg-white border-gray-200 text-gray-600 hover:border-indigo-300'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Bank account selector (only for bank_transfer) */}
+          {payMethod === 'bank_transfer' && (
+            <div>
+              <label className="block text-xs text-gray-500 mb-1 font-medium">
+                Bank Account <span className="text-red-400">*</span>
+              </label>
+              <select
+                value={payBankId}
+                onChange={e => setPayBankId(e.target.value ? Number(e.target.value) : '')}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">— Select bank account —</option>
+                {bankAccounts.map(b => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} · {b.bank_name} ({b.account_number})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Amount */}
+          <div>
+            <label className="block text-xs text-gray-500 mb-1 font-medium">
+              Amount (Rs.) <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={payAmount}
+              onChange={e => setPayAmount(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              placeholder="0.00"
+            />
+          </div>
+
+          {/* Reference */}
+          <div>
+            <label className="block text-xs text-gray-500 mb-1 font-medium">Reference / Receipt No.</label>
+            <input
+              type="text"
+              value={payRef}
+              onChange={e => setPayRef(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              placeholder="Optional"
+            />
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="block text-xs text-gray-500 mb-1 font-medium">Notes</label>
+            <textarea
+              rows={2}
+              value={payNotes}
+              onChange={e => setPayNotes(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              placeholder="Optional"
+            />
+          </div>
+
+          {/* Grand total reminder */}
+          <div className="bg-indigo-50 rounded-lg px-4 py-2.5 flex justify-between text-sm font-semibold text-indigo-800">
+            <span>Invoice Total</span>
+            <span>Rs. {parseFloat(inv?.total ?? '0').toFixed(2)}</span>
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={() => setShowPayModal(false)}
+              className="flex-1 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => collectPaymentMutation.mutate()}
+              disabled={!payAmount || collectPaymentMutation.isPending || (payMethod === 'bank_transfer' && !payBankId)}
+              className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition flex items-center justify-center gap-1.5"
+            >
+              {collectPaymentMutation.isPending
+                ? <Loader2 size={13} className="animate-spin" /> : <CreditCard size={13} />}
+              Record &amp; Submit
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
@@ -1224,9 +1651,13 @@ export default function TicketDetailPage() {
   }
 
   async function deleteAttachment(attachId: number) {
-    await apiClient.delete(TICKETS.TICKET_ATTACHMENT_DETAIL(ticketId, attachId))
-    qc.invalidateQueries({ queryKey: ['ticket-attachments', id] })
-    toast.success('Removed')
+    try {
+      await apiClient.delete(TICKETS.TICKET_ATTACHMENT_DETAIL(ticketId, attachId))
+      qc.invalidateQueries({ queryKey: ['ticket-attachments', id] })
+      toast.success('Removed')
+    } catch {
+      toast.error('Failed to remove attachment')
+    }
   }
 
   function refreshAll() {
@@ -1383,6 +1814,9 @@ export default function TicketDetailPage() {
 
           {/* Products & Parts */}
           <TicketProductsPanel ticketId={ticketId} ticketStatus={ticket.status} />
+
+          {/* Invoice & Payment */}
+          <TicketInvoicePanel ticketId={ticketId} ticketStatus={ticket.status} />
 
           {/* Vehicles */}
           <TicketVehicleSection ticket={ticket} ticketId={ticketId} />

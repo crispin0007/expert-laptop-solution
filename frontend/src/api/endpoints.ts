@@ -164,10 +164,52 @@ export const ACCOUNTING = {
   INVOICE_DETAIL: (id: number) => `/accounting/invoices/${id}/`,
   INVOICE_GENERATE: '/accounting/invoices/generate/',
   INVOICE_GENERATE_FROM_TICKET: '/accounting/invoices/generate-from-ticket/',
+  INVOICE_ISSUE: (id: number) => `/accounting/invoices/${id}/issue/`,
   INVOICE_MARK_PAID: (id: number) => `/accounting/invoices/${id}/mark-paid/`,
   INVOICE_VOID: (id: number) => `/accounting/invoices/${id}/void/`,
   INVOICE_PDF: (id: number) => `/accounting/invoices/${id}/pdf/`,
   INVOICE_SEND: (id: number) => `/accounting/invoices/${id}/send/`,
+  INVOICE_COLLECT_PAYMENT: (id: number) => `/accounting/invoices/${id}/collect-payment/`,
+  INVOICE_FINANCE_REVIEW: (id: number) => `/accounting/invoices/${id}/finance-review/`,
+  INVOICES_BY_TICKET: (ticketId: number) => `/accounting/invoices/?ticket=${ticketId}`,
+  INVOICES_PENDING_FINANCE: '/accounting/invoices/?finance_status=submitted',
+
+  // ── Quotations ────────────────────────────────────────────────────────────
+  QUOTATIONS: '/accounting/quotations/',
+  QUOTATION_DETAIL: (id: number) => `/accounting/quotations/${id}/`,
+  QUOTATION_SEND: (id: number) => `/accounting/quotations/${id}/send/`,
+  QUOTATION_ACCEPT: (id: number) => `/accounting/quotations/${id}/accept/`,
+  QUOTATION_DECLINE: (id: number) => `/accounting/quotations/${id}/decline/`,
+  QUOTATION_CONVERT: (id: number) => `/accounting/quotations/${id}/convert/`,
+
+  // ── Debit Notes ───────────────────────────────────────────────────────────
+  DEBIT_NOTES: '/accounting/debit-notes/',
+  DEBIT_NOTE_DETAIL: (id: number) => `/accounting/debit-notes/${id}/`,
+  DEBIT_NOTE_ISSUE: (id: number) => `/accounting/debit-notes/${id}/issue/`,
+  DEBIT_NOTE_VOID: (id: number) => `/accounting/debit-notes/${id}/void/`,
+
+  // ── TDS (Nepal Tax Deducted at Source) ────────────────────────────────────
+  TDS: '/accounting/tds/',
+  TDS_DETAIL: (id: number) => `/accounting/tds/${id}/`,
+  TDS_MARK_DEPOSITED: (id: number) => `/accounting/tds/${id}/mark-deposited/`,
+  TDS_SUMMARY: '/accounting/tds/summary/',
+
+  // ── Bank Reconciliation ───────────────────────────────────────────────────
+  BANK_RECONCILIATIONS: '/accounting/bank-reconciliations/',
+  BANK_RECONCILIATION_DETAIL: (id: number) => `/accounting/bank-reconciliations/${id}/`,
+  BANK_RECONCILIATION_ADD_LINE: (id: number) => `/accounting/bank-reconciliations/${id}/add-line/`,
+  BANK_RECONCILIATION_MATCH_LINE: (id: number) => `/accounting/bank-reconciliations/${id}/match-line/`,
+  BANK_RECONCILIATION_UNMATCH_LINE: (id: number) => `/accounting/bank-reconciliations/${id}/unmatch-line/`,
+  BANK_RECONCILIATION_RECONCILE: (id: number) => `/accounting/bank-reconciliations/${id}/reconcile/`,
+
+  // ── Recurring Journals ────────────────────────────────────────────────────
+  RECURRING_JOURNALS: '/accounting/recurring-journals/',
+  RECURRING_JOURNAL_DETAIL: (id: number) => `/accounting/recurring-journals/${id}/`,
+  RECURRING_JOURNAL_RUN: (id: number) => `/accounting/recurring-journals/${id}/run/`,
+
+  // ── Account Ledger + Day Book (report-style) ──────────────────────────────
+  REPORT_LEDGER: '/accounting/reports/ledger/',
+  REPORT_DAY_BOOK: '/accounting/reports/day-book/',
 } as const
 
 export const SETTINGS = '/settings/' as const
