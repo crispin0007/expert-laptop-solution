@@ -23,7 +23,7 @@ def _create(*, tenant, recipient, notification_type, title, body='',
     try:
         return Notification.objects.create(
             tenant=tenant,
-            created_by=recipient,  # system-created; use recipient as proxy
+            created_by=None,  # system-generated; no human actor
             recipient=recipient,
             notification_type=notification_type,
             title=title,
@@ -229,10 +229,10 @@ def notify_ticket_transfer(ticket, new_assignee) -> None:
         source_id=ticket.pk,
         metadata={'ticket_number': ticket.ticket_number, 'title': ticket.title},
     )
-    # Reuse the ticket_assigned email — content is equivalent
+    # Fire dedicated transfer email (not the same as "assigned")
     try:
-        from notifications.tasks import task_send_ticket_assigned
-        task_send_ticket_assigned.delay(ticket_id=ticket.pk, assignee_id=new_assignee.pk)
+        from notifications.tasks import task_send_ticket_transferred
+        task_send_ticket_transferred.delay(ticket_id=ticket.pk, new_assignee_id=new_assignee.pk)
     except Exception:
         logger.exception(
             "Failed to enqueue ticket_transfer email for ticket %s", ticket.pk

@@ -35,7 +35,7 @@ def send_ticket_assigned(ticket, assignee) -> None:
     if not assignee.email:
         return
     _send(
-        subject=f"[TechYatra] Ticket #{ticket.id} assigned to you",
+        subject=f"[TechYatra] Ticket {ticket.ticket_number} assigned to you",
         message=(
             f"Hi {assignee.get_full_name() or assignee.username},\n\n"
             f"Ticket '{ticket.title}' has been assigned to you.\n\n"
@@ -50,7 +50,7 @@ def send_ticket_comment(ticket, comment, recipient) -> None:
     if not recipient.email:
         return
     _send(
-        subject=f"[TechYatra] New comment on Ticket #{ticket.id}",
+        subject=f"[TechYatra] New comment on Ticket {ticket.ticket_number}",
         message=(
             f"A new comment has been added to ticket '{ticket.title}':\n\n"
             f"{comment.body}\n"
@@ -64,12 +64,27 @@ def send_sla_warning(ticket, recipient) -> None:
     if not recipient.email:
         return
     _send(
-        subject=f"[TechYatra] SLA Warning — Ticket #{ticket.id}",
+        subject=f"[TechYatra] SLA Warning — Ticket {ticket.ticket_number}",
         message=(
             f"Ticket '{ticket.title}' is approaching its SLA deadline.\n\n"
             f"Please take action as soon as possible.\n"
         ),
         recipient_list=[recipient.email],
+    )
+
+
+def send_ticket_transferred(ticket, new_assignee) -> None:
+    """Notify a staff member that a ticket has been transferred to them."""
+    if not new_assignee.email:
+        return
+    _send(
+        subject=f"[TechYatra] Ticket {ticket.ticket_number} transferred to you",
+        message=(
+            f"Hi {new_assignee.get_full_name() or new_assignee.username},\n\n"
+            f"Ticket '{ticket.title}' has been transferred to you.\n\n"
+            f"Priority: {ticket.priority}\n"
+        ),
+        recipient_list=[new_assignee.email],
     )
 
 

@@ -30,6 +30,21 @@ def task_send_ticket_assigned(self, ticket_id: int, assignee_id: int) -> None:
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def task_send_ticket_transferred(self, ticket_id: int, new_assignee_id: int) -> None:
+    try:
+        from tickets.models import Ticket
+        from accounts.models import User
+        from notifications.email import send_ticket_transferred
+
+        ticket = Ticket.objects.get(pk=ticket_id)
+        new_assignee = User.objects.get(pk=new_assignee_id)
+        send_ticket_transferred(ticket, new_assignee)
+    except Exception as exc:
+        logger.error("task_send_ticket_transferred failed: %s", exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
 def task_send_sla_warning(self, ticket_id: int, recipient_id: int) -> None:
     try:
         from tickets.models import Ticket
