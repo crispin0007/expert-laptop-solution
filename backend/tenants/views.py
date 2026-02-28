@@ -4,7 +4,8 @@ from django.http import HttpResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET
 from rest_framework import viewsets, status, permissions
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes as drf_permission_classes
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -644,3 +645,42 @@ def tenant_public_info(request):
         return JsonResponse({'detail': 'No tenant context.'}, status=404)
 
     return JsonResponse({'name': tenant.name, 'slug': tenant.slug})
+
+
+@api_view(['GET'])
+@drf_permission_classes([AllowAny])
+def tenant_resolve(request):
+    """
+    Public endpoint for the mobile app login flow.
+
+    GET /api/v1/tenants/resolve/?slug=acme
+
+    Returns the tenant's public branding config so the mobile app can:
+      • display the tenant's name and logo before login
+      • apply the tenant's primary_color theme
+
+    No authentication required — this endpoint must be callable before
+    any JWT exists (step 1 of the mobile two-step login: slug → credentials).
+
+    Uses @api_view + AllowAny (not @require_GET / JsonResponse) so DRF's auth
+    layer respects AllowAny before TenantJWTAuthentication rejects the request.
+    Also registered directly in config/urls.py before the tenants router include
+    so the URL can never be shadowed by TenantViewSet's pk detail pattern.
+    """
+    slug = request.query_params.get('slug', '').strip().lower()
+    if not slug:
+        return Response({'detail': 'slug query parameter is required.'}, status=400)
+
+    tenant = Tenant.objects.filter(slug=slug, is_active=True, is_deleted=False).first()
+    if tenant is None:
+        return Response({'detail': 'Workspace not found.'}, status=404)
+
+    return Response({
+        'slug': tenant.slug,
+        'name': tenant.name,
+        'logo': tenant.logo or '',
+        'primary_color': tenant.primary_color,
+        'currency': tenant.currency,
+        'vat_enabled': tenant.vat_enabled,
+        'vat_rate': str(tenant.vat_rate),
+    })

@@ -5,7 +5,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from core import views as core_views
 from core.views import DashboardStatsView
-from tenants.views import TenantSettingsView, verify_domain
+from tenants.views import TenantSettingsView, verify_domain, tenant_resolve
 
 
 class MainDomainOnlyAdminSite(AdminSite):
@@ -44,6 +44,10 @@ urlpatterns = [
 
     # Sprint 1
     path('api/v1/accounts/', include('accounts.urls')),
+    # Explicit registration BEFORE the tenants include so this path is matched
+    # first — prevents TenantViewSet's ^(?P<pk>[^/.]+)/$ detail pattern from
+    # capturing 'resolve' as a pk and returning 401 instead of public data.
+    path('api/v1/tenants/resolve/', tenant_resolve, name='tenant-resolve-public'),
     path('api/v1/tenants/', include('tenants.urls')),
 
     # Sprint 2
