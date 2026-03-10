@@ -17,53 +17,68 @@ logger = logging.getLogger(__name__)
 
 
 @receiver(post_save, sender='inventory.StockMovement')
-def update_stock_level(sender, instance, **kwargs):
-    """Recompute quantity_on_hand from all movements for this product.
+def update_stock_level(sender, instance, created, **kwargs):
+    """Apply a stock-level delta when a new movement is created.
 
-    IMPORTANT — MOVEMENT_ADJUSTMENT is intentionally excluded from this
-    recompute.  Stock-count adjustments are always applied by
-    StockCount.complete() as an explicit delta:
+    DESIGN: Delta-based (not full-recompute) so that stock-count adjustments
+    applied by StockCount.complete() as F('quantity_on_hand') + diff are never
+    overwritten.  Full recompute would re-anchor to the raw IN/OUT aggregate,
+    silently discarding all prior adjustment deltas.
 
-        StockLevel.update(quantity_on_hand=F('quantity_on_hand') + diff)
-
-    The adjustment quantity is stored as abs(diff) so the signal cannot
-    reconstruct the sign.  If we included ADJUSTMENT here, every subsequent
-    count would re-anchor to the raw IN/OUT total, silently discarding all
-    previous adjustment deltas and corrupting stock on the second and later
-    stock counts.
+    For the rare case of a movement update (admin shell), a full recompute is
+    used as a safe fallback — but movements are create-only via the API.
     """
     from inventory.models import StockLevel, StockMovement
 
-    # Let StockCount.complete() handle the level update for adjustments.
+    # Adjustments are applied directly by StockCount.complete(); skip here.
     if instance.movement_type == StockMovement.MOVEMENT_ADJUSTMENT:
         return
 
     IN_TYPES  = (StockMovement.MOVEMENT_IN, StockMovement.MOVEMENT_RETURN)
     OUT_TYPES = (StockMovement.MOVEMENT_OUT, StockMovement.MOVEMENT_RETURN_SUPPLIER)
 
-    agg = StockMovement.objects.filter(
-        tenant=instance.tenant,
-        product=instance.product,
-    ).aggregate(
-        total_in=models.Sum(
-            'quantity',
-            filter=models.Q(movement_type__in=IN_TYPES),
-            default=0,
-        ),
-        total_out=models.Sum(
-            'quantity',
-            filter=models.Q(movement_type__in=OUT_TYPES),
-            default=0,
-        ),
-    )
+    if created:
+        # Delta path — preserves prior adjustment deltas
+        if instance.movement_type in IN_TYPES:
+            delta = instance.quantity
+        elif instance.movement_type in OUT_TYPES:
+            delta = -instance.quantity
+        else:
+            delta = 0
 
-    on_hand = (agg['total_in'] or 0) - (agg['total_out'] or 0)
-
-    StockLevel.objects.update_or_create(
-        tenant=instance.tenant,
-        product=instance.product,
-        defaults={'quantity_on_hand': on_hand},
-    )
+        sl, _ = StockLevel.objects.get_or_create(
+            tenant=instance.tenant,
+            product=instance.product,
+            defaults={'quantity_on_hand': 0},
+        )
+        StockLevel.objects.filter(pk=sl.pk).update(
+            quantity_on_hand=models.F('quantity_on_hand') + delta
+        )
+        sl.refresh_from_db()
+        on_hand = sl.quantity_on_hand
+    else:
+        # Fallback full recompute for admin-level movement edits
+        agg = StockMovement.objects.filter(
+            tenant=instance.tenant,
+            product=instance.product,
+        ).aggregate(
+            total_in=models.Sum(
+                'quantity',
+                filter=models.Q(movement_type__in=IN_TYPES),
+                default=0,
+            ),
+            total_out=models.Sum(
+                'quantity',
+                filter=models.Q(movement_type__in=OUT_TYPES),
+                default=0,
+            ),
+        )
+        on_hand = (agg['total_in'] or 0) - (agg['total_out'] or 0)
+        StockLevel.objects.update_or_create(
+            tenant=instance.tenant,
+            product=instance.product,
+            defaults={'quantity_on_hand': on_hand},
+        )
 
     # ── Low stock alert ──────────────────────────────────────────────────────
     product = instance.product

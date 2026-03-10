@@ -212,8 +212,12 @@ REST_FRAMEWORK = {
         # before any view or permission class executes.
         'accounts.authentication.TenantJWTAuthentication',
     ],
-    # Pagination — every list endpoint returns { results: [], count: N, next, previous }
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    # Central exception handler — converts ALL exceptions into ApiResponse envelope.
+    # See core/exception_handler.py for full documentation.
+    'EXCEPTION_HANDLER': 'core.exception_handler.nexus_exception_handler',
+    # Pagination — cursor-based by default; no COUNT(*) on every list request.
+    # Use NexusPageNumberPagination only for report endpoints that need random access.
+    'DEFAULT_PAGINATION_CLASS': 'core.pagination.NexusCursorPagination',
     'PAGE_SIZE': 25,
     # Rate limiting — three layers: per-IP (anon), per-user, per-tenant.
     # Anon: 10/min (login attempts).  User: 1000/day (normal API usage).
@@ -279,4 +283,96 @@ EMAIL_HOST_USER     = os.environ.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL  = os.environ.get('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
 SERVER_EMAIL        = DEFAULT_FROM_EMAIL
+
+# ── Structured Logging ────────────────────────────────────────────────────────
+# Uses the 'nexus.*' logger hierarchy so every module-level logger created as
+# logging.getLogger(__name__) inside core.*, tickets.*, accounting.*, etc.
+# automatically inherits the correct handler and level.
+#
+# Logger naming convention:
+#   nexus.views      — HTTP layer (INFO: requests, warnings: auth fails)
+#   nexus.services   — Business logic (DEBUG in dev, INFO in prod)
+#   nexus.errors     — Unexpected exceptions (always ERROR)
+#   nexus.signals    — Signal handlers (DEBUG)
+#   nexus.tasks      — Celery tasks (INFO)
+#
+# In production (prod.py) swap the console handler for a JSON formatter
+# compatible with your log aggregator (Loki, CloudWatch, etc.).
+import os as _os
+_LOG_DIR = BASE_DIR / 'logs'
+_LOG_DIR.mkdir(exist_ok=True)
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '[{asctime}] {levelname:<8} {name} — {message}',
+            'style': '{',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+        'file_errors': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(BASE_DIR / 'logs' / 'errors.log'),
+            'maxBytes': 10 * 1024 * 1024,  # 10 MB
+            'backupCount': 5,
+            'formatter': 'verbose',
+            'level': 'ERROR',
+            'encoding': 'utf-8',
+        },
+    },
+    'loggers': {
+        # Root NEXUS logger — all app code should use getLogger(__name__)
+        # which resolves to nexus.* because all apps live under the nexus package
+        # hierarchy. Adjust level per environment in dev.py / prod.py.
+        'nexus': {
+            'handlers': ['console', 'file_errors'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        # Suppress noisy Django internals in non-debug mode
+        'django': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console', 'file_errors'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+        # SQL query logging — set to DEBUG to see every query (dev only)
+        'django.db.backends': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        # DRF and simplejwt internals — only warnings
+        'rest_framework': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        # Our app loggers — inherit from nexus root by default.
+        # Override individual levels here if needed.
+        'core': {'handlers': ['console', 'file_errors'], 'level': 'DEBUG', 'propagate': False},
+        'tickets': {'handlers': ['console', 'file_errors'], 'level': 'DEBUG', 'propagate': False},
+        'accounting': {'handlers': ['console', 'file_errors'], 'level': 'DEBUG', 'propagate': False},
+        'projects': {'handlers': ['console', 'file_errors'], 'level': 'DEBUG', 'propagate': False},
+        'inventory': {'handlers': ['console', 'file_errors'], 'level': 'DEBUG', 'propagate': False},
+        'notifications': {'handlers': ['console', 'file_errors'], 'level': 'INFO', 'propagate': False},
+        'accounts': {'handlers': ['console', 'file_errors'], 'level': 'DEBUG', 'propagate': False},
+        'tenants': {'handlers': ['console', 'file_errors'], 'level': 'DEBUG', 'propagate': False},
+    },
+}
 

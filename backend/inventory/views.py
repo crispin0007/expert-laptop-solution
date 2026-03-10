@@ -14,6 +14,9 @@ from django.db.models.functions import Coalesce
 from django.http import HttpResponse
 from django.utils import timezone
 from core.mixins import TenantMixin
+from core.views import NexusViewSet
+from core.response import ApiResponse
+from core.exceptions import ConflictError, AppException, ValidationError as AppValidationError
 from core.permissions import make_role_permission, ADMIN_ROLES, ALL_ROLES
 from .models import (
     Category, Product, ProductImage, StockLevel,
@@ -41,7 +44,7 @@ class ProductPagination(PageNumberPagination):
     max_page_size = 100
 
 
-class CategoryViewSet(TenantMixin, viewsets.ModelViewSet):
+class CategoryViewSet(NexusViewSet):
     """Inventory categories: read=all, write=admin+."""
 
     required_module = 'inventory'
@@ -53,17 +56,14 @@ class CategoryViewSet(TenantMixin, viewsets.ModelViewSet):
             return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
-    def perform_create(self, serializer):
-        serializer.save(tenant=self.tenant, created_by=self.request.user)
-
     @action(detail=False, methods=['get'], url_path='tree')
     def tree(self, request):
         """Return only root categories with nested children."""
         roots = self.get_queryset().filter(parent__isnull=True)
-        return Response(CategoryTreeSerializer(roots, many=True).data)
+        return ApiResponse.success(data=CategoryTreeSerializer(roots, many=True).data)
 
 
-class ProductImageViewSet(TenantMixin, viewsets.ModelViewSet):
+class ProductImageViewSet(NexusViewSet):
     required_module = 'inventory'
     serializer_class = ProductImageSerializer
 
@@ -80,19 +80,16 @@ class ProductImageViewSet(TenantMixin, viewsets.ModelViewSet):
             qs = qs.filter(product_id=product_id)
         return qs
 
-    def perform_create(self, serializer):
-        serializer.save(tenant=self.tenant, created_by=self.request.user)
-
     @action(detail=True, methods=['post'], url_path='set-primary')
     def set_primary(self, request, pk=None):
         image = self.get_object()
         ProductImage.objects.filter(product=image.product).update(is_primary=False)
         image.is_primary = True
         image.save(update_fields=['is_primary'])
-        return Response({'status': 'ok'})
+        return ApiResponse.success(data=ProductImageSerializer(image).data)
 
 
-class ProductViewSet(TenantMixin, viewsets.ModelViewSet):
+class ProductViewSet(NexusViewSet):
     """Products: read=all, write=admin+."""
 
     required_module = 'inventory'
@@ -110,15 +107,12 @@ class ProductViewSet(TenantMixin, viewsets.ModelViewSet):
             return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
-    def perform_create(self, serializer):
-        serializer.save(tenant=self.tenant, created_by=self.request.user)
-
     def list(self, request, *args, **kwargs):
         """Override list to support ?all=true for lightweight autocomplete lists."""
         if request.query_params.get('all') == 'true':
             qs = self.filter_queryset(self.get_queryset())
             data = list(qs.values('id', 'name', 'sku', 'unit_price', 'is_service', 'reorder_level')[:500])
-            return Response(data)
+            return ApiResponse.success(data=data)
         return super().list(request, *args, **kwargs)
 
     @action(detail=False, methods=['get'], url_path='low-stock')
@@ -138,7 +132,7 @@ class ProductViewSet(TenantMixin, viewsets.ModelViewSet):
             if (getattr(p, 'stock_level', None) and
                 p.stock_level.quantity_on_hand <= p.reorder_level)
         ]
-        return Response(ProductSerializer(low, many=True).data)
+        return ApiResponse.success(data=ProductSerializer(low, many=True).data)
 
     @action(detail=False, methods=['post'], url_path='import-csv',
             parser_classes=[MultiPartParser, FormParser])
@@ -151,18 +145,15 @@ class ProductViewSet(TenantMixin, viewsets.ModelViewSet):
         self.ensure_tenant()
         file = request.FILES.get('file')
         if not file:
-            return Response({'detail': 'No file uploaded.'}, status=status.HTTP_400_BAD_REQUEST)
+            raise AppValidationError('No file uploaded.')
         if not file.name.endswith('.csv'):
-            return Response({'detail': 'File must be a CSV.'}, status=status.HTTP_400_BAD_REQUEST)
+            raise AppValidationError('File must be a CSV.')
 
         decoded = file.read().decode('utf-8-sig')
         reader = csv.DictReader(io.StringIO(decoded))
         required_cols = {'name', 'sku', 'unit_price'}
         if not required_cols.issubset(set(reader.fieldnames or [])):
-            return Response(
-                {'detail': f'CSV must contain columns: {required_cols}'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise AppValidationError(f'CSV must contain columns: {required_cols}')
 
         created = updated = errors = 0
         error_rows = []
@@ -218,23 +209,24 @@ class ProductViewSet(TenantMixin, viewsets.ModelViewSet):
             else:
                 updated += 1
 
-        return Response({
+        return ApiResponse.success(data={
             'created': created,
             'updated': updated,
             'errors': errors,
             'error_rows': error_rows,
-        }, status=status.HTTP_200_OK)
+        })
 
 
-class StockLevelViewSet(TenantMixin, viewsets.ReadOnlyModelViewSet):
+class StockLevelViewSet(NexusViewSet):
     """Stock levels are read-only; they are managed by signals."""
     required_module = 'inventory'
     queryset = StockLevel.objects.select_related('product')
     serializer_class = StockLevelSerializer
+    http_method_names = ['get', 'head', 'options']
     permission_classes = [permissions.IsAuthenticated, make_role_permission(*ALL_ROLES)]
 
 
-class StockMovementViewSet(TenantMixin, viewsets.ModelViewSet):
+class StockMovementViewSet(NexusViewSet):
     """Stock movements: read=all, write=admin+."""
     required_module = 'inventory'
     serializer_class = StockMovementSerializer
@@ -244,22 +236,29 @@ class StockMovementViewSet(TenantMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         self.ensure_tenant()
-        return StockMovement.objects.filter(
+        qs = StockMovement.objects.filter(
             tenant=self.tenant
         ).select_related('product', 'created_by').order_by('-created_at')
+        if fy_raw := self.request.query_params.get('fiscal_year'):
+            try:
+                from core.nepali_date import fiscal_year_date_range, FiscalYear
+                fy = FiscalYear(bs_year=int(fy_raw))
+                start_ad, end_ad = fiscal_year_date_range(fy)
+                qs = qs.filter(created_at__date__gte=start_ad, created_at__date__lte=end_ad)
+            except (ValueError, KeyError):
+                pass
+        return qs
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
             return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
-    def perform_create(self, serializer):
-        serializer.save(tenant=self.tenant, created_by=self.request.user)
 
 
 # ── Supplier ──────────────────────────────────────────────────────────────────
 
-class SupplierViewSet(TenantMixin, viewsets.ModelViewSet):
+class SupplierViewSet(NexusViewSet):
     """Supplier CRUD: read=all, write=admin+."""
     required_module = 'inventory'
     serializer_class = SupplierSerializer
@@ -279,13 +278,11 @@ class SupplierViewSet(TenantMixin, viewsets.ModelViewSet):
             return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
-    def perform_create(self, serializer):
-        serializer.save(tenant=self.tenant, created_by=self.request.user)
 
 
 # ── Purchase Order ────────────────────────────────────────────────────────────
 
-class PurchaseOrderViewSet(TenantMixin, viewsets.ModelViewSet):
+class PurchaseOrderViewSet(NexusViewSet):
     """
     Purchase Orders.
     POST /inventory/purchase-orders/{id}/receive/ — receive items, auto-creates StockMovement(in)
@@ -300,9 +297,18 @@ class PurchaseOrderViewSet(TenantMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         self.ensure_tenant()
-        return PurchaseOrder.objects.filter(tenant=self.tenant).select_related(
+        qs = PurchaseOrder.objects.filter(tenant=self.tenant).select_related(
             'supplier', 'created_by', 'received_by',
         ).prefetch_related('items__product')
+        if fy_raw := self.request.query_params.get('fiscal_year'):
+            try:
+                from core.nepali_date import fiscal_year_date_range, FiscalYear
+                fy = FiscalYear(bs_year=int(fy_raw))
+                start_ad, end_ad = fiscal_year_date_range(fy)
+                qs = qs.filter(created_at__date__gte=start_ad, created_at__date__lte=end_ad)
+            except (ValueError, KeyError):
+                pass
+        return qs
 
     def get_serializer_class(self):
         if self.action in ('create', 'update', 'partial_update'):
@@ -314,9 +320,6 @@ class PurchaseOrderViewSet(TenantMixin, viewsets.ModelViewSet):
             return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
-    def perform_create(self, serializer):
-        serializer.save(tenant=self.tenant, created_by=self.request.user)
-
     def create(self, request, *args, **kwargs):
         """Return the full read serializer (with id) after creating a PO."""
         write_ser = PurchaseOrderWriteSerializer(
@@ -325,8 +328,7 @@ class PurchaseOrderViewSet(TenantMixin, viewsets.ModelViewSet):
         )
         write_ser.is_valid(raise_exception=True)
         po = write_ser.save(tenant=self.tenant, created_by=self.request.user)
-        return Response(PurchaseOrderSerializer(po, context=self.get_serializer_context()).data,
-                        status=status.HTTP_201_CREATED)
+        return ApiResponse.created(data=PurchaseOrderSerializer(po, context=self.get_serializer_context()).data)
 
     @action(detail=True, methods=['post'], url_path='receive')
     def receive(self, request, pk=None):
@@ -336,11 +338,9 @@ class PurchaseOrderViewSet(TenantMixin, viewsets.ModelViewSet):
         """
         po = self.get_object()
         if po.status == PurchaseOrder.STATUS_CANCELLED:
-            return Response({'detail': 'Cannot receive a cancelled purchase order.'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            raise ConflictError('Cannot receive a cancelled purchase order.')
         if po.status == PurchaseOrder.STATUS_RECEIVED:
-            return Response({'detail': 'Purchase order is already fully received.'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            raise ConflictError('Purchase order is already fully received.')
 
         ser = ReceiveItemsSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
@@ -352,16 +352,14 @@ class PurchaseOrderViewSet(TenantMixin, viewsets.ModelViewSet):
         for line in lines:
             item = items_map.get(line['item_id'])
             if not item:
-                return Response({'detail': f"Item {line['item_id']} not found on this PO."},
-                                status=status.HTTP_400_BAD_REQUEST)
+                raise AppValidationError(f"Item {line['item_id']} not found on this PO.")
             qty = line['quantity_received']
             if qty <= 0:
                 continue
             max_receivable = item.quantity_ordered - item.quantity_received
             if qty > max_receivable:
-                return Response(
-                    {'detail': f"Cannot receive {qty} of '{item.product.name}' — only {max_receivable} pending."},
-                    status=status.HTTP_400_BAD_REQUEST,
+                raise AppValidationError(
+                    f"Cannot receive {qty} of '{item.product.name}' — only {max_receivable} pending."
                 )
             StockMovement.objects.create(
                 tenant=po.tenant,
@@ -392,36 +390,32 @@ class PurchaseOrderViewSet(TenantMixin, viewsets.ModelViewSet):
             po.received_by = request.user
             po.received_at = timezone.now()
         po.save(update_fields=['status', 'received_by', 'received_at'])
-        return Response(PurchaseOrderSerializer(po).data)
+        return ApiResponse.success(data=PurchaseOrderSerializer(po).data)
 
     @action(detail=True, methods=['post'], url_path='send')
     def send(self, request, pk=None):
         po = self.get_object()
         if po.status != PurchaseOrder.STATUS_DRAFT:
-            return Response({'detail': 'Only draft POs can be marked as sent.'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            raise ConflictError('Only draft POs can be marked as sent.')
         po.status = PurchaseOrder.STATUS_SENT
         po.save(update_fields=['status'])
-        return Response(PurchaseOrderSerializer(po).data)
+        return ApiResponse.success(data=PurchaseOrderSerializer(po).data)
 
     @action(detail=True, methods=['post'], url_path='cancel')
     def cancel(self, request, pk=None):
         po = self.get_object()
         if po.status in (PurchaseOrder.STATUS_PARTIAL, PurchaseOrder.STATUS_RECEIVED):
-            return Response(
-                {'detail': 'Cannot cancel a PO that has already been (partially) received.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise ConflictError('Cannot cancel a PO that has already been (partially) received.')
         if po.status == PurchaseOrder.STATUS_CANCELLED:
-            return Response({'detail': 'Already cancelled.'}, status=status.HTTP_400_BAD_REQUEST)
+            raise ConflictError('Already cancelled.')
         po.status = PurchaseOrder.STATUS_CANCELLED
         po.save(update_fields=['status'])
-        return Response(PurchaseOrderSerializer(po).data)
+        return ApiResponse.success(data=PurchaseOrderSerializer(po).data)
 
 
 # ── Unit of Measure ───────────────────────────────────────────────────────────
 
-class UnitOfMeasureViewSet(TenantMixin, viewsets.ModelViewSet):
+class UnitOfMeasureViewSet(NexusViewSet):
     """
     Units of measure (kg, pcs, litre, etc.).
     Read = all authenticated, Write = admin+.
@@ -441,13 +435,11 @@ class UnitOfMeasureViewSet(TenantMixin, viewsets.ModelViewSet):
             return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
-    def perform_create(self, serializer):
-        serializer.save(tenant=self.tenant, created_by=self.request.user)
 
 
 # ── Product Variants ──────────────────────────────────────────────────────────
 
-class ProductVariantViewSet(TenantMixin, viewsets.ModelViewSet):
+class ProductVariantViewSet(NexusViewSet):
     """
     Product variants (e.g. Color=Red, Size=L).
     GET /inventory/variants/?product=<id>
@@ -471,13 +463,11 @@ class ProductVariantViewSet(TenantMixin, viewsets.ModelViewSet):
             return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
-    def perform_create(self, serializer):
-        serializer.save(tenant=self.tenant, created_by=self.request.user)
 
 
 # ── Return to Supplier ────────────────────────────────────────────────────────
 
-class ReturnOrderViewSet(TenantMixin, viewsets.ModelViewSet):
+class ReturnOrderViewSet(NexusViewSet):
     """
     Return-to-Supplier orders (RMA).
     Status flow: draft → sent → accepted | cancelled
@@ -493,9 +483,18 @@ class ReturnOrderViewSet(TenantMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         self.ensure_tenant()
-        return ReturnOrder.objects.filter(tenant=self.tenant).select_related(
+        qs = ReturnOrder.objects.filter(tenant=self.tenant).select_related(
             'supplier', 'purchase_order', 'created_by',
         ).prefetch_related('items__product')
+        if fy_raw := self.request.query_params.get('fiscal_year'):
+            try:
+                from core.nepali_date import fiscal_year_date_range, FiscalYear
+                fy = FiscalYear(bs_year=int(fy_raw))
+                start_ad, end_ad = fiscal_year_date_range(fy)
+                qs = qs.filter(created_at__date__gte=start_ad, created_at__date__lte=end_ad)
+            except (ValueError, KeyError):
+                pass
+        return qs
 
     def get_serializer_class(self):
         if self.action in ('create', 'update', 'partial_update'):
@@ -507,23 +506,14 @@ class ReturnOrderViewSet(TenantMixin, viewsets.ModelViewSet):
             return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
-    def perform_create(self, serializer):
-        serializer.save(tenant=self.tenant, created_by=self.request.user)
-
     @action(detail=True, methods=['post'], url_path='send')
     def send(self, request, pk=None):
         """Transition draft → sent; creates outbound StockMovements for each item."""
         ro = self.get_object()
         if ro.status != ReturnOrder.STATUS_DRAFT:
-            return Response(
-                {'detail': 'Only draft return orders can be sent.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise ConflictError('Only draft return orders can be sent.')
         if not ro.items.exists():
-            return Response(
-                {'detail': 'Cannot send a return order with no items.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise ConflictError('Cannot send a return order with no items.')
         # Create stock-out movements for each item
         for item in ro.items.select_related('product'):
             StockMovement.objects.create(
@@ -539,30 +529,24 @@ class ReturnOrderViewSet(TenantMixin, viewsets.ModelViewSet):
         ro.status = ReturnOrder.STATUS_SENT
         ro.sent_at = timezone.now()
         ro.save(update_fields=['status', 'sent_at'])
-        return Response(ReturnOrderSerializer(ro).data)
+        return ApiResponse.success(data=ReturnOrderSerializer(ro).data)
 
     @action(detail=True, methods=['post'], url_path='accept')
     def accept(self, request, pk=None):
         """Transition sent → accepted."""
         ro = self.get_object()
         if ro.status != ReturnOrder.STATUS_SENT:
-            return Response(
-                {'detail': 'Only sent return orders can be accepted.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise ConflictError('Only sent return orders can be accepted.')
         ro.status = ReturnOrder.STATUS_ACCEPTED
         ro.save(update_fields=['status'])
-        return Response(ReturnOrderSerializer(ro).data)
+        return ApiResponse.success(data=ReturnOrderSerializer(ro).data)
 
     @action(detail=True, methods=['post'], url_path='cancel')
     def cancel(self, request, pk=None):
         """Cancel; if already sent, reverses the stock movements (stock-in)."""
         ro = self.get_object()
         if ro.status in (ReturnOrder.STATUS_ACCEPTED, ReturnOrder.STATUS_CANCELLED):
-            return Response(
-                {'detail': f'Cannot cancel a return order in "{ro.status}" status.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            raise ConflictError(f'Cannot cancel a return order in "{ro.status}" status.')
         if ro.status == ReturnOrder.STATUS_SENT:
             # Reverse the outbound movements
             for item in ro.items.select_related('product'):
@@ -578,7 +562,7 @@ class ReturnOrderViewSet(TenantMixin, viewsets.ModelViewSet):
                 )
         ro.status = ReturnOrder.STATUS_CANCELLED
         ro.save(update_fields=['status'])
-        return Response(ReturnOrderSerializer(ro).data)
+        return ApiResponse.success(data=ReturnOrderSerializer(ro).data)
 
 
 # ── Reports ───────────────────────────────────────────────────────────────────
@@ -622,7 +606,7 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
                 'cost_price': float(cost),
                 'total_value': float(value),
             })
-        return Response({'rows': rows, 'total_value': float(total_value)})
+        return ApiResponse.success(data={'rows': rows, 'total_value': float(total_value)})
 
     # ── Dead Stock ────────────────────────────────────────────────────────────
     @action(detail=False, methods=['get'], url_path='dead-stock')
@@ -665,7 +649,7 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
                 'last_movement': last_movement,
                 'days_inactive': days if not last_movement else (timezone.now() - last_movement).days,
             })
-        return Response({'days': days, 'rows': rows, 'count': len(rows)})
+        return ApiResponse.success(data={'days': days, 'rows': rows, 'count': len(rows)})
 
     # ── ABC Analysis ──────────────────────────────────────────────────────────
     @action(detail=False, methods=['get'], url_path='abc-analysis')
@@ -700,7 +684,7 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
             r['class'] = 'A' if pct <= 0.70 else ('B' if pct <= 0.90 else 'C')
             r['cumulative_pct'] = round(pct * 100, 2)
 
-        return Response({'rows': rows, 'total_value': round(grand_total, 2)})
+        return ApiResponse.success(data={'rows': rows, 'total_value': round(grand_total, 2)})
 
     # ── Forecast ──────────────────────────────────────────────────────────────
     @action(detail=False, methods=['get'], url_path='forecast')
@@ -749,7 +733,7 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
             })
         # Sort: needs_reorder first, then by days_of_stock ascending (soonest stockout first)
         rows.sort(key=lambda r: (not r['needs_reorder'], r['days_of_stock'] if r['days_of_stock'] is not None else 9999))
-        return Response({'window_days': days, 'rows': rows})
+        return ApiResponse.success(data={'window_days': days, 'rows': rows})
 
     # ── CSV Export ────────────────────────────────────────────────────────────
     @action(detail=False, methods=['get'], url_path='export-csv')
@@ -807,7 +791,7 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
         ]
 
         if not low_stock_products:
-            return Response({'detail': 'No low-stock products found.', 'pos_created': 0})
+            return ApiResponse.success(data={'detail': 'No low-stock products found.', 'pos_created': 0})
 
         product_ids = [p.id for p in low_stock_products]
 
@@ -859,16 +843,16 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
                 'line_count': len(data['items']),
             })
 
-        return Response({
+        return ApiResponse.created(data={
             'pos_created': len(created_pos),
             'purchase_orders': created_pos,
             'skipped_no_supplier': skipped,
-        }, status=status.HTTP_201_CREATED)
+        })
 
 
 # ── Supplier–Product Catalog ──────────────────────────────────────────────────
 
-class SupplierProductViewSet(TenantMixin, viewsets.ModelViewSet):
+class SupplierProductViewSet(NexusViewSet):
     """
     Supplier–Product catalog: which supplier stocks which product,
     at what cost, and with what lead time.
@@ -892,28 +876,36 @@ class SupplierProductViewSet(TenantMixin, viewsets.ModelViewSet):
             return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
-    def perform_create(self, serializer):
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         if serializer.validated_data.get('is_preferred'):
             SupplierProduct.objects.filter(
                 tenant=self.tenant,
                 product=serializer.validated_data['product'],
                 is_preferred=True,
             ).update(is_preferred=False)
-        serializer.save(tenant=self.tenant, created_by=self.request.user)
+        instance = serializer.save(tenant=self.tenant, created_by=self.request.user)
+        return ApiResponse.created(data=self.get_serializer(instance).data)
 
-    def perform_update(self, serializer):
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
         if serializer.validated_data.get('is_preferred'):
             SupplierProduct.objects.filter(
                 tenant=self.tenant,
-                product=serializer.instance.product,
+                product=instance.product,
                 is_preferred=True,
-            ).exclude(pk=serializer.instance.pk).update(is_preferred=False)
-        serializer.save()
+            ).exclude(pk=instance.pk).update(is_preferred=False)
+        updated = serializer.save()
+        return ApiResponse.success(data=self.get_serializer(updated).data)
 
 
 # ── Stock Count (Stocktake) ───────────────────────────────────────────────────
 
-class StockCountViewSet(TenantMixin, viewsets.ModelViewSet):
+class StockCountViewSet(NexusViewSet):
     """
     Physical inventory count sessions.
     POST /inventory/stock-counts/                  — create session
@@ -943,16 +935,12 @@ class StockCountViewSet(TenantMixin, viewsets.ModelViewSet):
             return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
 
-    def perform_create(self, serializer):
-        serializer.save(tenant=self.tenant, created_by=self.request.user)
-
     @action(detail=True, methods=['post'], url_path='start')
     def start(self, request, pk=None):
         """Transition draft → counting; snapshot current stock levels as expected quantities."""
         sc = self.get_object()
         if sc.status != StockCount.STATUS_DRAFT:
-            return Response({'detail': 'Only draft counts can be started.'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            raise ConflictError('Only draft counts can be started.')
 
         qs = Product.objects.filter(
             tenant=self.tenant, is_deleted=False, is_service=False, track_stock=True
@@ -973,41 +961,37 @@ class StockCountViewSet(TenantMixin, viewsets.ModelViewSet):
         StockCountItem.objects.bulk_create(items, ignore_conflicts=True)
         sc.status = StockCount.STATUS_COUNTING
         sc.save(update_fields=['status'])
-        return Response(StockCountSerializer(sc).data)
+        return ApiResponse.success(data=StockCountSerializer(sc).data)
 
     @action(detail=True, methods=['patch'], url_path='count-item')
     def count_item(self, request, pk=None):
         """Body: { "product": <id>, "counted_qty": <int>, "notes": "" }"""
         sc = self.get_object()
         if sc.status != StockCount.STATUS_COUNTING:
-            return Response({'detail': 'Count session is not in counting state.'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            raise ConflictError('Count session is not in counting state.')
 
         product_id  = request.data.get('product')
         counted_qty = request.data.get('counted_qty')
         notes       = request.data.get('notes', '')
 
         if product_id is None or counted_qty is None:
-            return Response({'detail': '"product" and "counted_qty" are required.'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            raise AppValidationError('"product" and "counted_qty" are required.')
         try:
             counted_qty = int(counted_qty)
             if counted_qty < 0:
                 raise ValueError
         except (ValueError, TypeError):
-            return Response({'detail': '"counted_qty" must be a non-negative integer.'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            raise AppValidationError('"counted_qty" must be a non-negative integer.')
 
         try:
             item = sc.items.get(product_id=product_id)
         except StockCountItem.DoesNotExist:
-            return Response({'detail': f'Product {product_id} is not in this count session.'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            raise AppValidationError(f'Product {product_id} is not in this count session.')
 
         item.counted_qty = counted_qty
         item.notes = notes
         item.save(update_fields=['counted_qty', 'notes'])
-        return Response(StockCountItemSerializer(item).data)
+        return ApiResponse.success(data=StockCountItemSerializer(item).data)
 
     @action(detail=True, methods=['post'], url_path='complete')
     def complete(self, request, pk=None):
@@ -1017,8 +1001,7 @@ class StockCountViewSet(TenantMixin, viewsets.ModelViewSet):
         """
         sc = self.get_object()
         if sc.status != StockCount.STATUS_COUNTING:
-            return Response({'detail': 'Only counting-status sessions can be completed.'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            raise ConflictError('Only counting-status sessions can be completed.')
 
         # Wrap inside a transaction so a mid-loop failure does not leave stock
         # levels partially adjusted while movements are only partially created.
@@ -1052,7 +1035,7 @@ class StockCountViewSet(TenantMixin, viewsets.ModelViewSet):
             sc.completed_by = request.user
             sc.save(update_fields=['status', 'completed_at', 'completed_by'])
 
-        return Response({
+        return ApiResponse.success(data={
             **StockCountSerializer(sc).data,
             'adjustments_created': adjustments_created,
         })
@@ -1061,8 +1044,7 @@ class StockCountViewSet(TenantMixin, viewsets.ModelViewSet):
     def cancel(self, request, pk=None):
         sc = self.get_object()
         if sc.status in (StockCount.STATUS_COMPLETED, StockCount.STATUS_CANCELLED):
-            return Response({'detail': f'Cannot cancel a {sc.status} count session.'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            raise ConflictError(f'Cannot cancel a {sc.status} count session.')
         sc.status = StockCount.STATUS_CANCELLED
         sc.save(update_fields=['status'])
-        return Response(StockCountSerializer(sc).data)
+        return ApiResponse.success(data=StockCountSerializer(sc).data)

@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from core.serializers import NepaliModelSerializer
 from .models import Customer, CustomerContact
 
 
@@ -18,7 +19,7 @@ class CustomerMinimalSerializer(serializers.ModelSerializer):
         fields = ('id', 'customer_number', 'name', 'phone', 'email', 'type')
 
 
-class CustomerSerializer(serializers.ModelSerializer):
+class CustomerSerializer(NepaliModelSerializer):
     contacts = CustomerContactSerializer(many=True, read_only=True)
     created_by_name = serializers.CharField(source='created_by.full_name', read_only=True, default='')
     # Convenience read-only: human-readable full address string

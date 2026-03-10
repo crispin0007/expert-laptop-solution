@@ -48,6 +48,8 @@ class AuditEvent(models.TextChoices):
     LOGIN_FAILED           = 'login_failed',            'Login Failed'
     TOKEN_REFRESH          = 'token_refresh',           'Token Refreshed'
     TOKEN_REJECTED         = 'token_rejected',          'Token Rejected'
+    TWO_FA_ENABLED         = 'two_fa_enabled',          '2FA Enabled'
+    TWO_FA_DISABLED        = 'two_fa_disabled',         '2FA Disabled'
     LOGOUT                 = 'logout',                  'Logout'
 
     # Tenant lifecycle

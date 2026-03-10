@@ -13,7 +13,13 @@ import apiClient from '../../api/client'
 import { TICKETS, ACCOUNTING, INVENTORY, DEPARTMENTS } from '../../api/endpoints'
 import Modal from '../../components/Modal'
 import { usePermissions } from '../../hooks/usePermissions'
+
+function isImage(filename: string | undefined): boolean {
+  if (!filename) return false
+  return /\.(jpe?g|png|gif|webp|bmp|svg)$/i.test(filename)
+}
 import { useAuthStore } from '../../store/authStore'
+import DateDisplay from '../../components/DateDisplay'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -204,12 +210,7 @@ const EVENT_ICONS: Record<string, React.ReactElement> = {
   product_added: <CheckCircle2 size={14} className="text-amber-400" />,
 }
 
-function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString('en-GB', {
-    day: '2-digit', month: 'short', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  })
-}
+
 
 // ── Assign Modal ──────────────────────────────────────────────────────────────
 
@@ -397,7 +398,7 @@ function TicketProductsPanel({
     queryFn: () =>
       apiClient
         .get(ACCOUNTING.INVOICES_BY_TICKET(ticketId))
-        .then(r => (Array.isArray(r.data) ? r.data : (r.data.results ?? []))),
+        .then(r => (Array.isArray(r.data) ? r.data : (r.data.data ?? r.data.results ?? []))),
     enabled: !!ticketId,
   })
   const isLocked = invoiceListForLock.length > 0
@@ -431,7 +432,7 @@ function TicketProductsPanel({
     queryKey: ['product-search', debouncedSearch],
     queryFn: () =>
       apiClient.get(INVENTORY.PRODUCTS, { params: { search: debouncedSearch, page_size: 20 } })
-        .then(r => Array.isArray(r.data) ? r.data : (r.data.results ?? [])),
+        .then(r => Array.isArray(r.data) ? r.data : (r.data.data ?? r.data.results ?? [])),
     enabled: debouncedSearch.length > 0,
     staleTime: 10_000,
   })
@@ -631,7 +632,7 @@ function TicketInvoicePanel({ ticketId, ticketStatus }: { ticketId: number; tick
     queryFn: () =>
       apiClient
         .get(ACCOUNTING.INVOICES_BY_TICKET(ticketId))
-        .then(r => (Array.isArray(r.data) ? r.data : (r.data.results ?? []))),
+        .then(r => (Array.isArray(r.data) ? r.data : (r.data.data ?? r.data.results ?? []))),
     enabled: !!ticketId,
   })
 
@@ -641,7 +642,7 @@ function TicketInvoicePanel({ ticketId, ticketStatus }: { ticketId: number; tick
     queryFn: () =>
       apiClient
         .get(ACCOUNTING.BANK_ACCOUNTS)
-        .then(r => (Array.isArray(r.data) ? r.data : (r.data.results ?? []))),
+        .then(r => (Array.isArray(r.data) ? r.data : (r.data.data ?? r.data.results ?? []))),
     enabled: showPayModal && payMethod === 'bank_transfer',
   })
 
@@ -1787,8 +1788,8 @@ export default function TicketDetailPage() {
                 { label: 'Department', value: ticket.department_name || '—' },
                 { label: 'Assigned To', value: ticket.assigned_to_name || 'Unassigned' },
                 { label: 'Created By', value: ticket.created_by_name || '—' },
-                { label: 'SLA Deadline', value: ticket.sla_deadline ? formatDateTime(ticket.sla_deadline) : '—' },
-                { label: 'Created', value: formatDateTime(ticket.created_at) },
+                { label: 'SLA Deadline', value: ticket.sla_deadline ? <DateDisplay adDate={ticket.sla_deadline} showTime compact /> : '—' },
+                { label: 'Created', value: <DateDisplay adDate={ticket.created_at} showTime compact /> },
                 { label: 'Contact Phone', value: (ticket.contact_phone || ticket.customer_phone)
                     ? <a href={`tel:${ticket.contact_phone || ticket.customer_phone}`} className="text-indigo-600 hover:underline flex items-center gap-1"><Phone size={10} />{ticket.contact_phone || ticket.customer_phone}</a>
                     : '—'
@@ -1839,7 +1840,18 @@ export default function TicketDetailPage() {
             <div className="space-y-2">
               {attachments.map(a => (
                 <div key={a.id} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-lg">
-                  <FileText size={15} className="text-gray-400 flex-shrink-0" />
+                  {isImage(a.file_name) ? (
+                    <a href={a.url} target="_blank" rel="noreferrer" className="flex-shrink-0">
+                      <img
+                        src={a.url}
+                        alt={a.file_name}
+                        className="w-12 h-12 rounded-lg object-cover border border-gray-200 hover:opacity-90 transition"
+                        onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                      />
+                    </a>
+                  ) : (
+                    <FileText size={15} className="text-gray-400 flex-shrink-0" />
+                  )}
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-gray-700 truncate">{a.file_name}</p>
                     <p className="text-xs text-gray-400">{a.file_size ? `${(a.file_size / 1024).toFixed(1)} KB · ` : ''}{a.uploaded_by_name}</p>
@@ -1873,7 +1885,7 @@ export default function TicketDetailPage() {
                       <p className="text-xs text-gray-700 leading-snug">{event.description}</p>
                       <p className="text-xs text-gray-400 mt-0.5">
                         {event.actor_name && <span className="font-medium text-gray-500">{event.actor_name} · </span>}
-                        {formatDateTime(event.created_at)}
+                        <DateDisplay adDate={event.created_at} showTime compact />
                       </p>
                     </div>
                   </li>
@@ -1934,22 +1946,33 @@ export default function TicketDetailPage() {
                     </span>
                   )}
                   <span className="text-xs text-gray-400 ml-auto flex-shrink-0 text-right">
-                    {formatDateTime(c.created_at)}
+                    <DateDisplay adDate={c.created_at} showTime compact />
                   </span>
                 </div>
                 <p className="text-gray-700 whitespace-pre-wrap text-sm leading-relaxed">{c.body}</p>
                 {c.attachments && c.attachments.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
+                  <div className="mt-2 flex flex-wrap gap-2">
                     {c.attachments.map((att, i) => (
-                      <a
-                        key={i}
-                        href={att.file_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex items-center gap-1 text-xs text-indigo-600 underline hover:text-indigo-800"
-                      >
-                        <Paperclip size={10} /> {att.file_name || 'attachment'}
-                      </a>
+                      isImage(att.file_name) ? (
+                        <a key={i} href={att.file_url} target="_blank" rel="noreferrer" className="flex-shrink-0">
+                          <img
+                            src={att.file_url}
+                            alt={att.file_name || 'image'}
+                            className="h-20 rounded-lg object-cover border border-gray-200 hover:opacity-90 transition max-w-[140px]"
+                            onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                          />
+                        </a>
+                      ) : (
+                        <a
+                          key={i}
+                          href={att.file_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center gap-1 text-xs text-indigo-600 underline hover:text-indigo-800"
+                        >
+                          <Paperclip size={10} /> {att.file_name || 'attachment'}
+                        </a>
+                      )
                     ))}
                   </div>
                 )}

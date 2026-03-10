@@ -9,6 +9,7 @@ import apiClient from '../../api/client'
 import { TENANTS } from '../../api/endpoints'
 import CreateTenantModal from './CreateTenantModal'
 import { type Tenant } from './EditTenantModal'
+import DateDisplay from '../../components/DateDisplay'
 
 function StatusBadge({ tenant }: { tenant: Tenant }) {
   if (tenant.is_deleted)
@@ -177,7 +178,7 @@ export default function PlatformDashboard() {
                 <td className="px-4 py-3 text-gray-600">{t.member_count}</td>
                 <td className="px-4 py-3"><StatusBadge tenant={t} /></td>
                 <td className="px-4 py-3 text-gray-400 text-xs">
-                  {new Date(t.created_at).toLocaleDateString()}
+                  <DateDisplay adDate={t.created_at} compact />
                 </td>
               </tr>
             ))}

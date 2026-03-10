@@ -23,6 +23,72 @@ import {
   FileQuestion, Percent, Repeat2, BookMarked, CalendarDays,
   ArrowRightLeft, ChevronDown, Search, CheckSquare2, Play, Power, Pencil,
 } from 'lucide-react'
+import DateDisplay from '../../components/DateDisplay'
+import NepaliDatePicker from '../../components/NepaliDatePicker'
+import { adStringToBsDisplay, currentFiscalYear, fiscalYearAdParams, fiscalYearOf, fiscalYearDateRange } from '../../utils/nepaliDate'
+import { useFyStore } from '../../store/fyStore'
+
+// ─── Fiscal Year — reads/writes the global persistent store ───────────────
+function useFY() { return useFyStore() }
+
+/**
+ * Appends &fiscal_year=YYYY (or ?fiscal_year=YYYY) to any URL.
+ * Returns the URL unchanged when fyYear is null ("All Time").
+ */
+function addFyParam(url: string, fyYear: number | null): string {
+  if (!fyYear) return url
+  return url.includes('?') ? `${url}&fiscal_year=${fyYear}` : `${url}?fiscal_year=${fyYear}`
+}
+
+function FiscalYearBar() {
+  const { fyYear, setFyYear } = useFY()
+  const fy = currentFiscalYear()
+  const { startAd } = fiscalYearDateRange(fy)
+  const lastFy = fiscalYearOf(new Date(startAd.getTime() - 86_400_000))
+  const { startAd: lastStart } = fiscalYearDateRange(lastFy)
+  const prevFy = fiscalYearOf(new Date(lastStart.getTime() - 86_400_000))
+
+  const options = [
+    { year: fy.bsYear,     label: fy.label,     title: fy.labelFull    },
+    { year: lastFy.bsYear, label: lastFy.label,  title: lastFy.labelFull },
+    { year: prevFy.bsYear, label: prevFy.label,  title: prevFy.labelFull },
+  ]
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl px-5 py-3 mb-4 flex items-center gap-3 flex-wrap shadow-sm">
+      <span className="text-xs font-bold text-gray-400 uppercase tracking-widest shrink-0">FY</span>
+      <button
+        onClick={() => setFyYear(null)}
+        className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+          fyYear === null
+            ? 'bg-gray-700 text-white border-gray-700'
+            : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400 hover:text-gray-700'
+        }`}
+      >
+        All Time
+      </button>
+      {options.map(({ year, label, title }) => (
+        <button
+          key={year}
+          onClick={() => setFyYear(year)}
+          title={`Nepal Fiscal Year ${title}`}
+          className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+            fyYear === year
+              ? 'bg-indigo-600 text-white border-indigo-600'
+              : 'bg-white text-gray-500 border-gray-200 hover:border-indigo-300 hover:text-indigo-600'
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+      {fyYear !== null && (
+        <span className="text-xs text-indigo-500 font-medium ml-1">
+          Showing FY {options.find(o => o.year === fyYear)?.label ?? fyYear} data
+        </span>
+      )}
+    </div>
+  )
+}
 
 // ─── Shared types ──────────────────────────────────────────────────────────
 
@@ -160,7 +226,8 @@ function toPage<T = any>(raw: any): ApiPage<T> {
 
 function fmt(d: string | null) {
   if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+  const bs = adStringToBsDisplay(d)
+  return bs?.bs ?? '—'
 }
 function npr(v: string | number) {
   return `NPR ${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -259,13 +326,14 @@ const TABS = [
 // ─── Dashboard Tab ─────────────────────────────────────────────────────────
 
 function DashboardTab() {
+  const { fyYear } = useFY()
   const { data: invoices } = useQuery<ApiPage<Invoice>>({
-    queryKey: ['invoices', 'recent'],
-    queryFn: () => apiClient.get(ACCOUNTING.INVOICES + '?page_size=10&ordering=-created_at').then(r => toPage<Invoice>(r.data)),
+    queryKey: ['invoices', 'recent', fyYear],
+    queryFn: () => apiClient.get(addFyParam(ACCOUNTING.INVOICES + '?page_size=10&ordering=-created_at', fyYear)).then(r => toPage<Invoice>(r.data)),
   })
   const { data: bills } = useQuery<ApiPage<Bill>>({
-    queryKey: ['bills', 'recent'],
-    queryFn: () => apiClient.get(ACCOUNTING.BILLS + '?page_size=10&ordering=-created_at').then(r => toPage<Bill>(r.data)),
+    queryKey: ['bills', 'recent', fyYear],
+    queryFn: () => apiClient.get(addFyParam(ACCOUNTING.BILLS + '?page_size=10&ordering=-created_at', fyYear)).then(r => toPage<Bill>(r.data)),
   })
 
   const cards = [
@@ -402,7 +470,7 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
             </select>
           </Field>
           <Field label="Due Date">
-            <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={inputCls} />
+            <NepaliDatePicker value={dueDate} onChange={setDueDate} />
           </Field>
         </div>
 
@@ -699,7 +767,7 @@ function InvoiceEditModal({ inv, onClose }: { inv: Invoice; onClose: () => void 
             </select>
           </Field>
           <Field label="Due Date">
-            <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={inputCls} />
+            <NepaliDatePicker value={dueDate} onChange={setDueDate} />
           </Field>
         </div>
         <div>
@@ -788,12 +856,19 @@ function InvoicesTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const user = useAuthStore(s => s.user)
+  const { fyYear } = useFY()
   const [statusFilter, setStatusFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [editInvoice, setEditInvoice] = useState<Invoice | null>(null)
   const { data, isLoading } = useQuery<ApiPage<Invoice>>({
-    queryKey: ['invoices', statusFilter],
-    queryFn: () => apiClient.get(ACCOUNTING.INVOICES + (statusFilter ? `?status=${statusFilter}` : '')).then(r => toPage<Invoice>(r.data)),
+    queryKey: ['invoices', statusFilter, fyYear],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (statusFilter) params.set('status', statusFilter)
+      if (fyYear)       params.set('fiscal_year', String(fyYear))
+      const qs = params.toString()
+      return apiClient.get(qs ? `${ACCOUNTING.INVOICES}?${qs}` : ACCOUNTING.INVOICES).then(r => toPage<Invoice>(r.data))
+    },
   })
 
   const [detailInvoice, setDetailInvoice] = useState<Invoice | null>(null)
@@ -802,7 +877,7 @@ function InvoicesTab() {
 
   const { data: invBankAccounts = [] } = useQuery<BankAccount[]>({
     queryKey: ['bank-accounts-inv-paid'],
-    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS + '?page_size=100').then(r => r.data?.results ?? []),
+    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS + '?page_size=100').then(r => r.data?.data ?? r.data?.results ?? []),
     enabled: !!markPaidInv,
   })
 
@@ -1000,7 +1075,7 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
               placeholder="Supplier / vendor name" className={inputCls} required />
           </Field>
           <Field label="Due Date">
-            <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={inputCls} />
+            <NepaliDatePicker value={dueDate} onChange={setDueDate} />
           </Field>
         </div>
 
@@ -1129,7 +1204,7 @@ function BillEditModal({ bill, onClose }: { bill: Bill; onClose: () => void }) {
               placeholder="Supplier / vendor name" className={inputCls} required />
           </Field>
           <Field label="Due Date">
-            <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={inputCls} />
+            <NepaliDatePicker value={dueDate} onChange={setDueDate} />
           </Field>
         </div>
         <div>
@@ -1198,6 +1273,7 @@ function BillsTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const user = useAuthStore(s => s.user)
+  const { fyYear } = useFY()
   const [statusFilter, setStatusFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [editBill, setEditBill] = useState<Bill | null>(null)
@@ -1206,13 +1282,19 @@ function BillsTab() {
 
   const { data: billBankAccounts = [] } = useQuery<BankAccount[]>({
     queryKey: ['bank-accounts-bill-paid'],
-    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS + '?page_size=100').then(r => r.data?.results ?? []),
+    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS + '?page_size=100').then(r => r.data?.data ?? r.data?.results ?? []),
     enabled: !!markPaidBill,
   })
 
   const { data, isLoading } = useQuery<ApiPage<Bill>>({
-    queryKey: ['bills', statusFilter],
-    queryFn: () => apiClient.get(ACCOUNTING.BILLS + (statusFilter ? `?status=${statusFilter}` : '')).then(r => toPage<Bill>(r.data)),
+    queryKey: ['bills', statusFilter, fyYear],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (statusFilter) params.set('status', statusFilter)
+      if (fyYear)       params.set('fiscal_year', String(fyYear))
+      const qs = params.toString()
+      return apiClient.get(qs ? `${ACCOUNTING.BILLS}?${qs}` : ACCOUNTING.BILLS).then(r => toPage<Bill>(r.data))
+    },
   })
 
   const approve  = useMutation({
@@ -1342,9 +1424,10 @@ function PaymentsTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const user = useAuthStore(s => s.user)
+  const { fyYear } = useFY()
   const { data, isLoading } = useQuery<ApiPage<Payment>>({
-    queryKey: ['payments'],
-    queryFn: () => apiClient.get(ACCOUNTING.PAYMENTS).then(r => toPage<Payment>(r.data)),
+    queryKey: ['payments', fyYear],
+    queryFn: () => apiClient.get(addFyParam(ACCOUNTING.PAYMENTS, fyYear)).then(r => toPage<Payment>(r.data)),
   })
   const mutateDeletePayment = useMutation({
     mutationFn: (id: number) => apiClient.delete(ACCOUNTING.PAYMENT_DETAIL(id)),
@@ -1402,10 +1485,11 @@ function CreditNotesTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const user = useAuthStore(s => s.user)
+  const { fyYear } = useFY()
   const [editCn, setEditCn] = useState<CreditNote | null>(null)
   const { data, isLoading } = useQuery<ApiPage<CreditNote>>({
-    queryKey: ['credit-notes'],
-    queryFn: () => apiClient.get(ACCOUNTING.CREDIT_NOTES).then(r => toPage<CreditNote>(r.data)),
+    queryKey: ['credit-notes', fyYear],
+    queryFn: () => apiClient.get(addFyParam(ACCOUNTING.CREDIT_NOTES, fyYear)).then(r => toPage<CreditNote>(r.data)),
   })
   const mutateIssue = useMutation({
     mutationFn: (id: number) => apiClient.post(ACCOUNTING.CREDIT_NOTE_ISSUE(id)),
@@ -1609,7 +1693,7 @@ function JournalEditModal({ je, onClose }: { je: JournalEntry; onClose: () => vo
   const { data: accounts = [] } = useQuery<Account[]>({
     queryKey: ['accounts-flat'],
     queryFn: () => apiClient.get(ACCOUNTING.ACCOUNTS + '?no_page=1').then(r =>
-      Array.isArray(r.data) ? r.data : (r.data?.results ?? [])
+      Array.isArray(r.data) ? r.data : (r.data?.data ?? r.data?.results ?? [])
     ),
   })
 
@@ -1659,7 +1743,7 @@ function JournalEditModal({ je, onClose }: { je: JournalEntry; onClose: () => vo
         </div>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Date *">
-            <input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} required />
+            <NepaliDatePicker value={date} onChange={setDate} />
           </Field>
           <Field label="Description *">
             <input value={description} onChange={e => setDescription(e.target.value)}
@@ -1767,7 +1851,7 @@ function JournalCreateModal({ onClose }: { onClose: () => void }) {
   const { data: accounts = [] } = useQuery<Account[]>({
     queryKey: ['accounts-flat'],
     queryFn: () => apiClient.get(ACCOUNTING.ACCOUNTS + '?no_page=1').then(r =>
-      Array.isArray(r.data) ? r.data : (r.data?.results ?? [])
+      Array.isArray(r.data) ? r.data : (r.data?.data ?? r.data?.results ?? [])
     ),
   })
 
@@ -1814,7 +1898,7 @@ function JournalCreateModal({ onClose }: { onClose: () => void }) {
       <form onSubmit={submit} className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <Field label="Date *">
-            <input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} required />
+            <NepaliDatePicker value={date} onChange={setDate} />
           </Field>
           <Field label="Description *">
             <input value={description} onChange={e => setDescription(e.target.value)}
@@ -1919,9 +2003,10 @@ function JournalsTab() {
   const [expanded, setExpanded] = useState<number | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [editJournal, setEditJournal] = useState<JournalEntry | null>(null)
+  const { fyYear } = useFY()
   const { data, isLoading } = useQuery<ApiPage<JournalEntry>>({
-    queryKey: ['journals'],
-    queryFn: () => apiClient.get(ACCOUNTING.JOURNALS).then(r => toPage<JournalEntry>(r.data)),
+    queryKey: ['journals', fyYear],
+    queryFn: () => apiClient.get(addFyParam(ACCOUNTING.JOURNALS, fyYear)).then(r => toPage<JournalEntry>(r.data)),
   })
   const mutatePost = useMutation({
     mutationFn: (id: number) => apiClient.post(ACCOUNTING.JOURNAL_POST(id)),
@@ -2230,7 +2315,7 @@ function AccountsTab() {
   const { data, isLoading } = useQuery<Account[]>({
     queryKey: ['accounts'],
     queryFn: () => apiClient.get(ACCOUNTING.ACCOUNTS + '?no_page=1').then(r =>
-      Array.isArray(r.data) ? r.data : (r.data?.results ?? [])),
+      Array.isArray(r.data) ? r.data : (r.data?.data ?? r.data?.results ?? [])),
   })
 
   const [inlineAdd,  setInlineAdd]  = useState<InlineAddState | null>(null)
@@ -2462,7 +2547,7 @@ function CashPaymentCreateModal({ onClose }: { onClose: () => void }) {
       <form onSubmit={submit} className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <Field label="Date *">
-            <input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} required />
+            <NepaliDatePicker value={date} onChange={setDate} />
           </Field>
           <Field label="Type *">
             <select value={type} onChange={e => setType(e.target.value as 'incoming' | 'outgoing')} className={selectCls}>
@@ -2640,17 +2725,18 @@ function BanksTab() {
     queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS + '?page_size=200').then(r => toPage<BankAccount>(r.data)),
   })
 
+  const { fyYear } = useFY()
   // Cash ledger (method=cash, all entries)
   const { data: cashData, isLoading: cashLoading } = useQuery<ApiPage<Payment>>({
-    queryKey: ['cash-ledger'],
-    queryFn: () => apiClient.get(`${ACCOUNTING.PAYMENTS}?method=cash&page_size=500&ordering=date`).then(r => toPage<Payment>(r.data)),
+    queryKey: ['cash-ledger', fyYear],
+    queryFn: () => apiClient.get(addFyParam(`${ACCOUNTING.PAYMENTS}?method=cash&page_size=500&ordering=date`, fyYear)).then(r => toPage<Payment>(r.data)),
     enabled: subTab === 'cash',
   })
 
   // Bank statement — payments for the selected bank account, oldest first for running balance
   const { data: stmtData, isLoading: stmtLoading } = useQuery<ApiPage<Payment>>({
-    queryKey: ['bank-statement', selectedBankId],
-    queryFn: () => apiClient.get(`${ACCOUNTING.PAYMENTS}?bank_account=${selectedBankId}&page_size=500&ordering=date`).then(r => toPage<Payment>(r.data)),
+    queryKey: ['bank-statement', selectedBankId, fyYear],
+    queryFn: () => apiClient.get(addFyParam(`${ACCOUNTING.PAYMENTS}?bank_account=${selectedBankId}&page_size=500&ordering=date`, fyYear)).then(r => toPage<Payment>(r.data)),
     enabled: subTab === 'statement' && !!selectedBankId,
   })
 
@@ -2983,9 +3069,10 @@ function PayslipsTab() {
   const [editSalary, setEditSalary] = useState<StaffSalaryProfile | null>(null)
   const [salaryForm, setSalaryForm] = useState({ staff: '', base_salary: '0', tds_rate: '10', bonus_default: '0', effective_from: new Date().toISOString().slice(0, 10), notes: '' })
 
+  const { fyYear } = useFY()
   const { data: payslips, isLoading: psLoading } = useQuery<ApiPage<Payslip>>({
-    queryKey: ['payslips'],
-    queryFn: () => apiClient.get(ACCOUNTING.PAYSLIPS).then(r => toPage<Payslip>(r.data)),
+    queryKey: ['payslips', fyYear],
+    queryFn: () => apiClient.get(addFyParam(ACCOUNTING.PAYSLIPS, fyYear)).then(r => toPage<Payslip>(r.data)),
   })
   const { data: coins, isLoading: coinsLoading } = useQuery<ApiPage<CoinTx>>({
     queryKey: ['coins'],
@@ -2995,7 +3082,7 @@ function PayslipsTab() {
   const { data: staffList = [] } = useQuery<{ id: number; full_name: string; display_name: string; email: string }[]>({
     queryKey: ['staff-list'],
     queryFn: () => apiClient.get(STAFF.LIST + '?page_size=500').then(r =>
-      Array.isArray(r.data) ? r.data : (r.data?.results ?? [])
+      Array.isArray(r.data) ? r.data : (r.data?.data ?? r.data?.results ?? [])
     ),
     enabled: showGenerate || showSalaryForm,
   })
@@ -3008,7 +3095,7 @@ function PayslipsTab() {
   // Bank accounts for Mark Paid modal
   const { data: bankAccountsList = [] } = useQuery<BankAccount[]>({
     queryKey: ['bank-accounts-payslip'],
-    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS + '?page_size=100').then(r => r.data?.results ?? []),
+    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS + '?page_size=100').then(r => r.data?.data ?? r.data?.results ?? []),
     enabled: !!markPaidPayslip,
   })
 
@@ -3063,9 +3150,9 @@ function PayslipsTab() {
 
   // Generate payslip modal state
   const today = new Date().toISOString().slice(0, 10)
-  const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
+  const fyrStart = fiscalYearAdParams(currentFiscalYear()).date_from
   const [genForm, setGenForm] = useState({
-    staff: '', period_start: firstOfMonth, period_end: today,
+    staff: '', period_start: fyrStart, period_end: today,
     base_salary: '0', bonus: '0', deductions: '0', tds_rate: '0', employee_pan: '',
   })
   // Auto-fill generate form from salary profile when staff is selected
@@ -3094,7 +3181,7 @@ function PayslipsTab() {
       qc.invalidateQueries({ queryKey: ['payslips'] })
       qc.invalidateQueries({ queryKey: ['tds'] })
       setShowGenerate(false)
-      setGenForm({ staff: '', period_start: firstOfMonth, period_end: today, base_salary: '0', bonus: '0', deductions: '0', tds_rate: '0', employee_pan: '' })
+      setGenForm({ staff: '', period_start: fyrStart, period_end: today, base_salary: '0', bonus: '0', deductions: '0', tds_rate: '0', employee_pan: '' })
     },
     onError: (e: { response?: { data?: { detail?: string } } }) =>
       toast.error(e?.response?.data?.detail ?? 'Failed to generate payslip'),
@@ -3174,12 +3261,12 @@ function PayslipsTab() {
             </Field>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Period Start *">
-                <input type="date" className={inputCls} value={genForm.period_start}
-                  onChange={e => setGenForm(f => ({ ...f, period_start: e.target.value }))} required />
+                <NepaliDatePicker value={genForm.period_start}
+                  onChange={v => setGenForm(f => ({ ...f, period_start: v }))} required />
               </Field>
               <Field label="Period End *">
-                <input type="date" className={inputCls} value={genForm.period_end}
-                  onChange={e => setGenForm(f => ({ ...f, period_end: e.target.value }))} required />
+                <NepaliDatePicker value={genForm.period_end}
+                  onChange={v => setGenForm(f => ({ ...f, period_end: v }))} required />
               </Field>
             </div>
             <div className="grid grid-cols-3 gap-3">
@@ -3350,8 +3437,7 @@ function PayslipsTab() {
                   </Field>
                 </div>
                 <Field label="Effective From *">
-                  <input type="date" className={inputCls} value={salaryForm.effective_from}
-                    onChange={e => setSalaryForm(f => ({ ...f, effective_from: e.target.value }))} required />
+                  <NepaliDatePicker value={salaryForm.effective_from} onChange={v => setSalaryForm(f => ({ ...f, effective_from: v }))} />
                 </Field>
                 <Field label="Notes">
                   <textarea className={inputCls} rows={2} value={salaryForm.notes}
@@ -3444,12 +3530,10 @@ function PayslipEditModal({ ps, onClose }: { ps: Payslip; onClose: () => void })
       <form className="space-y-4" onSubmit={e => { e.preventDefault(); mutateSave.mutate(form) }}>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Period Start">
-            <input type="date" className={inputCls} value={form.period_start}
-              onChange={e => setForm(f => ({ ...f, period_start: e.target.value }))} />
+            <NepaliDatePicker value={form.period_start} onChange={v => setForm(f => ({ ...f, period_start: v }))} />
           </Field>
           <Field label="Period End">
-            <input type="date" className={inputCls} value={form.period_end}
-              onChange={e => setForm(f => ({ ...f, period_end: e.target.value }))} />
+            <NepaliDatePicker value={form.period_end} onChange={v => setForm(f => ({ ...f, period_end: v }))} />
           </Field>
         </div>
         <div className="grid grid-cols-3 gap-3">
@@ -3581,7 +3665,7 @@ function MarkPaidModal({
 function TransactionReceiptModal({ payment, onClose }: { payment: Payment; onClose: () => void }) {
   const npr = (v: string | number) =>
     new Intl.NumberFormat('ne-NP', { style: 'currency', currency: 'NPR' }).format(Number(v))
-  const fmt = (d: string) => d ? new Date(d).toLocaleDateString('en-NP', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'
+  const fmt = (d: string) => d ? (adStringToBsDisplay(d)?.bs ?? '—') : '—'
   const methodLabel: Record<string, string> = {
     cash: 'Cash', bank_transfer: 'Bank Transfer', cheque: 'Cheque',
     esewa: 'eSewa', khalti: 'Khalti',
@@ -4136,9 +4220,10 @@ function toCSV(key: ReportType, data: Record<string, unknown>): string {
 
 function ReportsTab() {
   const today        = new Date().toISOString().slice(0, 10)
-  const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
+  const fy           = currentFiscalYear()
+  const fyParams     = fiscalYearAdParams(fy)
   const [reportKey, setReportKey] = useState<ReportType>('pl')
-  const [dateFrom,  setDateFrom]  = useState(firstOfMonth)
+  const [dateFrom,  setDateFrom]  = useState(fyParams.date_from)
   const [dateTo,    setDateTo]    = useState(today)
 
   const report     = REPORTS.find(r => r.key === reportKey)!
@@ -4245,19 +4330,46 @@ ${el.innerHTML}
             <label className="block text-xs text-gray-500 mb-1 font-medium">
               {isVat ? 'Period Start' : 'Date From'}
             </label>
-            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-              className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
+            <NepaliDatePicker value={dateFrom} onChange={v => setDateFrom(v)} />
           </div>
         )}
         <div>
           <label className="block text-xs text-gray-500 mb-1 font-medium">
             {isAsOf ? 'As Of Date' : isVat ? 'Period End' : 'Date To'}
           </label>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
+          <NepaliDatePicker value={dateTo} onChange={v => setDateTo(v)} />
         </div>
+        {/* Fiscal year quick selects */}
+        {!isAsOf && (
+          <div className="flex gap-2 pb-0.5">
+            <button
+              onClick={() => {
+                const p = fiscalYearAdParams(fy)
+                setDateFrom(p.date_from)
+                setDateTo(today)
+              }}
+              className="px-3 py-2 text-xs font-semibold border border-indigo-300 text-indigo-700 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition"
+              title={`FY ${fy.label} (Shrawan 1 to today)`}
+            >
+              This FY
+            </button>
+            <button
+              onClick={() => {
+                // Go 1 day before current FY start = last day of previous FY
+                const { startAd } = fiscalYearDateRange(fy)
+                const prevFyLastDay = new Date(startAd.getTime() - 86_400_000)
+                const lastFy = fiscalYearOf(prevFyLastDay)
+                const p = fiscalYearAdParams(lastFy)
+                setDateFrom(p.date_from)
+                setDateTo(p.date_to)
+              }}
+              className="px-3 py-2 text-xs font-semibold border border-gray-300 text-gray-600 bg-gray-50 rounded-lg hover:bg-gray-100 transition"
+              title="Previous completed fiscal year"
+            >
+              Last FY
+            </button>
+          </div>
+        )}
         <button onClick={() => refetch()}
           className="px-5 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2"
         >
@@ -4327,7 +4439,7 @@ function FinanceReviewTab() {
     queryFn: () =>
       apiClient
         .get(ACCOUNTING.INVOICES_PENDING_FINANCE)
-        .then(r => (Array.isArray(r.data) ? r.data : (r.data.results ?? []))),
+        .then(r => (Array.isArray(r.data) ? r.data : (r.data.data ?? r.data.results ?? []))),
     refetchInterval: 30_000,
   })
 
@@ -4432,7 +4544,7 @@ function FinanceReviewTab() {
             <div className="flex gap-6 text-sm text-gray-500">
               <span>Subtotal: <strong className="text-gray-700">Rs. {parseFloat(inv.subtotal).toFixed(2)}</strong></span>
               <span>VAT: <strong className="text-gray-700">Rs. {parseFloat(inv.vat_amount).toFixed(2)}</strong></span>
-              <span>Created: <strong className="text-gray-700">{inv.created_at?.slice(0, 10)}</strong></span>
+              <span>Created: <strong className="text-gray-700"><DateDisplay adDate={inv.created_at} compact /></strong></span>
             </div>
 
             {/* Notes input + approve/reject */}
@@ -4489,10 +4601,11 @@ function QuotationsTab() {
   const [statusFilter, setStatusFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [editQuotation, setEditQuotation] = useState<Quotation | null>(null)
+  const { fyYear } = useFY()
 
   const { data, isLoading } = useQuery<ApiPage<Quotation>>({
-    queryKey: ['quotations', statusFilter],
-    queryFn: () => apiClient.get(ACCOUNTING.QUOTATIONS + (statusFilter ? `?status=${statusFilter}` : '')).then(r => toPage<Quotation>(r.data)),
+    queryKey: ['quotations', statusFilter, fyYear],
+    queryFn: () => apiClient.get(addFyParam(ACCOUNTING.QUOTATIONS + (statusFilter ? `?status=${statusFilter}` : ''), fyYear)).then(r => toPage<Quotation>(r.data)),
   })
 
   const mutateSend    = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.QUOTATION_SEND(id)),    onSuccess: () => { toast.success('Quotation sent'); qc.invalidateQueries({ queryKey: ['quotations'] }) }, onError: () => toast.error('Action failed') })
@@ -4650,7 +4763,7 @@ function QuotationCreateModal({ onClose }: { onClose: () => void }) {
             </select>
           </Field>
           <Field label="Valid Until">
-            <input type="date" value={validUntil} onChange={e => setValidUntil(e.target.value)} className={inputCls} />
+            <NepaliDatePicker value={validUntil} onChange={setValidUntil} />
           </Field>
           <Field label="Discount (NPR)" hint="Flat discount on subtotal">
             <input type="number" min="0" step="0.01" value={discount} onChange={e => setDiscount(e.target.value)} className={inputCls} />
@@ -4761,7 +4874,7 @@ function QuotationEditModal({ quo, onClose }: { quo: Quotation; onClose: () => v
             </select>
           </Field>
           <Field label="Valid Until">
-            <input type="date" value={validUntil} onChange={e => setValidUntil(e.target.value)} className={inputCls} />
+            <NepaliDatePicker value={validUntil} onChange={setValidUntil} />
           </Field>
           <Field label="Discount (NPR)">
             <input type="number" min="0" step="0.01" value={discount} onChange={e => setDiscount(e.target.value)} className={inputCls} />
@@ -4822,10 +4935,11 @@ const DN_STATUS: Record<string, string> = {
 function DebitNotesTab() {
   const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState('')
+  const { fyYear } = useFY()
 
   const { data, isLoading } = useQuery<ApiPage<DebitNote>>({
-    queryKey: ['debit-notes', statusFilter],
-    queryFn: () => apiClient.get(ACCOUNTING.DEBIT_NOTES + (statusFilter ? `?status=${statusFilter}` : '')).then(r => toPage<DebitNote>(r.data)),
+    queryKey: ['debit-notes', statusFilter, fyYear],
+    queryFn: () => apiClient.get(addFyParam(ACCOUNTING.DEBIT_NOTES + (statusFilter ? `?status=${statusFilter}` : ''), fyYear)).then(r => toPage<DebitNote>(r.data)),
   })
 
   const mutateIssue = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.DEBIT_NOTE_ISSUE(id)), onSuccess: () => { toast.success('Debit note issued'); qc.invalidateQueries({ queryKey: ['debit-notes'] }) }, onError: (e: {response?: {data?: {detail?: string}}}) => toast.error(e?.response?.data?.detail ?? 'Failed') })
@@ -4967,7 +5081,7 @@ function TDSTab() {
   const [statusFilter, setStatusFilter] = useState('')
   const [yearFilter, setYearFilter] = useState('')
   const [editTds, setEditTds] = useState<TDSEntry | null>(null)
-  const thisYear = new Date().getFullYear() + 57
+  const thisYear = currentFiscalYear().bsYear
 
   const { data, isLoading } = useQuery<ApiPage<TDSEntry>>({
     queryKey: ['tds', statusFilter, yearFilter],
@@ -5106,7 +5220,7 @@ function BankReconciliationTab() {
 
   const { data: banks } = useQuery({
     queryKey: ['bank-accounts'],
-    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS + '?page_size=100').then(r => r.data?.results ?? []),
+    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS + '?page_size=100').then(r => r.data?.data ?? r.data?.results ?? []),
   })
 
   const { data, isLoading } = useQuery<ApiPage<BankReconciliation>>({
@@ -5178,7 +5292,7 @@ function BankReconciliationTab() {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Statement Date</label>
-              <input type="date" value={newRec.statement_date} onChange={e => setNewRec(p => ({ ...p, statement_date: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <NepaliDatePicker value={newRec.statement_date} onChange={v => setNewRec(p => ({ ...p, statement_date: v }))} />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Opening Balance</label>
@@ -5274,7 +5388,7 @@ function BankReconciliationTab() {
                   <div className="flex flex-wrap gap-3 items-end">
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">Date</label>
-                      <input type="date" value={newLine.date} onChange={e => setNewLine(p => ({ ...p, date: e.target.value }))} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                      <NepaliDatePicker value={newLine.date} onChange={v => setNewLine(p => ({ ...p, date: v }))} />
                     </div>
                     <div className="flex-1 min-w-[160px]">
                       <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
@@ -5399,11 +5513,11 @@ function RecurringJournalsTab() {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Start Date *</label>
-              <input type="date" value={form.start_date} onChange={e => setForm(p => ({ ...p, start_date: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <NepaliDatePicker value={form.start_date} onChange={v => setForm(p => ({ ...p, start_date: v }))} label="Start Date" required />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">End Date (optional)</label>
-              <input type="date" value={form.end_date} onChange={e => setForm(p => ({ ...p, end_date: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <NepaliDatePicker value={form.end_date} onChange={v => setForm(p => ({ ...p, end_date: v }))} label="End Date" />
             </div>
             <div className="sm:col-span-2">
               <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
@@ -5521,7 +5635,7 @@ function LedgerTab() {
   })
 
   const [accountCode, setAccountCode] = useState('')
-  const [dateFrom, setDateFrom] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10))
+  const [dateFrom, setDateFrom] = useState(() => fiscalYearAdParams(currentFiscalYear()).date_from)
   const [dateTo, setDateTo]     = useState(() => new Date().toISOString().slice(0, 10))
   const [submitted, setSubmitted] = useState(false)
 
@@ -5547,18 +5661,32 @@ function LedgerTab() {
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
-            <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setSubmitted(false) }} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <NepaliDatePicker value={dateFrom} onChange={v => { setDateFrom(v); setSubmitted(false) }} />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
-            <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setSubmitted(false) }} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <NepaliDatePicker value={dateTo} onChange={v => { setDateTo(v); setSubmitted(false) }} />
           </div>
         </div>
-        <button onClick={() => { if (!accountCode) { toast.error('Select an account'); return } setSubmitted(true) }} disabled={!accountCode || isFetching}
-          className="mt-4 flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50">
-          {(isLoading || isFetching) ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
-          Run Ledger
-        </button>
+        <div className="flex flex-wrap items-center gap-2 mt-4">
+          <button onClick={() => { if (!accountCode) { toast.error('Select an account'); return } setSubmitted(true) }} disabled={!accountCode || isFetching}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50">
+            {(isLoading || isFetching) ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+            Run Ledger
+          </button>
+          <button onClick={() => { const p = fiscalYearAdParams(currentFiscalYear()); setDateFrom(p.date_from); setDateTo(new Date().toISOString().slice(0, 10)); setSubmitted(false) }}
+            className="px-3 py-2 text-xs font-semibold border border-indigo-300 text-indigo-700 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition">
+            This FY
+          </button>
+          <button onClick={() => {
+            const fy = currentFiscalYear(); const { startAd } = fiscalYearDateRange(fy)
+            const lastFy = fiscalYearOf(new Date(startAd.getTime() - 86_400_000))
+            const p = fiscalYearAdParams(lastFy); setDateFrom(p.date_from); setDateTo(p.date_to); setSubmitted(false)
+          }}
+            className="px-3 py-2 text-xs font-semibold border border-gray-300 text-gray-600 bg-gray-50 rounded-lg hover:bg-gray-100 transition">
+            Last FY
+          </button>
+        </div>
       </div>
 
       {submitted && (isLoading || isFetching) && <div className="flex justify-center py-10"><Loader2 size={28} className="animate-spin text-indigo-400" /></div>}
@@ -5629,8 +5757,7 @@ function DayBookTab() {
         <div className="flex flex-wrap items-end gap-4">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Date</label>
-            <input type="date" value={date} onChange={e => { setDate(e.target.value); setSubmitted(false) }}
-              className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <NepaliDatePicker value={date} onChange={v => { setDate(v); setSubmitted(false) }} />
           </div>
           <button onClick={() => setSubmitted(true)}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
@@ -5726,6 +5853,11 @@ function DayBookTab() {
 export default function AccountingPage() {
   const [searchParams] = useSearchParams()
   const activeTab = searchParams.get('tab') ?? ''
+  const { fyYear, setFyYear } = useFyStore()
+
+  // Tabs with their own date-range controls don't need the global FY bar
+  const HIDE_FY_BAR = new Set(['reports', 'ledger', 'day-book', 'accounts', 'tds', 'bank-reconciliation', 'recurring-journals'])
+  const showFyBar = !HIDE_FY_BAR.has(activeTab)
 
   function renderTab() {
     switch (activeTab) {
@@ -5769,7 +5901,8 @@ export default function AccountingPage() {
             {currentTab.label}
           </h2>
         </div>
-        {renderTab()}
+          {showFyBar && <FiscalYearBar />}
+          {renderTab()}
       </main>
     </div>
   )

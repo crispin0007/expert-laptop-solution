@@ -1,6 +1,7 @@
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
+from core.serializers import NepaliModelSerializer
 from .models import (
     Vehicle, VehicleLog,
     Ticket, TicketType, TicketComment, TicketTransfer,
@@ -72,7 +73,7 @@ class TicketTypeSerializer(serializers.ModelSerializer):
 
 # ── Ticket (read) ─────────────────────────────────────────────────────────────
 
-class TicketSerializer(serializers.ModelSerializer):
+class TicketSerializer(NepaliModelSerializer):
     """Full read serializer — includes human-readable names for FK fields."""
     ticket_type_name   = serializers.CharField(source='ticket_type.name',        read_only=True, default='')
     customer_name      = serializers.CharField(source='customer.name',            read_only=True, default='')
@@ -148,7 +149,7 @@ class TicketSerializer(serializers.ModelSerializer):
 
 # ── Ticket (create / update) ──────────────────────────────────────────────────
 
-class TicketCreateSerializer(serializers.ModelSerializer):
+class TicketCreateSerializer(NepaliModelSerializer):
     """Write serializer — computes SLA deadline on creation."""
     team_members = serializers.PrimaryKeyRelatedField(
         many=True,
@@ -268,7 +269,7 @@ class TicketCreateSerializer(serializers.ModelSerializer):
 
 # ── SLA ───────────────────────────────────────────────────────────────────────
 
-class TicketSLASerializer(serializers.ModelSerializer):
+class TicketSLASerializer(NepaliModelSerializer):
     ticket_number = serializers.CharField(source='ticket.ticket_number', read_only=True)
     ticket_title  = serializers.CharField(source='ticket.title',         read_only=True)
 

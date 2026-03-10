@@ -5,6 +5,8 @@ from .views import (
     UserViewSet, TenantMembershipViewSet, MeView, LogoutView,
     StaffAvailabilityView, StaffViewSet,
     TenantTokenObtainPairView, TenantTokenRefreshView,
+    TwoFASetupView, TwoFAConfirmSetupView, TwoFAVerifyView,
+    TwoFADisableView, TwoFABackupCodesView, TwoFARegenerateBackupCodesView,
 )
 
 router = DefaultRouter()
@@ -20,6 +22,14 @@ urlpatterns = [
     path('token/refresh/', TenantTokenRefreshView.as_view(), name='token_refresh'),
     path('logout/', LogoutView.as_view(), name='logout'),
     path('me/', MeView.as_view(), name='me'),
+
+    # Two-Factor Authentication
+    path('2fa/setup/',                         TwoFASetupView.as_view(),               name='2fa_setup'),
+    path('2fa/confirm-setup/',                 TwoFAConfirmSetupView.as_view(),         name='2fa_confirm_setup'),
+    path('2fa/verify/',                        TwoFAVerifyView.as_view(),               name='2fa_verify'),
+    path('2fa/disable/',                       TwoFADisableView.as_view(),              name='2fa_disable'),
+    path('2fa/backup-codes/',                  TwoFABackupCodesView.as_view(),          name='2fa_backup_codes'),
+    path('2fa/backup-codes/regenerate/',       TwoFARegenerateBackupCodesView.as_view(),name='2fa_backup_codes_regenerate'),
 
     path('', include(router.urls)),
 ]

@@ -1,0 +1,48 @@
+name: EAS Production Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  production:
+    name: EAS Production Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup Expo
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build production (iOS)
+        run: eas build --profile production --platform ios --non-interactive
+
+      - name: Build production (Android)
+        run: eas build --profile production --platform android --non-interactive
+
+      - name: Submit to App Store
+        run: eas submit --profile production --platform ios --non-interactive
+        env:
+          EXPO_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+
+      - name: Submit to Play Store
+        run: eas submit --profile production --platform android --non-interactive

@@ -13,6 +13,7 @@ import { type Tenant } from './EditTenantModal'
 import EditTenantModal from './EditTenantModal'
 import Modal from '../../components/Modal'
 import { useConfirm } from '../../components/ConfirmDialog'
+import DateDisplay from '../../components/DateDisplay'
 
 // ─── Module / override types ────────────────────────────────────────────────
 interface ModuleItem {
@@ -435,7 +436,7 @@ export default function TenantDetailPage() {
           <InfoRow label="VAT" value={tenant.vat_enabled ? `Enabled (${(parseFloat(tenant.vat_rate) * 100).toFixed(0)}%)` : 'Disabled'} />
           <InfoRow label="Coin Rate" value={`1 coin = ${tenant.coin_to_money_rate} ${tenant.currency}`} />
           <InfoRow label="Members" value={tenant.member_count} />
-          <InfoRow label="Created" value={new Date(tenant.created_at).toLocaleDateString()} />
+          <InfoRow label="Created" value={<DateDisplay adDate={tenant.created_at} compact />} />
           <InfoRow
             label="Custom Domain"
             value={tenant.custom_domain
@@ -489,7 +490,7 @@ export default function TenantDetailPage() {
                 </td>
                 <td className="px-4 py-3"><RoleBadge role={m.role} /></td>
                 <td className="px-4 py-3 text-xs text-gray-400">
-                  {m.join_date ? new Date(m.join_date).toLocaleDateString() : '—'}
+                  {m.join_date ? <DateDisplay adDate={m.join_date} compact /> : '—'}
                 </td>
                 <td className="px-4 py-3 text-center">
                   <button

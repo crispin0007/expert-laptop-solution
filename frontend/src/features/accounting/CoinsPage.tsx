@@ -4,10 +4,12 @@ import apiClient from '../../api/client'
 import { ACCOUNTING, STAFF } from '../../api/endpoints'
 import Modal from '../../components/Modal'
 import toast from 'react-hot-toast'
+import { useFyStore } from '../../store/fyStore'
 import {
   CheckCircle2, XCircle, Loader2, Coins, History, Plus,
 } from 'lucide-react'
 import { usePermissions } from '../../hooks/usePermissions'
+import DateDisplay from '../../components/DateDisplay'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -36,9 +38,7 @@ interface StaffCoinHistory {
   currency_value: number
 }
 
-function fmt(d: string) {
-  return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-}
+
 
 // ── Award Coins Modal ─────────────────────────────────────────────────────────
 
@@ -223,7 +223,7 @@ function StaffCoinHistoryPanel() {
                       <span className="text-gray-400 font-normal ml-2 text-xs">via {c.source_type}</span>
                     </p>
                     <p className="text-xs text-gray-400">
-                      {fmt(c.created_at)}
+                      <DateDisplay adDate={c.created_at} compact />
                       {c.note && <span className="ml-2 italic">"{c.note}"</span>}
                     </p>
                   </div>
@@ -250,16 +250,19 @@ export default function CoinsPage() {
   const qc = useQueryClient()
   const { isManager } = usePermissions()
   const managerView = isManager
+  const { fyYear } = useFyStore()
 
   const [statusFilter, setStatusFilter] = useState<'pending' | 'approved' | 'rejected' | ''>('pending')
   const [showAwardCoins, setShowAwardCoins] = useState(false)
 
   const { data: coins = [], isLoading } = useQuery<CoinTxn[]>({
-    queryKey: ['coins', statusFilter],
+    queryKey: ['coins', statusFilter, fyYear],
     queryFn: () => {
-      const params = statusFilter ? `?status=${statusFilter}` : ''
-      return apiClient.get(ACCOUNTING.COINS + params).then(r =>
-        Array.isArray(r.data) ? r.data : r.data.results ?? []
+      const params: Record<string, string | number> = {}
+      if (statusFilter) params.status = statusFilter
+      if (fyYear) params.fiscal_year = fyYear
+      return apiClient.get(ACCOUNTING.COINS, { params }).then(r =>
+        Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []
       )
     },
   })
@@ -349,7 +352,7 @@ export default function CoinsPage() {
                     </span>
                   </p>
                   <p className="text-xs text-gray-400">
-                    {c.source_type} #{c.source_id} · {fmt(c.created_at)}
+                    {c.source_type} #{c.source_id} · <DateDisplay adDate={c.created_at} compact />
                     {c.note && <span className="ml-2 italic">"{c.note}"</span>}
                   </p>
                 </div>

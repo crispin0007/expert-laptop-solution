@@ -129,7 +129,24 @@ class TenantTokenObtainPairView(TokenObtainPairView):
                     'Contact your administrator.'
                 )
 
-        # Step 3: issue tenant-scoped tokens
+        # Step 3: 2FA gate — if enabled, pause and return a short-lived partial
+        # token. The client must verify the OTP at POST /auth/2fa/verify/ to
+        # receive the actual JWT pair. The partial token is a UUID stored in
+        # Redis for 5 minutes; it carries no sensitive data itself.
+        if user.is_2fa_enabled:
+            import uuid as _uuid
+            partial_token = str(_uuid.uuid4())
+            cache.set(
+                f'2fa_partial_{partial_token}',
+                {'user_id': user.pk, 'tenant_id': tenant.id if tenant else None},
+                timeout=300,
+            )
+            return Response({
+                'requires_2fa': True,
+                'two_factor_token': partial_token,
+            })
+
+        # Step 4: issue tenant-scoped tokens
         # tenant_id is embedded in the JWT payload and validated on every request
         # by TenantJWTAuthentication — no client-side value can override this.
         refresh = TenantRefreshToken.for_user_and_tenant(user, tenant)
@@ -587,4 +604,288 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
             'role': membership.role,
             'custom_role_id': membership.custom_role_id,
             'custom_role_name': membership.custom_role.name if membership.custom_role else None,
+        })
+
+
+# ── Two-Factor Authentication views ──────────────────────────────────────────
+
+class TwoFASetupView(APIView):
+    """
+    GET /api/v1/accounts/2fa/setup/
+
+    Generate a TOTP secret, persist it as *pending* (not yet active), and
+    return the provisioning URI for the authenticator app to scan.
+    Call POST /auth/2fa/confirm-setup/ with the first valid code to activate.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        import pyotp
+        import qrcode
+        import io
+        import base64
+        secret = pyotp.random_base32()
+        # Persist the pending secret — confirm-setup will verify against it
+        request.user.totp_secret = secret
+        request.user.save(update_fields=['totp_secret'])
+        totp = pyotp.TOTP(secret)
+        provisioning_uri = totp.provisioning_uri(
+            name=request.user.email,
+            issuer_name='NEXUS BMS',
+        )
+        # Generate QR code as base64 PNG data URI
+        qr = qrcode.make(provisioning_uri)
+        buf = io.BytesIO()
+        qr.save(buf, format='PNG')
+        qr_code_url = 'data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode()
+        return Response({
+            'secret': secret,
+            'provisioning_uri': provisioning_uri,
+            'qr_code_url': qr_code_url,
+            'is_2fa_enabled': request.user.is_2fa_enabled,
+        })
+
+
+class TwoFAConfirmSetupView(APIView):
+    """
+    POST /api/v1/accounts/2fa/confirm-setup/
+    Body: { "code": "123456" }
+
+    Verifies the first TOTP code from the authenticator app to activate 2FA.
+    Returns 8 one-time backup codes (shown exactly once — store them safely).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        import pyotp
+        from .serializers import TwoFAConfirmSerializer
+
+        ser = TwoFAConfirmSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        code = ser.validated_data['code']
+
+        user = request.user
+        if not user.totp_secret:
+            return Response(
+                {'detail': 'No pending 2FA setup. Call GET /2fa/setup/ first.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if user.is_2fa_enabled:
+            return Response(
+                {'detail': '2FA is already enabled. Disable it first to re-configure.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        totp = pyotp.TOTP(user.totp_secret)
+        if not totp.verify(code, valid_window=1):
+            return Response(
+                {'detail': 'Invalid code. Please try again or ensure your device clock is accurate.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        plain_codes = user.generate_backup_codes(count=8)
+        user.is_2fa_enabled = True
+        user.save(update_fields=['is_2fa_enabled', 'totp_secret', 'backup_codes'])
+
+        log_event(
+            AuditEvent.TWO_FA_ENABLED,
+            request=request,
+            actor=user,
+            tenant=getattr(request, 'tenant', None),
+        )
+        return Response({
+            'detail': '2FA enabled successfully.',
+            'backup_codes': plain_codes,
+        }, status=status.HTTP_200_OK)
+
+
+class TwoFAVerifyView(APIView):
+    """
+    POST /api/v1/accounts/2fa/verify/
+    Body: { "two_factor_token": "<uuid>", "code": "123456" }
+
+    Step 2 of the 2FA login flow. Validates the TOTP code (or a backup code)
+    against the pending partial token issued at login. On success returns the
+    full JWT pair and invalidates the partial token (single-use).
+    """
+    throttle_classes = [LoginRateThrottle]
+
+    def post(self, request):
+        import pyotp
+        from .serializers import TwoFAVerifySerializer
+        from django.contrib.auth import get_user_model as _get_user_model
+
+        ser = TwoFAVerifySerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        two_factor_token = ser.validated_data['two_factor_token']
+        code             = ser.validated_data['code']
+
+        # Validate the partial token stored in cache
+        cache_key = f'2fa_partial_{two_factor_token}'
+        cached    = cache.get(cache_key)
+        if not cached:
+            return Response(
+                {'detail': 'Invalid or expired two_factor_token. Please log in again.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        _User  = _get_user_model()
+        tenant = None
+        try:
+            user = _User.objects.get(pk=cached['user_id'])
+        except _User.DoesNotExist:
+            cache.delete(cache_key)
+            return Response({'detail': 'User not found.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        tenant_id = cached.get('tenant_id')
+        if tenant_id:
+            from tenants.models import Tenant as _Tenant
+            try:
+                tenant = _Tenant.objects.get(pk=tenant_id)
+            except _Tenant.DoesNotExist:
+                pass
+
+        # Verify TOTP or backup code
+        verified = False
+        if user.totp_secret:
+            verified = pyotp.TOTP(user.totp_secret).verify(code, valid_window=1)
+
+        if not verified:
+            # Fallback: single-use backup code
+            if user.verify_backup_code(code):
+                user.save(update_fields=['backup_codes'])
+                verified = True
+
+        if not verified:
+            log_event(
+                AuditEvent.LOGIN_FAILED,
+                request=request,
+                actor=user,
+                tenant=tenant,
+                extra={'email': user.email, 'reason': 'invalid_2fa_code'},
+            )
+            return Response(
+                {'detail': 'Invalid 2FA code.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        # Partial token is single-use — invalidate immediately after success
+        cache.delete(cache_key)
+
+        refresh = TenantRefreshToken.for_user_and_tenant(user, tenant)
+        log_event(
+            AuditEvent.LOGIN_SUCCESS,
+            request=request,
+            actor=user,
+            tenant=tenant,
+            extra={'email': user.email, 'two_fa': True},
+        )
+        return Response({
+            'access':  str(refresh.access_token),
+            'refresh': str(refresh),
+        })
+
+
+class TwoFADisableView(APIView):
+    """
+    POST /api/v1/accounts/2fa/disable/
+    Body: { "code": "123456", "password": "current-password" }
+
+    Disables 2FA. Requires both the current TOTP code and the account password
+    to prevent an attacker who has hijacked a session from silently removing 2FA.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        import pyotp
+        from .serializers import TwoFADisableSerializer
+
+        ser = TwoFADisableSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        code     = ser.validated_data['code']
+        password = ser.validated_data['password']
+
+        user = request.user
+        if not user.is_2fa_enabled:
+            return Response(
+                {'detail': '2FA is not enabled on this account.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not user.check_password(password):
+            return Response(
+                {'detail': 'Incorrect password.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not pyotp.TOTP(user.totp_secret).verify(code, valid_window=1):
+            return Response(
+                {'detail': 'Invalid 2FA code.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.is_2fa_enabled = False
+        user.totp_secret    = ''
+        user.backup_codes   = []
+        user.save(update_fields=['is_2fa_enabled', 'totp_secret', 'backup_codes'])
+
+        log_event(
+            AuditEvent.TWO_FA_DISABLED,
+            request=request,
+            actor=user,
+            tenant=getattr(request, 'tenant', None),
+        )
+        return Response({'detail': '2FA disabled.'})
+
+
+class TwoFABackupCodesView(APIView):
+    """
+    GET /api/v1/accounts/2fa/backup-codes/
+    Returns the count of remaining backup codes (not the codes themselves).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_2fa_enabled:
+            return Response(
+                {'detail': '2FA is not enabled on this account.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({'remaining_backup_codes': len(request.user.backup_codes or [])})
+
+
+class TwoFARegenerateBackupCodesView(APIView):
+    """
+    POST /api/v1/accounts/2fa/backup-codes/regenerate/
+    Body: { "code": "123456" }
+
+    Regenerates all 8 backup codes. Invalidates all previous backup codes.
+    Requires a valid current TOTP code. Returns new plain codes exactly once.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        import pyotp
+        from .serializers import TwoFAConfirmSerializer
+
+        ser = TwoFAConfirmSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        code = ser.validated_data['code']
+
+        user = request.user
+        if not user.is_2fa_enabled:
+            return Response(
+                {'detail': '2FA is not enabled on this account.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not pyotp.TOTP(user.totp_secret).verify(code, valid_window=1):
+            return Response(
+                {'detail': 'Invalid 2FA code.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        plain_codes = user.generate_backup_codes(count=8)
+        user.save(update_fields=['backup_codes'])
+
+        return Response({
+            'backup_codes': plain_codes,
+            'detail': '8 new backup codes generated. Store them safely — they will not be shown again.',
         })

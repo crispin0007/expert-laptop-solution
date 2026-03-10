@@ -55,6 +55,17 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
 
+# Mobile app: honour X-Tenant-Slug header in production.
+# Mobile clients cannot use subdomains; they identify their tenant via this header.
+# Data-access security is enforced by JWT authentication + TenantManager, NOT
+# by host/header trust alone.  See core/middleware.py for full rationale.
+ALLOW_TENANT_SLUG_HEADER = True
+CORS_ALLOW_HEADERS = [
+    'accept', 'accept-encoding', 'authorization', 'content-type',
+    'dnt', 'origin', 'user-agent', 'x-csrftoken', 'x-requested-with',
+    'x-tenant-slug',  # required for mobile multi-tenancy
+]
+
 # Security headers
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SESSION_COOKIE_SECURE = True

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useDeferredValue } from 'react'
+import { useState, useEffect, useRef, useCallback, useDeferredValue, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
@@ -7,13 +7,15 @@ import {
   Package, User, Calendar, Flag, X, Paperclip, Download, FileText, Users,
   List, Clock, AlertTriangle, Edit3,
   Phone, BarChart2, Timer, GripVertical, TrendingUp,
-  ShoppingCart, CheckCheck, XCircle, ChevronDown, ChevronUp,
+  ShoppingCart, CheckCheck, XCircle, ChevronDown, ChevronUp, CalendarDays,
 } from 'lucide-react'
 import apiClient from '../../api/client'
 import { PROJECTS, STAFF, INVENTORY } from '../../api/endpoints'
 import { useAuthStore, isManager } from '../../store/authStore'
 import Modal from '../../components/Modal'
 import { useConfirm } from '../../components/ConfirmDialog'
+import DateDisplay from '../../components/DateDisplay'
+import NepaliDatePicker from '../../components/NepaliDatePicker'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -35,6 +37,18 @@ interface Project {
   end_date: string | null
   tasks_count: number
   done_tasks_count: number
+}
+
+interface MemberSchedule {
+  id: number
+  project: number
+  member: number
+  member_name: string
+  member_initials: string
+  work_date: string
+  is_present: boolean
+  note: string
+  created_at: string
 }
 
 interface Task {
@@ -232,7 +246,7 @@ function TaskCard({ task, onDragStart, onClick, onDelete, canManage }: TaskCardP
             <span className={`flex items-center gap-0.5 text-[10px] font-medium ${overdue ? 'text-red-500' : 'text-gray-400'}`}>
               {overdue && <AlertTriangle size={9} />}
               <Calendar size={9} />
-              {task.due_date}
+              <DateDisplay adDate={task.due_date} compact />
             </span>
           )}
         </div>
@@ -389,16 +403,12 @@ function TaskDetailModal({ task, staffList, milestones, projectId, canManage, on
         </div>
 
         {/* Due date */}
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Due Date</label>
-          <input
-            type="date"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            value={form.due_date}
-            onChange={f('due_date')}
-            disabled={!canManage}
-          />
-        </div>
+        <NepaliDatePicker
+          value={form.due_date}
+          onChange={v => setForm(p => ({ ...p, due_date: v }))}
+          disabled={!canManage}
+          label="Due Date"
+        />
 
         {/* Hours */}
         <div className="grid grid-cols-2 gap-3">
@@ -476,7 +486,7 @@ function ProductSearchInput({ onSelect }: { onSelect: (p: Product) => void }) {
     queryKey: ['product-search-proj', deferred],
     queryFn: () =>
       apiClient.get(INVENTORY.PRODUCTS, { params: { search: deferred, page_size: 20 } })
-        .then(r => Array.isArray(r.data) ? r.data : (r.data.results ?? [])),
+        .then(r => { const d = r.data.data ?? r.data; return Array.isArray(d) ? d : (d.results ?? []) }),
     enabled: deferred.length > 0,
     staleTime: 10_000,
   })
@@ -555,6 +565,12 @@ export default function ProjectDetailPage() {
   const [prRejectReason, setPrRejectReason] = useState('')
   const [showPRSection, setShowPRSection] = useState(true)
 
+  // Schedule form state
+  const [showSchedForm, setShowSchedForm] = useState(false)
+  const [schedMember, setSchedMember] = useState('')
+  const [schedDate, setSchedDate] = useState('')
+  const [schedNote, setSchedNote] = useState('')
+
   // Drag state
   const [dragTaskId, setDragTaskId] = useState<number | null>(null)
   const [dragOverCol, setDragOverCol] = useState<string | null>(null)
@@ -563,54 +579,62 @@ export default function ProjectDetailPage() {
 
   const { data: project, isLoading } = useQuery<Project>({
     queryKey: ['project', id],
-    queryFn: () => apiClient.get(PROJECTS.DETAIL(projectId)).then(r => r.data),
+    queryFn: () => apiClient.get(PROJECTS.DETAIL(projectId)).then(r => r.data.data ?? r.data),
     enabled: !!id,
   })
 
   const { data: tasks = [] } = useQuery<Task[]>({
     queryKey: ['project-tasks', id],
-    queryFn: () => apiClient.get(PROJECTS.TASKS(projectId)).then(r =>
-      Array.isArray(r.data) ? r.data : r.data.results ?? []
-    ),
+    queryFn: () => apiClient.get(PROJECTS.TASKS(projectId)).then(r => {
+      const d = r.data.data ?? r.data; return Array.isArray(d) ? d : d.results ?? []
+    }),
     enabled: !!id,
   })
 
   const { data: milestones = [] } = useQuery<Milestone[]>({
     queryKey: ['project-milestones', id],
-    queryFn: () => apiClient.get(PROJECTS.MILESTONES(projectId)).then(r =>
-      Array.isArray(r.data) ? r.data : r.data.results ?? []
-    ),
+    queryFn: () => apiClient.get(PROJECTS.MILESTONES(projectId)).then(r => {
+      const d = r.data.data ?? r.data; return Array.isArray(d) ? d : d.results ?? []
+    }),
     enabled: !!id,
   })
 
   const { data: projectProducts = [] } = useQuery<ProjectProduct[]>({
     queryKey: ['project-products', id],
-    queryFn: () => apiClient.get(PROJECTS.PROJECT_PRODUCTS(projectId)).then(r =>
-      Array.isArray(r.data) ? r.data : r.data.results ?? []
-    ),
+    queryFn: () => apiClient.get(PROJECTS.PROJECT_PRODUCTS(projectId)).then(r => {
+      const d = r.data.data ?? r.data; return Array.isArray(d) ? d : d.results ?? []
+    }),
     enabled: !!id,
   })
 
   const { data: staffList = [] } = useQuery<StaffMember[]>({
     queryKey: ['staff-list'],
-    queryFn: () => apiClient.get(STAFF.LIST).then(r =>
-      Array.isArray(r.data) ? r.data : r.data.results ?? []
-    ),
+    queryFn: () => apiClient.get(STAFF.LIST).then(r => {
+      const d = r.data.data ?? r.data; return Array.isArray(d) ? d : d.results ?? []
+    }),
   })
 
   const { data: attachments = [] } = useQuery<ProjectAttachment[]>({
     queryKey: ['project-attachments', id],
-    queryFn: () => apiClient.get(PROJECTS.ATTACHMENTS(projectId)).then(r =>
-      Array.isArray(r.data) ? r.data : r.data.results ?? []
-    ),
+    queryFn: () => apiClient.get(PROJECTS.ATTACHMENTS(projectId)).then(r => {
+      const d = r.data.data ?? r.data; return Array.isArray(d) ? d : d.results ?? []
+    }),
     enabled: !!id,
   })
 
   const { data: productRequests = [] } = useQuery<ProductRequest[]>({
     queryKey: ['project-product-requests', id],
-    queryFn: () => apiClient.get(PROJECTS.PRODUCT_REQUESTS(projectId)).then(r =>
-      Array.isArray(r.data) ? r.data : r.data.results ?? []
-    ),
+    queryFn: () => apiClient.get(PROJECTS.PRODUCT_REQUESTS(projectId)).then(r => {
+      const d = r.data.data ?? r.data; return Array.isArray(d) ? d : d.results ?? []
+    }),
+    enabled: !!id,
+  })
+
+  const { data: schedules = [] } = useQuery<MemberSchedule[]>({
+    queryKey: ['project-schedules', id],
+    queryFn: () => apiClient.get(PROJECTS.SCHEDULES(projectId)).then(r => {
+      const d = r.data.data ?? r.data; return Array.isArray(d) ? d : d.results ?? []
+    }),
     enabled: !!id,
   })
 
@@ -624,6 +648,25 @@ export default function ProjectDetailPage() {
 
   const totalEst = tasks.reduce((s, t) => s + (parseFloat(t.estimated_hours ?? '0') || 0), 0)
   const totalAct = tasks.reduce((s, t) => s + (parseFloat(t.actual_hours ?? '0') || 0), 0)
+
+  const schedGrouped = useMemo(() => {
+    const map: Record<string, MemberSchedule[]> = {}
+    schedules.forEach(s => {
+      if (!map[s.work_date]) map[s.work_date] = []
+      map[s.work_date].push(s)
+    })
+    return Object.entries(map).sort(([a], [b]) => a.localeCompare(b))
+  }, [schedules])
+
+  const schedMemberSummary = useMemo(() => {
+    const counts: Record<number, { name: string; total: number; present: number }> = {}
+    schedules.forEach(s => {
+      if (!counts[s.member]) counts[s.member] = { name: s.member_name, total: 0, present: 0 }
+      counts[s.member].total++
+      if (s.is_present) counts[s.member].present++
+    })
+    return Object.values(counts)
+  }, [schedules])
 
   // ── Mutations ────────────────────────────────────────────────────────────────
 
@@ -771,6 +814,36 @@ export default function ProjectDetailPage() {
     onError: () => toast.error('Failed to remove product'),
   })
 
+  const createScheduleMutation = useMutation({
+    mutationFn: (payload: { member: number; work_date: string; note?: string }) =>
+      apiClient.post(PROJECTS.SCHEDULES(projectId), payload),
+    onSuccess: () => {
+      toast.success('Schedule entry added')
+      setShowSchedForm(false); setSchedMember(''); setSchedDate(''); setSchedNote('')
+      qc.invalidateQueries({ queryKey: ['project-schedules', id] })
+    },
+    onError: (err: any) => toast.error(
+      err?.response?.data?.non_field_errors?.[0] ?? err?.response?.data?.detail ?? 'Failed to add entry'
+    ),
+  })
+
+  const markPresentMutation = useMutation({
+    mutationFn: (schedId: number) =>
+      apiClient.post(PROJECTS.SCHEDULE_MARK_PRESENT(projectId, schedId)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['project-schedules', id] }),
+    onError: () => toast.error('Failed to update attendance'),
+  })
+
+  const deleteScheduleMutation = useMutation({
+    mutationFn: (schedId: number) =>
+      apiClient.delete(PROJECTS.SCHEDULE_DETAIL(projectId, schedId)),
+    onSuccess: () => {
+      toast.success('Entry removed')
+      qc.invalidateQueries({ queryKey: ['project-schedules', id] })
+    },
+    onError: () => toast.error('Failed to remove entry'),
+  })
+
   // ── Attachment handlers ──────────────────────────────────────────────────────
 
   async function handleAttachmentUpload(files: FileList | null) {
@@ -906,7 +979,8 @@ export default function ProjectDetailPage() {
               {project.start_date && (
                 <span className="flex items-center gap-1.5">
                   <Calendar size={12} className="text-gray-400" />
-                  {project.start_date}{project.end_date ? ` → ${project.end_date}` : ''}
+                  <DateDisplay adDate={project.start_date} compact />
+                  {project.end_date && <> → <DateDisplay adDate={project.end_date} compact /></>}
                 </span>
               )}
               {(project.contact_phone) && (
@@ -1067,11 +1141,10 @@ export default function ProjectDetailPage() {
                     <option key={s.id} value={s.id}>{s.full_name || s.email}</option>
                   ))}
                 </select>
-                <input
-                  type="date"
+                <NepaliDatePicker
                   value={newTask.due_date}
-                  onChange={e => setNewTask(p => ({ ...p, due_date: e.target.value }))}
-                  className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  onChange={v => setNewTask(p => ({ ...p, due_date: v }))}
+                  placeholder="Due Date"
                 />
                 <input
                   type="number"
@@ -1218,7 +1291,7 @@ export default function ProjectDetailPage() {
                             ) : <span className="text-xs text-gray-400">—</span>}
                           </td>
                           <td className={`px-4 py-3 text-xs ${overdue ? 'text-red-500 font-medium' : 'text-gray-500'}`}>
-                            {task.due_date ?? '—'}
+                            {task.due_date ? <DateDisplay adDate={task.due_date} compact /> : '—'}
                           </td>
                           <td className="px-4 py-3 text-xs text-gray-500">
                             {task.estimated_hours ? `${fmtHours(task.estimated_hours)} est` : '—'}
@@ -1251,6 +1324,159 @@ export default function ProjectDetailPage() {
               )}
             </div>
           )}
+
+          {/* ── Schedule ──────────────────────────────────────────────────── */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-bold text-gray-800 text-base flex items-center gap-2">
+                <CalendarDays size={16} className="text-blue-400" /> Schedule
+                {schedules.length > 0 && (
+                  <span className="text-xs font-normal text-gray-400">({schedules.length} entries)</span>
+                )}
+              </h2>
+              {canManage && (
+                <button
+                  onClick={() => setShowSchedForm(v => !v)}
+                  className="flex items-center gap-1 text-xs px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium"
+                >
+                  <Plus size={12} /> Add Entry
+                </button>
+              )}
+            </div>
+
+            {/* Add form */}
+            {showSchedForm && (
+              <div className="bg-blue-50 rounded-xl p-4 mb-4 border border-blue-100 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Team Member *</label>
+                    <select
+                      value={schedMember}
+                      onChange={e => setSchedMember(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Select member…</option>
+                      {staffList.map(s => (
+                        <option key={s.id} value={s.id}>{s.full_name || s.email}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Work Date *</label>
+                    <input
+                      type="date"
+                      value={schedDate}
+                      onChange={e => setSchedDate(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Note (optional)</label>
+                    <input
+                      type="text"
+                      value={schedNote}
+                      onChange={e => setSchedNote(e.target.value)}
+                      placeholder="e.g. Onsite work"
+                      className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      if (!schedMember || !schedDate) { toast.error('Select member and date'); return }
+                      createScheduleMutation.mutate({ member: Number(schedMember), work_date: schedDate, note: schedNote || undefined })
+                    }}
+                    disabled={createScheduleMutation.isPending}
+                    className="flex items-center gap-1 bg-blue-600 text-white px-4 py-1.5 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50 font-medium"
+                  >
+                    {createScheduleMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                    Add
+                  </button>
+                  <button onClick={() => setShowSchedForm(false)} className="px-3 border border-gray-300 rounded-lg text-gray-500 hover:bg-gray-50">
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Attendance summary */}
+            {schedMemberSummary.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-4 pb-4 border-b border-gray-100">
+                {schedMemberSummary.map(m => (
+                  <div key={m.name} className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
+                    <Avatar name={m.name} size="xs" />
+                    <div>
+                      <p className="text-xs font-semibold text-gray-800">{m.name}</p>
+                      <p className="text-[10px] text-blue-600 font-bold">{m.present}/{m.total} days present</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Date-grouped entries */}
+            {schedGrouped.length === 0 ? (
+              <div className="text-center py-8 text-gray-400">
+                <CalendarDays size={32} className="mx-auto mb-2 opacity-30" />
+                <p className="text-sm">No schedule entries yet</p>
+                {canManage && <p className="text-xs mt-1 text-gray-400">Use &#34;Add Entry&#34; to assign members to work dates</p>}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {schedGrouped.map(([date, entries]) => (
+                  <div key={date} className="border border-gray-100 rounded-xl overflow-hidden">
+                    <div className="flex items-center justify-between bg-blue-50 px-4 py-2 border-b border-blue-100">
+                      <div className="flex items-center gap-2">
+                        <CalendarDays size={13} className="text-blue-500" />
+                        <span className="text-sm font-bold text-blue-800">
+                          {new Date(date + 'T00:00:00').toLocaleDateString('en-US', {
+                            weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+                          })}
+                        </span>
+                      </div>
+                      <span className="text-xs text-gray-400">
+                        {entries.filter(e => e.is_present).length}/{entries.length} present
+                      </span>
+                    </div>
+                    <div className="divide-y divide-gray-50">
+                      {entries.map(entry => (
+                        <div key={entry.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 transition">
+                          <Avatar name={entry.member_name} size="xs" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-800">{entry.member_name}</p>
+                            {entry.note && <p className="text-xs text-gray-400">{entry.note}</p>}
+                          </div>
+                          <button
+                            onClick={() => markPresentMutation.mutate(entry.id)}
+                            disabled={markPresentMutation.isPending}
+                            className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-semibold transition ${
+                              entry.is_present
+                                ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                            }`}
+                          >
+                            {entry.is_present
+                              ? <><CheckCircle2 size={12} /> Present</>
+                              : <><Circle size={12} /> Absent</>}
+                          </button>
+                          {canManage && (
+                            <button
+                              onClick={() => deleteScheduleMutation.mutate(entry.id)}
+                              className="text-gray-300 hover:text-red-500 transition p-1"
+                              title="Remove entry"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ── Right Sidebar ──────────────────────────────────────────────────── */}
@@ -1353,11 +1579,10 @@ export default function ProjectDetailPage() {
                   value={newMilestone.name}
                   onChange={e => setNewMilestone(p => ({ ...p, name: e.target.value }))}
                 />
-                <input
-                  type="date"
+                <NepaliDatePicker
                   value={newMilestone.due_date}
-                  onChange={e => setNewMilestone(p => ({ ...p, due_date: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-400"
+                  onChange={v => setNewMilestone(p => ({ ...p, due_date: v }))}
+                  placeholder="Due Date"
                 />
                 <div className="flex gap-1.5">
                   <button
@@ -1394,7 +1619,7 @@ export default function ProjectDetailPage() {
                         {m.due_date && (
                           <div className={`text-[10px] mt-0.5 flex items-center gap-0.5 ${mOverdue ? 'text-red-500' : 'text-gray-400'}`}>
                             {mOverdue && <AlertTriangle size={9} />}
-                            <Calendar size={9} /> {m.due_date}
+                            <Calendar size={9} /> <DateDisplay adDate={m.due_date} compact />
                           </div>
                         )}
                       </div>

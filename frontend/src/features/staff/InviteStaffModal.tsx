@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import apiClient from '../../api/client'
 import Modal from '../../components/Modal'
+import NepaliDatePicker from '../../components/NepaliDatePicker'
 
 interface Props {
   open: boolean
@@ -148,8 +149,7 @@ export default function InviteStaffModal({ open, onClose, departments }: Props) 
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Join Date</label>
-            <input type="date" value={form.join_date} onChange={e => set('join_date', e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <NepaliDatePicker value={form.join_date} onChange={v => set('join_date', v)} />
           </div>
         </div>
 

@@ -17,6 +17,8 @@ from datetime import timedelta
 from celery import shared_task
 from django.utils import timezone
 
+from core.nepali_date import bs_year_from_ad, fiscal_year_of
+
 log = logging.getLogger(__name__)
 
 
@@ -105,12 +107,8 @@ def task_generate_monthly_payslips(self):
 
             # ── TDS entry ────────────────────────────────────────────────────
             if tds_rate > 0 and tds_amount > 0:
-                # Nepali fiscal year starts in mid-April (Baisakh ≈ April 14).
-                # Approximate: months 1-3 (Jan-Mar) belong to the previous year +57.
-                if last_of_prev.month >= 4:
-                    nepali_year = last_of_prev.year + 57
-                else:
-                    nepali_year = last_of_prev.year + 56
+                # Use proper BS calendar conversion instead of heuristic +57/+56.
+                nepali_year = bs_year_from_ad(last_of_prev)
 
                 staff_display = (
                     getattr(staff, 'full_name', '') or getattr(staff, 'get_full_name', lambda: '')() or staff.email

@@ -128,7 +128,20 @@ class Tenant(models.Model):
         help_text='Subscription plan. Null only during initial seed migration.',
     )
     logo = models.URLField(blank=True)
+    # Brand colour for mobile app dynamic theming — expects CSS hex value
+    primary_color = models.CharField(
+        max_length=7,
+        default='#4f46e5',
+        help_text='Primary brand colour in hex (e.g. #4f46e5). Used by the mobile app for dynamic theming.',
+    )
     currency = models.CharField(max_length=8, default='NPR')
+    timezone = models.CharField(max_length=64, default='Asia/Kathmandu')
+
+    # SLA alerting — how many minutes before deadline to fire the warning notification
+    sla_warn_before_minutes = models.PositiveIntegerField(
+        default=30,
+        help_text='Send SLA breach warning this many minutes before the deadline.',
+    )
 
     # VAT — Nepal default 13%
     vat_rate = models.DecimalField(

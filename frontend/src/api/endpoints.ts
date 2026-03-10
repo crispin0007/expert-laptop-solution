@@ -4,6 +4,12 @@ export const AUTH = {
   TOKEN: '/accounts/token/',
   REFRESH: '/accounts/token/refresh/',
   ME: '/accounts/me/',
+  TWO_FA_SETUP: '/accounts/2fa/setup/',
+  TWO_FA_CONFIRM: '/accounts/2fa/confirm-setup/',
+  TWO_FA_VERIFY: '/accounts/2fa/verify/',
+  TWO_FA_DISABLE: '/accounts/2fa/disable/',
+  TWO_FA_BACKUP_CODES: '/accounts/2fa/backup-codes/',
+  TWO_FA_REGEN_BACKUP: '/accounts/2fa/backup-codes/regenerate/',
 } as const
 
 export const DASHBOARD = {
@@ -69,6 +75,9 @@ export const PROJECTS = {
   PRODUCT_REQUEST_DETAIL: (projectId: number, reqId: number) => `/projects/${projectId}/product-requests/${reqId}/`,
   PRODUCT_REQUEST_APPROVE: (projectId: number, reqId: number) => `/projects/${projectId}/product-requests/${reqId}/approve/`,
   PRODUCT_REQUEST_REJECT: (projectId: number, reqId: number) => `/projects/${projectId}/product-requests/${reqId}/reject/`,
+  SCHEDULES: (id: number) => `/projects/${id}/schedules/`,
+  SCHEDULE_DETAIL: (projectId: number, schedId: number) => `/projects/${projectId}/schedules/${schedId}/`,
+  SCHEDULE_MARK_PRESENT: (projectId: number, schedId: number) => `/projects/${projectId}/schedules/${schedId}/mark-present/`,
 } as const
 
 export const NOTIFICATIONS = {

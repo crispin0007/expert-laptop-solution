@@ -10,6 +10,8 @@ import apiClient from '../../api/client'
 import { TICKETS } from '../../api/endpoints'
 import CreateTicketWizard from './CreateTicketWizard'
 import { usePermissions } from '../../hooks/usePermissions'
+import DateDisplay from '../../components/DateDisplay'
+import { useFyStore } from '../../store/fyStore'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -62,9 +64,7 @@ const PRIORITY_FILTERS = ['all', 'critical', 'high', 'medium', 'low'] as const
 type StatusFilter = (typeof STATUS_FILTERS)[number]
 type PriorityFilter = (typeof PRIORITY_FILTERS)[number]
 
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-}
+
 
 function SLABadge({ breached, deadline }: { breached: boolean; deadline: string | null }) {
   if (!deadline) return null
@@ -95,6 +95,7 @@ export default function TicketListPage() {
 
   const { can } = usePermissions()
   const currentUser = useAuthStore((s) => s.user)
+  const { fyYear } = useFyStore()
   const [urlParams] = useSearchParams()
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(
@@ -105,9 +106,9 @@ export default function TicketListPage() {
   const [showCreate, setShowCreate] = useState(false)
 
   const { data: tickets = [], isLoading } = useQuery<Ticket[]>({
-    queryKey: ['tickets'],
+    queryKey: ['tickets', fyYear],
     queryFn: () =>
-      apiClient.get(TICKETS.LIST).then(r =>
+      apiClient.get(TICKETS.LIST, { params: fyYear ? { fiscal_year: fyYear } : {} }).then(r =>
         Array.isArray(r.data) ? r.data : (r.data.results ?? r.data.data ?? [])
       ),
   })
@@ -322,7 +323,7 @@ export default function TicketListPage() {
                   <SLABadge breached={ticket.sla_breached} deadline={ticket.sla_deadline} />
                 </td>
                 <td className="px-4 py-3.5 text-gray-400 text-xs whitespace-nowrap">
-                  {formatDate(ticket.created_at)}
+                  <DateDisplay adDate={ticket.created_at} compact />
                 </td>
               </tr>
             ))}

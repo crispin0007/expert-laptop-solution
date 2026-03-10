@@ -1,8 +1,78 @@
+import datetime
+
 from rest_framework import exceptions
+from rest_framework import serializers as drf_serializers
 
 
 # Roles that have elevated management privileges within a tenant
 MANAGER_ROLES = {'owner', 'admin', 'manager'}
+
+
+# ── Nepali Date Serializer Mixin ──────────────────────────────────────────────
+
+class NepaliDateMixin:
+    """
+    Serializer mixin that automatically appends a ``_bs`` companion for every
+    DateField / DateTimeField value in the serialized output.
+
+    The companion is a read-only dict injected into ``to_representation``::
+
+        {
+          "created_at":    "2024-07-31T14:30:00+05:45",
+          "created_at_bs": {
+            "bs":     "2081-04-15",
+            "bs_en":  "15 Shrawan 2081",
+            "bs_np":  "१५ श्रावण २०८१",
+            "ad":     "2024-07-31",
+            "ad_iso": "2024-07-31",
+            "time":   "14:30"
+          }
+        }
+
+    Usage — place BEFORE ``serializers.ModelSerializer`` in the MRO::
+
+        class InvoiceSerializer(NepaliDateMixin, serializers.ModelSerializer):
+            ...
+
+    All DateField / DateTimeField values in the output automatically get a
+    ``<field>_bs`` companion.  No extra code needed.
+    """
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        from core.nepali_date import date_to_bs_display, datetime_to_bs_display
+        from django.utils.dateparse import parse_datetime, parse_date
+
+        additions = {}
+        for key, value in list(data.items()):
+            # Skip nulls, already-added BS keys, nested objects/lists
+            if value is None or key.endswith('_bs') or not isinstance(value, str):
+                continue
+            bs_key = f'{key}_bs'
+            if bs_key in data:
+                continue
+
+            # Try datetime first (has 'T' or space separator, length > 10)
+            if len(value) > 10 and ('T' in value or (len(value) > 10 and value[10] == ' ')):
+                try:
+                    dt = parse_datetime(value)
+                    if dt:
+                        additions[bs_key] = datetime_to_bs_display(dt)
+                        continue
+                except Exception:
+                    pass
+
+            # Try plain date (exactly 10 chars, YYYY-MM-DD)
+            if len(value) == 10 and value[4] == '-' and value[7] == '-':
+                try:
+                    d = parse_date(value)
+                    if d:
+                        additions[bs_key] = date_to_bs_display(d)
+                except Exception:
+                    pass
+
+        data.update(additions)
+        return data
 
 
 class TenantMixin:

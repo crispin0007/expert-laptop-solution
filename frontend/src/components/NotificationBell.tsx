@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Bell, CheckCheck, Loader2 } from 'lucide-react'
 import apiClient from '../api/client'
 import { NOTIFICATIONS } from '../api/endpoints'
+import { adStringToBsDisplay } from '../utils/nepaliDate'
+import { usePreferenceStore } from '../store/preferenceStore'
 
 interface NotificationItem {
   id: number
@@ -88,7 +90,10 @@ export default function NotificationBell() {
     if (diff < 60) return 'just now'
     if (diff < 3600) return `${Math.round(diff / 60)}m ago`
     if (diff < 86400) return `${Math.round(diff / 3600)}h ago`
-    return d.toLocaleDateString()
+    const dateStr = d.toISOString().slice(0, 10)
+    const mode = usePreferenceStore.getState().dateMode
+    if (mode === 'ad') return dateStr
+    return adStringToBsDisplay(dateStr)?.bs ?? dateStr
   }
 
   return (

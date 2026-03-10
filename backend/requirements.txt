@@ -12,3 +12,5 @@ django-cors-headers
 django-filter
 Pillow
 weasyprint
+pyotp>=2.9
+qrcode[pil]>=7.4

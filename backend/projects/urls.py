@@ -1,6 +1,6 @@
 from rest_framework.routers import DefaultRouter
 from django.urls import path, include
-from .views import ProjectViewSet, ProjectMilestoneViewSet, ProjectTaskViewSet, ProjectProductViewSet, ProjectAttachmentViewSet, ProjectProductRequestViewSet
+from .views import ProjectViewSet, ProjectMilestoneViewSet, ProjectTaskViewSet, ProjectProductViewSet, ProjectAttachmentViewSet, ProjectProductRequestViewSet, ProjectMemberScheduleViewSet
 
 router = DefaultRouter()
 router.register(r'', ProjectViewSet, basename='project')
@@ -43,5 +43,13 @@ urlpatterns = [
     path('<int:project_pk>/attachments/', include([
         path('', ProjectAttachmentViewSet.as_view({'get': 'list', 'post': 'create'})),
         path('<int:pk>/', ProjectAttachmentViewSet.as_view({'get': 'retrieve', 'delete': 'destroy'})),
+    ])),
+    # Nested: /api/v1/projects/<project_pk>/schedules/
+    path('<int:project_pk>/schedules/', include([
+        path('', ProjectMemberScheduleViewSet.as_view({'get': 'list', 'post': 'create'})),
+        path('<int:pk>/', ProjectMemberScheduleViewSet.as_view({
+            'get': 'retrieve', 'patch': 'partial_update', 'delete': 'destroy',
+        })),
+        path('<int:pk>/mark-present/', ProjectMemberScheduleViewSet.as_view({'post': 'mark_present'})),
     ])),
 ]

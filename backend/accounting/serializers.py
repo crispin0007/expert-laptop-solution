@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from core.serializers import NepaliModelSerializer
 from .models import (
     CoinTransaction, Payslip, Invoice,
     Account, JournalEntry, JournalLine, BankAccount,
@@ -108,7 +109,7 @@ class BankAccountSerializer(serializers.ModelSerializer):
 
 # ─── Bills ───────────────────────────────────────────────────────────────────
 
-class BillSerializer(serializers.ModelSerializer):
+class BillSerializer(NepaliModelSerializer):
     supplier_display = serializers.SerializerMethodField()
     amount_paid      = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
     amount_due       = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
@@ -136,7 +137,7 @@ class BillSerializer(serializers.ModelSerializer):
 
 # ─── Payments ────────────────────────────────────────────────────────────────
 
-class PaymentSerializer(serializers.ModelSerializer):
+class PaymentSerializer(NepaliModelSerializer):
     invoice_number  = serializers.CharField(source='invoice.invoice_number', read_only=True, default='')
     bill_number     = serializers.CharField(source='bill.bill_number',       read_only=True, default='')
     bank_account_name = serializers.CharField(source='bank_account.name',   read_only=True, default='')
@@ -210,7 +211,7 @@ class StaffSalaryProfileSerializer(serializers.ModelSerializer):
         read_only_fields = ('created_at', 'updated_at')
 
 
-class PayslipSerializer(serializers.ModelSerializer):
+class PayslipSerializer(NepaliModelSerializer):
     staff_name        = serializers.SerializerMethodField()
     bank_account_name = serializers.CharField(source='bank_account.name', read_only=True, default='')
 
@@ -240,7 +241,7 @@ class PayslipSerializer(serializers.ModelSerializer):
 # ─── Invoices ────────────────────────────────────────────────────────────────
 
 
-class InvoiceSerializer(serializers.ModelSerializer):
+class InvoiceSerializer(NepaliModelSerializer):
     customer_name             = serializers.CharField(source='customer.name',        read_only=True, default='')
     ticket_number             = serializers.CharField(source='ticket.ticket_number', read_only=True, default='')
     project_name              = serializers.CharField(source='project.name',         read_only=True, default='')
@@ -289,7 +290,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
 
 # ─── Quotations ──────────────────────────────────────────────────────────────
 
-class QuotationSerializer(serializers.ModelSerializer):
+class QuotationSerializer(NepaliModelSerializer):
     customer_name     = serializers.CharField(source='customer.name', read_only=True, default='')
     ticket_number     = serializers.CharField(source='ticket.ticket_number', read_only=True, default='')
     project_name      = serializers.CharField(source='project.name', read_only=True, default='')

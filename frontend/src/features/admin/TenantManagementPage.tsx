@@ -10,6 +10,7 @@ import {
   ShieldCheck, Power, PowerOff, Trash2, Plus, RefreshCw,
   Pencil, Search, Building2, CheckCircle2, PauseCircle, XCircle,
 } from 'lucide-react'
+import DateDisplay from '../../components/DateDisplay'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -226,7 +227,7 @@ export default function TenantManagementPage() {
                 <td className="px-4 py-3"><StatusBadge tenant={t} /></td>
 
                 <td className="px-4 py-3 text-gray-400 text-xs">
-                  {new Date(t.created_at).toLocaleDateString()}
+                  <DateDisplay adDate={t.created_at} compact />
                 </td>
 
                 <td className="px-4 py-3">

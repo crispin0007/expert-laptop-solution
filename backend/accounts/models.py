@@ -1,3 +1,6 @@
+import hashlib
+import secrets
+
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 
@@ -12,12 +15,43 @@ class User(AbstractUser):
     avatar = models.URLField(blank=True)
     is_superadmin = models.BooleanField(default=False, help_text='Platform-level super admin')
 
+    # ── Two-Factor Authentication ─────────────────────────────────────────────
+    is_2fa_enabled = models.BooleanField(default=False)
+    totp_secret    = models.CharField(max_length=64, blank=True, default='')
+    # List of SHA-256 hex digests of single-use backup codes.
+    # Plain codes are shown to the user ONCE; only the hashes are persisted.
+    backup_codes   = models.JSONField(default=list, blank=True)
+
     USERNAME_FIELD = 'email'
     # username is still required by AbstractUser; keep it but make it optional
     REQUIRED_FIELDS = ['username']
 
     def __str__(self):
         return self.email or self.username
+
+    # ── 2FA helpers ───────────────────────────────────────────────────────────
+
+    def generate_backup_codes(self, count: int = 8) -> list[str]:
+        """
+        Generate `count` single-use backup codes, store their SHA-256 hashes,
+        and return the plain codes (displayed to the user exactly once).
+
+        Format: XXXXXXXX (8 uppercase hex chars for readability).
+        """
+        plain = [secrets.token_hex(4).upper() for _ in range(count)]
+        self.backup_codes = [hashlib.sha256(c.encode()).hexdigest() for c in plain]
+        return plain
+
+    def verify_backup_code(self, code: str) -> bool:
+        """
+        Verify a backup code and invalidate it (single-use).
+        Returns True if the code was valid and has been consumed.
+        """
+        digest = hashlib.sha256(code.upper().encode()).hexdigest()
+        if digest in (self.backup_codes or []):
+            self.backup_codes = [h for h in self.backup_codes if h != digest]
+            return True
+        return False
 
 
 class TenantMembership(models.Model):

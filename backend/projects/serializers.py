@@ -1,18 +1,19 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from .models import Project, ProjectMilestone, ProjectTask, ProjectProduct, ProjectAttachment, ProjectProductRequest
+from core.serializers import NepaliModelSerializer
+from .models import Project, ProjectMilestone, ProjectTask, ProjectProduct, ProjectAttachment, ProjectProductRequest, ProjectMemberSchedule
 
 User = get_user_model()
 
 
-class ProjectMilestoneSerializer(serializers.ModelSerializer):
+class ProjectMilestoneSerializer(NepaliModelSerializer):
     class Meta:
         model = ProjectMilestone
         fields = ('id', 'project', 'name', 'due_date', 'is_completed', 'completed_at', 'created_at')
         read_only_fields = ('project', 'completed_at', 'created_at')
 
 
-class ProjectTaskSerializer(serializers.ModelSerializer):
+class ProjectTaskSerializer(NepaliModelSerializer):
     assigned_to_name = serializers.SerializerMethodField()
 
     class Meta:
@@ -43,7 +44,7 @@ class ProjectProductSerializer(serializers.ModelSerializer):
         read_only_fields = ('project', 'product_name', 'unit_price', 'is_service')
 
 
-class ProjectSerializer(serializers.ModelSerializer):
+class ProjectSerializer(NepaliModelSerializer):
     milestones = ProjectMilestoneSerializer(many=True, read_only=True)
     tasks_count = serializers.SerializerMethodField()
     done_tasks_count = serializers.SerializerMethodField()
@@ -130,6 +131,26 @@ class ProjectProductRequestSerializer(serializers.ModelSerializer):
         if obj.reviewed_by:
             return obj.reviewed_by.get_full_name() or obj.reviewed_by.email
         return None
+
+
+class ProjectMemberScheduleSerializer(serializers.ModelSerializer):
+    member_name = serializers.SerializerMethodField()
+    member_initials = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProjectMemberSchedule
+        fields = (
+            'id', 'project', 'member', 'member_name', 'member_initials',
+            'work_date', 'is_present', 'note', 'created_at',
+        )
+        read_only_fields = ('project', 'member_name', 'member_initials', 'created_at')
+
+    def get_member_name(self, obj):
+        return obj.member.get_full_name() or obj.member.email
+
+    def get_member_initials(self, obj):
+        parts = (obj.member.get_full_name() or obj.member.email).split()
+        return ''.join(p[0].upper() for p in parts[:2])
 
 
 class ProjectAttachmentSerializer(serializers.ModelSerializer):

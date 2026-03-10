@@ -89,3 +89,43 @@ class NotificationPreference(TenantModel):
 
     def __str__(self):
         return f"NotifPrefs: {self.user_id}@{self.tenant_id}"
+
+
+class FCMDevice(TenantModel):
+    """
+    Stores push notification tokens for mobile devices.
+
+    One user may have multiple devices (phone + tablet, etc.).
+    Tokens are platform-specific (FCM for Android/Web, APNs for iOS via Expo).
+    The Expo push token is stored here and passed to push.py.
+    """
+
+    PLATFORM_IOS = 'ios'
+    PLATFORM_ANDROID = 'android'
+    PLATFORM_WEB = 'web'
+    PLATFORM_CHOICES = [
+        (PLATFORM_IOS, 'iOS'),
+        (PLATFORM_ANDROID, 'Android'),
+        (PLATFORM_WEB, 'Web'),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='fcm_devices',
+    )
+    # The Expo push token (ExponentPushToken[...]) or raw FCM/APNs token
+    token = models.TextField()
+    platform = models.CharField(max_length=16, choices=PLATFORM_CHOICES, default=PLATFORM_ANDROID)
+    is_active = models.BooleanField(default=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        # A given token can only be registered once per tenant
+        unique_together = ('tenant', 'token')
+        indexes = [
+            models.Index(fields=['tenant', 'user', 'is_active']),
+        ]
+
+    def __str__(self):
+        return f"FCMDevice({self.platform}) user={self.user_id} token={self.token[:20]}..."

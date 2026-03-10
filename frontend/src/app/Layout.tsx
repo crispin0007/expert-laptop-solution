@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
 import NotificationBell from '../components/NotificationBell'
+import FiscalYearSwitcher from '../components/FiscalYearSwitcher'
 import { useAuthStore } from '../store/authStore'
 import { Menu } from 'lucide-react'
 
@@ -41,6 +42,7 @@ export default function Layout() {
           {/* Spacer */}
           <div className="flex-1" />
 
+          <FiscalYearSwitcher />
           <NotificationBell />
           {user && (
             <span className="text-sm text-gray-500 font-medium hidden sm:block">

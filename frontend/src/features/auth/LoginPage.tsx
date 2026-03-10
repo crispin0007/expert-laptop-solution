@@ -1,15 +1,21 @@
 import { useState, useEffect, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useLogin } from './useLogin'
+import { useLogin, useTwoFAVerify, isTwoFAPending } from './useLogin'
 import { useAuthStore } from '../../store/authStore'
 import toast from 'react-hot-toast'
+import { ShieldCheck, ArrowLeft, KeyRound } from 'lucide-react'
 
 export default function LoginPage() {
   const navigate = useNavigate()
   const login = useLogin()
+  const verify2FA = useTwoFAVerify()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [tenantName, setTenantName] = useState<string | null>(null)
+
+  // 2FA pending state
+  const [twoFAToken, setTwoFAToken] = useState<string | null>(null)
+  const [otpCode, setOtpCode] = useState('')
 
   useEffect(() => {
     fetch('/api/v1/tenants/public-info/')
@@ -21,22 +27,99 @@ export default function LoginPage() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     try {
-      await login.mutateAsync({ email, password })
-      // onSuccess in useLogin sets the user before mutateAsync resolves —
-      // read the stored user to decide where to redirect.
-      const storedUser = useAuthStore.getState().user
-      if (storedUser?.is_superadmin || storedUser?.domain_type === 'main') {
-        toast.success('Welcome back, Super Admin!')
-        navigate('/')
-      } else {
-        toast.success(`Welcome back!`)
-        navigate('/')
+      const result = await login.mutateAsync({ email, password })
+      if (isTwoFAPending(result)) {
+        setTwoFAToken(result.two_factor_token)
+        return
       }
+      redirectAfterLogin()
     } catch {
       toast.error('Invalid email or password. Please try again.')
     }
   }
 
+  async function handleOTPSubmit(e: FormEvent) {
+    e.preventDefault()
+    if (!twoFAToken) return
+    try {
+      await verify2FA.mutateAsync({ two_factor_token: twoFAToken, code: otpCode.trim() })
+      redirectAfterLogin()
+    } catch {
+      toast.error('Invalid code. Please try again.')
+      setOtpCode('')
+    }
+  }
+
+  function redirectAfterLogin() {
+    const storedUser = useAuthStore.getState().user
+    if (storedUser?.is_superadmin || storedUser?.domain_type === 'main') {
+      toast.success('Welcome back, Super Admin!')
+    } else {
+      toast.success('Welcome back!')
+    }
+    navigate('/')
+  }
+
+  // ── OTP step ─────────────────────────────────────────────────────────────
+  if (twoFAToken) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="bg-white rounded-2xl shadow-lg p-10 w-full max-w-md">
+          <div className="mb-8 text-center">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-indigo-50 mb-4">
+              <ShieldCheck size={28} className="text-indigo-600" />
+            </div>
+            <h1 className="text-2xl font-bold text-gray-900">Two-Factor Authentication</h1>
+            <p className="text-gray-500 mt-1 text-sm">
+              Enter the 6-digit code from your authenticator app, or an 8-character backup code.
+            </p>
+          </div>
+
+          <form onSubmit={handleOTPSubmit} className="space-y-5">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Verification Code</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                required
+                autoFocus
+                value={otpCode}
+                onChange={(e) => setOtpCode(e.target.value.replace(/\s/g, ''))}
+                placeholder="123456 or backup code"
+                maxLength={8}
+                className="w-full border border-gray-300 rounded-lg px-4 py-3 text-center text-xl tracking-[0.4em] font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={verify2FA.isPending || otpCode.length < 6}
+              className="w-full bg-indigo-600 text-white py-2.5 rounded-lg font-medium hover:bg-indigo-700 transition disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {verify2FA.isPending ? 'Verifying…' : 'Verify & Sign In'}
+            </button>
+          </form>
+
+          <button
+            onClick={() => { setTwoFAToken(null); setOtpCode('') }}
+            className="mt-4 flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-600 transition mx-auto"
+          >
+            <ArrowLeft size={14} /> Back to sign in
+          </button>
+
+          <p className="mt-5 text-center text-xs text-gray-400">
+            Lost your authenticator?{' '}
+            <span className="text-indigo-500 font-medium">
+              Enter one of your 8-character backup codes above.
+            </span>
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Credentials step ─────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
       <div className="bg-white rounded-2xl shadow-lg p-10 w-full max-w-md">
@@ -82,8 +165,12 @@ export default function LoginPage() {
           </button>
         </form>
 
-
+        <div className="mt-6 flex items-center gap-1.5 justify-center text-xs text-gray-400">
+          <KeyRound size={12} />
+          Two-factor authentication is supported
+        </div>
       </div>
     </div>
   )
 }
+

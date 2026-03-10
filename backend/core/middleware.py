@@ -180,13 +180,18 @@ class TenantMiddleware(MiddlewareMixin):
                     # Record the slug for enumeration probe logging below.
                     _probed_slug = slug
 
-        # --- 3. Fallback: X-Tenant-Slug header (dev / localhost ONLY) ---
-        # WARNING: This header can be spoofed by any client in production.
-        # It is ONLY honoured when DEBUG=True (local dev / test environments).
-        # In production Django ignores it; Nginx also strips it before proxying.
+        # --- 3. Fallback: X-Tenant-Slug header (mobile apps + dev/localhost) ---
+        # Intentional: mobile clients have no subdomain, so they send the tenant
+        # slug as an HTTP header.  This is secure because:
+        #   a) All data access still requires a valid JWT scoped to that tenant.
+        #   b) The header is whitelisted here only when ALLOW_TENANT_SLUG_HEADER
+        #      is True in settings (set this to True in production when mobile
+        #      clients are live; Nginx must NOT strip the header in that case).
+        #   c) An attacker who sends a spoofed slug still cannot read another
+        #      tenant's data — TenantManager + JWT auth enforces the boundary.
         if tenant is None:
             from django.conf import settings
-            if settings.DEBUG:
+            if getattr(settings, 'ALLOW_TENANT_SLUG_HEADER', settings.DEBUG):
                 header_slug = request.headers.get('X-Tenant-Slug', '').strip()
                 if header_slug:
                     tenant = _resolve_tenant(header_slug)

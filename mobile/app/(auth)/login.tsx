@@ -10,7 +10,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import apiClient from '@/api/client'
 import { AUTH, TENANT } from '@/api/endpoints'
-import { useAuthStore, type User } from '@/store/authStore'
+import { useAuthStore } from '@/store/authStore'
 import { useTenantStore, type TenantConfig } from '@/store/tenantStore'
 import { useTheme } from '@/theme/ThemeContext'
 import { useUiStore } from '@/store/uiStore'
@@ -42,7 +42,7 @@ export default function LoginScreen() {
   const theme = useTheme()
   const router = useRouter()
   const insets = useSafeAreaInsets()
-  const { setTokens, setUser } = useAuthStore.getState()
+  const { setTokens, setUserFromApi } = useAuthStore.getState()
   const { setTenant } = useTenantStore.getState()
   const showToast = useUiStore((s) => s.showToast)
 
@@ -63,6 +63,17 @@ export default function LoginScreen() {
   // ── Step 1: Resolve tenant ───────────────────────────────────────────────
   async function handleResolveTenant(data: TenantForm) {
     setResolvingTenant(true)
+
+    // Hoist slug so it's accessible in both the try and catch blocks.
+    // Accept full domain/URL input — extract just the subdomain slug.
+    // e.g. "els.bms.techyatra.com.np" or "https://els.bms.techyatra.com.np" → "els"
+    let slug = data.slug.trim().toLowerCase()
+    try {
+      const domainInput = slug.startsWith('http') ? slug : `https://${slug}`
+      const hostname = new URL(domainInput).hostname
+      if (hostname.includes('.')) slug = hostname.split('.')[0]
+    } catch { /* not a URL — use raw value as slug */ }
+
     try {
       // Public endpoint — no auth required
       const { default: axios } = await import('axios')
@@ -70,21 +81,7 @@ export default function LoginScreen() {
       const base: string =
         Constants.expoConfig?.extra?.apiBaseUrl ?? 'https://bms.techyatra.com.np/api/v1'
 
-      // Accept full domain/URL input — extract just the subdomain slug.
-      // e.g. "els.bms.techyatra.com.np" or "https://els.bms.techyatra.com.np" → "els"
-      let slug = data.slug.trim().toLowerCase()
-      try {
-        // If it looks like a URL, strip the scheme first
-        const withScheme = slug.startsWith('http') ? slug : `https://${slug}`
-        const hostname = new URL(withScheme).hostname  // "els.bms.techyatra.com.np"
-        // If the hostname contains dots it's a domain — take the first label as slug
-        if (hostname.includes('.')) {
-          slug = hostname.split('.')[0]
-        }
-      } catch {
-        // Not a parseable URL — treat the raw input as the slug as-is
-      }
-
+      // (slug already normalised above)
       const res = await axios.get(`${base}${TENANT.RESOLVE}`, {
         params: { slug },
       })
@@ -130,15 +127,20 @@ export default function LoginScreen() {
       // Direct login success
       await setTokens(payload.access, payload.refresh)
       const meRes = await apiClient.get(AUTH.ME)
-      const user: User = meRes.data.data ?? meRes.data
-      setUser(user)
+      const rawUser = meRes.data.data ?? meRes.data
+      setUserFromApi(rawUser)
 
-      showToast(`Welcome back, ${user.full_name}!`, 'success')
+      showToast(`Welcome back, ${rawUser.full_name ?? rawUser.email}!`, 'success')
       router.replace('/(app)/(tabs)/dashboard')
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { errors?: { detail?: string } } } })
-        ?.response?.data?.errors?.detail
-      loginForm.setError('password', { message: detail ?? 'Invalid email or password.' })
+      const resp = (err as { response?: { status?: number; data?: Record<string, unknown> } })?.response
+      const data = resp?.data
+      // Backend returns {"detail": "..."} on auth errors or the custom envelope
+      const detail =
+        (data?.detail as string) ??
+        ((data?.errors as Record<string, unknown>)?.detail as string) ??
+        'Invalid email or password.'
+      loginForm.setError('password', { message: detail })
     }
   }
 

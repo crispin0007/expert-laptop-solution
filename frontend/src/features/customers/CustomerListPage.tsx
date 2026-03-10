@@ -12,6 +12,7 @@ import type { Customer } from './types'
 import CreateCustomerModal from './CreateCustomerModal'
 import { usePermissions } from '../../hooks/usePermissions'
 import Modal from '../../components/Modal'
+import DateDisplay from '../../components/DateDisplay'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -275,7 +276,12 @@ export default function CustomerListPage() {
     queryFn: () =>
       apiClient.get(`${CUSTOMERS.LIST}?${params}`).then(r => {
         if (Array.isArray(r.data)) return { count: r.data.length, next: null, previous: null, results: r.data }
-        return r.data
+        // Backend wraps response in { success, data: [...], meta: { pagination: {...} } }
+        const arr: Customer[] = Array.isArray(r.data.data)
+          ? r.data.data
+          : (r.data.data?.results ?? r.data.results ?? [])
+        const pag = r.data.meta?.pagination ?? {}
+        return { count: r.data.count ?? r.data.data?.count ?? arr.length, next: pag.next ?? null, previous: pag.previous ?? null, results: arr }
       }),
     placeholderData: prev => prev,
     staleTime: 30_000,
@@ -439,7 +445,7 @@ export default function CustomerListPage() {
                   ) : <span className="text-gray-300">\u2014</span>}
                 </td>
                 <td className="px-4 py-3 text-gray-400 text-xs">
-                  {new Date(c.created_at).toLocaleDateString()}
+                  <DateDisplay adDate={c.created_at} compact />
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex justify-end items-center gap-1" onClick={e => e.stopPropagation()}>

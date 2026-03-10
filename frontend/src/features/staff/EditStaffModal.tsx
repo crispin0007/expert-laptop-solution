@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import apiClient from '../../api/client'
 import { ROLES, STAFF } from '../../api/endpoints'
 import Modal from '../../components/Modal'
+import NepaliDatePicker from '../../components/NepaliDatePicker'
 
 interface StaffMembership {
   id: number
@@ -219,9 +220,7 @@ export default function EditStaffModal({ open, onClose, staff, departments }: Pr
           {/* Join date */}
           <div className="col-span-2">
             <label className="block text-sm font-medium text-gray-700 mb-1">Join Date</label>
-            <input type="date" value={form.join_date}
-              onChange={e => setForm(f => ({ ...f, join_date: e.target.value }))}
-              className={inp()} />
+            <NepaliDatePicker value={form.join_date ?? ''} onChange={v => setForm(f => ({ ...f, join_date: v }))} />
           </div>
         </div>
 

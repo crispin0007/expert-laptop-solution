@@ -9,6 +9,7 @@ import EditStaffModal from './EditStaffModal'
 import ResetPasswordModal from './ResetPasswordModal'
 import Modal from '../../components/Modal'
 import { usePermissions } from '../../hooks/usePermissions'
+import DateDisplay from '../../components/DateDisplay'
 
 interface StaffMembership {
   id: number
@@ -227,9 +228,10 @@ export default function StaffListPage() {
                     }
                   </td>
                   <td className="px-4 py-3 text-gray-400 text-xs">
-                    {s.membership?.join_date
-                      ? new Date(s.membership.join_date).toLocaleDateString()
-                      : new Date(s.date_joined).toLocaleDateString()}
+                    <DateDisplay
+                      adDate={s.membership?.join_date ?? s.date_joined}
+                      compact
+                    />
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-1">

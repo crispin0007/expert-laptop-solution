@@ -60,6 +60,7 @@ export interface User {
   last_name: string
   is_staff: boolean
   is_superadmin: boolean
+  is_2fa_enabled: boolean
   /** 'main' when accessed via the main domain (super admin portal), 'tenant' on a workspace subdomain */
   domain_type: 'main' | 'tenant' | null
   is_main_domain: boolean

@@ -15,6 +15,9 @@ import {
   FileDown, TrendingUp, Archive, ClipboardList,
 } from 'lucide-react'
 import { usePermissions } from '../../hooks/usePermissions'
+import DateDisplay from '../../components/DateDisplay'
+import NepaliDatePicker from '../../components/NepaliDatePicker'
+import { useFyStore } from '../../store/fyStore'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -938,17 +941,19 @@ function ProductsTab({
 
 function MovementsTab({ products, canManage }: { products: Product[]; canManage: boolean }) {
   const qc = useQueryClient()
+  const { fyYear } = useFyStore()
   const [productFilter, setProductFilter] = useState<number | ''>('')
   const [typeFilter, setTypeFilter]       = useState('')
   const [showAdjust, setShowAdjust]       = useState(false)
 
   const { data: movements = [], isLoading } = useQuery<StockMovement[]>({
-    queryKey: ['movements', productFilter, typeFilter],
+    queryKey: ['movements', productFilter, typeFilter, fyYear],
     queryFn: () => {
       const p = new URLSearchParams()
       if (productFilter) p.set('product', String(productFilter))
       if (typeFilter)    p.set('movement_type', typeFilter)
-      return apiClient.get(`${INVENTORY.MOVEMENTS}?${p}`).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? [])
+      if (fyYear) p.set('fiscal_year', String(fyYear))
+      return apiClient.get(`${INVENTORY.MOVEMENTS}?${p}`).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? [])
     },
   })
 
@@ -1025,7 +1030,7 @@ function MovementsTab({ products, canManage }: { products: Product[]; canManage:
                     </td>
                     <td className="px-5 py-3 text-gray-500 text-xs max-w-48 truncate">{m.notes || '—'}</td>
                     <td className="px-5 py-3 text-gray-500 text-xs">{m.created_by_name || '—'}</td>
-                    <td className="px-5 py-3 text-gray-400 text-xs whitespace-nowrap">{new Date(m.created_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</td>
+                    <td className="px-5 py-3 text-gray-400 text-xs whitespace-nowrap"><DateDisplay adDate={m.created_at} showTime compact /></td>
                   </tr>
                 )
               })}
@@ -1047,7 +1052,7 @@ function LowStockTab({ products, canManage }: { products: Product[]; canManage: 
 
   const { data: lowStock = [], isLoading } = useQuery<Product[]>({
     queryKey: ['low-stock'],
-    queryFn: () => apiClient.get(INVENTORY.LOW_STOCK).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? []),
+    queryFn: () => apiClient.get(INVENTORY.LOW_STOCK).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
   })
 
   const autoReorderMut = useMutation({
@@ -1277,7 +1282,7 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
 
   const { data: suppliers = [], isLoading } = useQuery<Supplier[]>({
     queryKey: ['suppliers'],
-    queryFn: () => apiClient.get(INVENTORY.SUPPLIERS).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? []),
+    queryFn: () => apiClient.get(INVENTORY.SUPPLIERS).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
   })
 
   const createMut = useMutation({
@@ -1441,6 +1446,7 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
 
 function PurchaseOrdersTab({ products, canManage }: { products: Product[]; canManage: boolean }) {
   const qc = useQueryClient()
+  const { fyYear } = useFyStore()
   const [statusFilter, setStatusFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [receiveModal, setReceiveModal] = useState<PurchaseOrder | null>(null)
@@ -1458,12 +1464,13 @@ function PurchaseOrdersTab({ products, canManage }: { products: Product[]; canMa
 
   const { data: suppliers = [] } = useQuery<Supplier[]>({
     queryKey: ['suppliers'],
-    queryFn: () => apiClient.get(INVENTORY.SUPPLIERS).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? []),
+    queryFn: () => apiClient.get(INVENTORY.SUPPLIERS).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
   })
 
   const { data: allPOs = [], isLoading } = useQuery<PurchaseOrder[]>({
-    queryKey: ['purchase-orders'],
-    queryFn: () => apiClient.get(INVENTORY.PURCHASE_ORDERS).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? []),
+    queryKey: ['purchase-orders', fyYear],
+    queryFn: () =>
+      apiClient.get(INVENTORY.PURCHASE_ORDERS, { params: fyYear ? { fiscal_year: fyYear } : {} }).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
   })
 
   const pos = statusFilter ? allPOs.filter(p => p.status === statusFilter) : allPOs
@@ -1574,7 +1581,7 @@ function PurchaseOrdersTab({ products, canManage }: { products: Product[]; canMa
                     <td className="px-4 py-3 text-gray-500">{po.items.length}</td>
                     <td className="px-4 py-3 text-gray-700 font-medium">Rs {parseFloat(po.total_amount).toLocaleString()}</td>
                     <td className="px-4 py-3 text-gray-400">{po.expected_delivery ?? '—'}</td>
-                    <td className="px-4 py-3 text-gray-400">{new Date(po.created_at).toLocaleDateString()}</td>
+                    <td className="px-4 py-3 text-gray-400"><DateDisplay adDate={po.created_at} compact /></td>
                     <td className="px-4 py-3">
                       {canManage && (
                         <div className="flex gap-1 justify-end">
@@ -1612,7 +1619,7 @@ function PurchaseOrdersTab({ products, canManage }: { products: Product[]; canMa
               </div>
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Expected Delivery</label>
-                <input type="date" className={inp} value={poDelivery} onChange={e => setPODelivery(e.target.value)} />
+                <NepaliDatePicker value={poDelivery} onChange={v => setPODelivery(v)} />
               </div>
               <div className="col-span-2">
                 <label className="text-xs text-gray-500 mb-1 block">Notes</label>
@@ -1723,7 +1730,7 @@ function PurchaseOrdersTab({ products, canManage }: { products: Product[]; canMa
               <div className="flex items-center gap-2 text-gray-500"><Building2 size={13} /> <span className="font-medium text-gray-700">{viewModal.supplier_name}</span></div>
               <div className="flex items-center gap-2 text-gray-500">Status: <span className={`ml-1 px-2 py-0.5 rounded-full text-xs font-medium ${PO_STATUS_META[viewModal.status].color}`}>{PO_STATUS_META[viewModal.status].label}</span></div>
               {viewModal.expected_delivery && <div className="flex items-center gap-2 text-gray-400"><Clock size={13} /> Expected: {viewModal.expected_delivery}</div>}
-              {viewModal.received_at && <div className="flex items-center gap-2 text-gray-400"><CheckCircle2 size={13} /> Received: {new Date(viewModal.received_at).toLocaleDateString()}</div>}
+              {viewModal.received_at && <div className="flex items-center gap-2 text-gray-400"><CheckCircle2 size={13} /> Received: <DateDisplay adDate={viewModal.received_at} compact /></div>}
               {viewModal.notes && <div className="col-span-2 text-gray-400 text-xs">{viewModal.notes}</div>}
             </div>
             <div className="overflow-x-auto rounded-lg border border-gray-100">
@@ -1770,7 +1777,7 @@ function UoMTab({ canManage }: { canManage: boolean }) {
 
   const { data: uoms = [], isLoading } = useQuery<UnitOfMeasure[]>({
     queryKey: ['uom'],
-    queryFn: () => apiClient.get(INVENTORY.UOM).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? []),
+    queryFn: () => apiClient.get(INVENTORY.UOM).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
   })
 
   const openAdd = () => { setForm({ name: '', abbreviation: '', unit_type: 'unit' }); setEditing(null); setShowAdd(true) }
@@ -1898,7 +1905,7 @@ function VariantsTab({ products, canManage }: { products: Product[]; canManage: 
       const url = selectedProduct
         ? `${INVENTORY.VARIANTS}?product=${selectedProduct}`
         : INVENTORY.VARIANTS
-      return apiClient.get(url).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? [])
+      return apiClient.get(url).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? [])
     },
   })
 
@@ -2180,6 +2187,7 @@ function VariantsTab({ products, canManage }: { products: Product[]; canManage: 
 function ReturnsTab({ products, canManage }: { products: Product[]; canManage: boolean }) {
   const qc = useQueryClient()
   const confirm = useConfirm()
+  const { fyYear } = useFyStore()
   const [showAdd, setShowAdd] = useState(false)
   const [detail, setDetail]   = useState<ReturnOrder | null>(null)
 
@@ -2192,18 +2200,20 @@ function ReturnsTab({ products, canManage }: { products: Product[]; canManage: b
   })
 
   const { data: returns = [], isLoading } = useQuery<ReturnOrder[]>({
-    queryKey: ['return-orders'],
-    queryFn: () => apiClient.get(INVENTORY.RETURN_ORDERS).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? []),
+    queryKey: ['return-orders', fyYear],
+    queryFn: () =>
+      apiClient.get(INVENTORY.RETURN_ORDERS, { params: fyYear ? { fiscal_year: fyYear } : {} }).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
   })
 
   const { data: suppliers = [] } = useQuery<Supplier[]>({
     queryKey: ['suppliers'],
-    queryFn: () => apiClient.get(INVENTORY.SUPPLIERS).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? []),
+    queryFn: () => apiClient.get(INVENTORY.SUPPLIERS).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
   })
 
   const { data: purchaseOrders = [] } = useQuery<PurchaseOrder[]>({
-    queryKey: ['purchase-orders'],
-    queryFn: () => apiClient.get(INVENTORY.PURCHASE_ORDERS).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? []),
+    queryKey: ['purchase-orders', fyYear],
+    queryFn: () =>
+      apiClient.get(INVENTORY.PURCHASE_ORDERS, { params: fyYear ? { fiscal_year: fyYear } : {} }).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
   })
 
   const filteredPOs = purchaseOrders.filter(po => form.supplier === '' || po.supplier === form.supplier)
@@ -2296,7 +2306,7 @@ function ReturnsTab({ products, canManage }: { products: Product[]; canManage: b
                   <td className="px-5 py-3 text-center text-gray-500">{ro.total_items}</td>
                   <td className="px-5 py-3 text-right font-medium text-gray-800">Rs. {parseFloat(ro.total_value).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                   <td className="px-5 py-3"><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_STYLE[ro.status] ?? 'bg-gray-100'}`}>{ro.status}</span></td>
-                  <td className="px-5 py-3 text-gray-400 text-xs">{new Date(ro.created_at).toLocaleDateString()}</td>
+                  <td className="px-5 py-3 text-gray-400 text-xs"><DateDisplay adDate={ro.created_at} compact /></td>
                   {canManage && (
                     <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
                       <div className="flex gap-1 justify-end">
@@ -2337,7 +2347,7 @@ function ReturnsTab({ products, canManage }: { products: Product[]; canManage: b
               <div><span className="text-gray-400">Status:</span> <span className={`ml-1 px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_STYLE[detail.status]}`}>{detail.status}</span></div>
               <div><span className="text-gray-400">Reason:</span> <span className="font-medium">{REASON_LABELS[detail.reason]}</span></div>
               {detail.po_number && <div><span className="text-gray-400">PO:</span> <span className="font-medium">{detail.po_number}</span></div>}
-              {detail.sent_at && <div><span className="text-gray-400">Sent At:</span> <span className="font-medium">{new Date(detail.sent_at).toLocaleString()}</span></div>}
+              {detail.sent_at && <div><span className="text-gray-400">Sent At:</span> <span className="font-medium"><DateDisplay adDate={detail.sent_at} showTime compact /></span></div>}
             </div>
             {detail.notes && <div className="bg-gray-50 rounded-xl p-3 text-sm text-gray-700">{detail.notes}</div>}
             <table className="w-full text-sm border-t border-gray-100 mt-2">
@@ -2567,7 +2577,7 @@ function ReportsTab() {
                         <td className="px-5 py-3 font-medium text-gray-800">{r.name}</td>
                         <td className="px-5 py-3 font-mono text-xs text-gray-400">{r.sku}</td>
                         <td className="px-5 py-3 text-center text-gray-600">{r.quantity_on_hand}</td>
-                        <td className="px-5 py-3 text-gray-500 text-xs">{r.last_movement ? new Date(r.last_movement).toLocaleDateString() : 'Never'}</td>
+                        <td className="px-5 py-3 text-gray-500 text-xs">{r.last_movement ? <DateDisplay adDate={r.last_movement} compact /> : 'Never'}</td>
                         <td className="px-5 py-3 text-center"><span className="px-2 py-0.5 bg-red-100 text-red-600 rounded-full text-xs font-medium">{r.days_inactive}d</span></td>
                       </tr>
                     ))}
@@ -2690,13 +2700,13 @@ function SupplierCatalogTab({ products, canManage }: { products: Product[]; canM
 
   const { data: suppliers = [] } = useQuery<Supplier[]>({
     queryKey: ['suppliers'],
-    queryFn: () => apiClient.get(INVENTORY.SUPPLIERS).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? []),
+    queryFn: () => apiClient.get(INVENTORY.SUPPLIERS).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
   })
   const { data: catalog = [], isLoading } = useQuery<SupplierProduct[]>({
     queryKey: ['supplier-catalog', filterSupplier],
     queryFn: () => {
       const params = filterSupplier ? `?supplier=${filterSupplier}` : ''
-      return apiClient.get(`${INVENTORY.SUPPLIER_PRODUCTS}${params}`).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? [])
+      return apiClient.get(`${INVENTORY.SUPPLIER_PRODUCTS}${params}`).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? [])
     },
   })
 
@@ -2888,7 +2898,7 @@ function StockCountsTab({ categories, canManage }: { categories: Category[]; can
 
   const { data: sessions = [], isLoading } = useQuery<StockCountSession[]>({
     queryKey: ['stock-counts'],
-    queryFn: () => apiClient.get(INVENTORY.STOCK_COUNTS).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? []),
+    queryFn: () => apiClient.get(INVENTORY.STOCK_COUNTS).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
   })
 
   // refresh active session detail
@@ -3085,7 +3095,7 @@ function StockCountsTab({ categories, canManage }: { categories: Category[]; can
                       <span className="text-gray-300">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-gray-400 text-xs">{new Date(sc.created_at).toLocaleDateString()}</td>
+                  <td className="px-4 py-3 text-gray-400 text-xs"><DateDisplay adDate={sc.created_at} compact /></td>
                   <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                     {canManage && sc.status === 'draft' && (
                       <button
@@ -3146,15 +3156,15 @@ export default function InventoryPage() {
 
   const { data: products = [], isLoading: loadingProducts } = useQuery<Product[]>({
     queryKey: ['products'],
-    queryFn: () => apiClient.get(INVENTORY.PRODUCTS).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? []),
+    queryFn: () => apiClient.get(INVENTORY.PRODUCTS).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
   })
   const { data: stockLevels = [] } = useQuery<StockLevel[]>({
     queryKey: ['stock-levels'],
-    queryFn: () => apiClient.get(INVENTORY.STOCK_LEVELS).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? []),
+    queryFn: () => apiClient.get(INVENTORY.STOCK_LEVELS).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
   })
   const { data: categories = [] } = useQuery<Category[]>({
     queryKey: ['inventory-categories'],
-    queryFn: () => apiClient.get(INVENTORY.CATEGORIES).then(r => Array.isArray(r.data) ? r.data : r.data.results ?? []),
+    queryFn: () => apiClient.get(INVENTORY.CATEGORIES).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
   })
 
   // Badge count for Low Stock tab

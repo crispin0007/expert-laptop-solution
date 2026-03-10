@@ -7,6 +7,7 @@ import apiClient from '../../api/client'
 import type { Customer } from './types'
 import CustomerContactsTab from './CustomerContactsTab'
 import NepalAddressFields, { type NepalAddressValue } from './NepalAddressFields'
+import DateDisplay from '../../components/DateDisplay'
 
 const TABS = ['Info', 'Contacts'] as const
 type Tab = (typeof TABS)[number]
@@ -185,7 +186,7 @@ export default function CustomerDetailPage() {
             </div>
           </div>
           <div className="mt-4 pt-4 border-t border-gray-100 flex gap-6 text-xs text-gray-400">
-            <span>Created {new Date(customer.created_at).toLocaleDateString()}</span>
+            <span>Created <DateDisplay adDate={customer.created_at} compact /></span>
             {customer.created_by_name && <span>by {customer.created_by_name}</span>}
           </div>
         </div>

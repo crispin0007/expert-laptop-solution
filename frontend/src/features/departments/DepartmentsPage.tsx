@@ -8,7 +8,7 @@ export default function DepartmentsPage() {
   const { data: departments = [], isLoading } = useQuery<Department[]>({
     queryKey: ['departments'],
     queryFn: () => apiClient.get(DEPARTMENTS.LIST).then(r =>
-      Array.isArray(r.data) ? r.data : r.data.results ?? []
+      Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []
     ),
   })
 

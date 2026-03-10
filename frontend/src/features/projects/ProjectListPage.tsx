@@ -6,6 +6,9 @@ import { PROJECTS, CUSTOMERS, STAFF } from '../../api/endpoints'
 import toast from 'react-hot-toast'
 import { Plus, X } from 'lucide-react'
 import { useAuthStore } from '../../store/authStore'
+import NepaliDatePicker from '../../components/NepaliDatePicker'
+import DateDisplay from '../../components/DateDisplay'
+import { useFyStore } from '../../store/fyStore'
 
 interface Project { id: number; project_number: string; name: string; status: string; manager?: number | null; customer: number | null; customer_name: string; start_date: string | null; end_date: string | null }
 interface Customer { id: number; name: string }
@@ -37,12 +40,14 @@ export default function ProjectListPage() {
   const assignedToMe = urlParams.get('assigned') === 'me'
   const [showCreate, setShowCreate] = useState(false)
   const [form, setForm] = useState(BLANK_FORM)
+  const { fyYear } = useFyStore()
 
   const { data: rawProjects = [], isLoading } = useQuery<Project[]>({
-    queryKey: ['projects'],
-    queryFn: () => apiClient.get(PROJECTS.LIST).then(r =>
-      Array.isArray(r.data) ? r.data : r.data.results ?? []
-    ),
+    queryKey: ['projects', fyYear],
+    queryFn: () => apiClient.get(PROJECTS.LIST, { params: fyYear ? { fiscal_year: fyYear } : {} }).then(r => {
+      const d = r.data.data ?? r.data
+      return Array.isArray(d) ? d : d.results ?? []
+    }),
   })
 
   const projects = useMemo(() => {
@@ -52,17 +57,19 @@ export default function ProjectListPage() {
 
   const { data: customers = [] } = useQuery<Customer[]>({
     queryKey: ['customers-simple'],
-    queryFn: () => apiClient.get(CUSTOMERS.LIST).then(r =>
-      Array.isArray(r.data) ? r.data : r.data.results ?? []
-    ),
+    queryFn: () => apiClient.get(CUSTOMERS.LIST).then(r => {
+      const d = r.data.data ?? r.data
+      return Array.isArray(d) ? d : d.results ?? []
+    }),
     enabled: showCreate,
   })
 
   const { data: staffList = [] } = useQuery<StaffMember[]>({
     queryKey: ['staff-list'],
-    queryFn: () => apiClient.get(STAFF.LIST).then(r =>
-      Array.isArray(r.data) ? r.data : r.data.results ?? []
-    ),
+    queryFn: () => apiClient.get(STAFF.LIST).then(r => {
+      const d = r.data.data ?? r.data
+      return Array.isArray(d) ? d : d.results ?? []
+    }),
     enabled: showCreate,
   })
 
@@ -190,11 +197,11 @@ export default function ProjectListPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Start date</label>
-                  <input type="date" className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...field('start_date')} />
+                  <NepaliDatePicker value={form.start_date} onChange={v => setForm(p => ({ ...p, start_date: v }))} />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">End date</label>
-                  <input type="date" className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" {...field('end_date')} />
+                  <NepaliDatePicker value={form.end_date} onChange={v => setForm(p => ({ ...p, end_date: v }))} />
                 </div>
               </div>
             </div>
@@ -253,8 +260,8 @@ export default function ProjectListPage() {
                       {p.status.replace('_', ' ')}
                     </span>
                   </td>
-                  <td className="px-5 py-3.5 text-gray-500 whitespace-nowrap">{p.start_date ?? '—'}</td>
-                  <td className="px-5 py-3.5 text-gray-500 whitespace-nowrap">{p.end_date ?? '—'}</td>
+                  <td className="px-5 py-3.5 text-gray-500 whitespace-nowrap">{p.start_date ? <DateDisplay adDate={p.start_date} compact /> : '—'}</td>
+                  <td className="px-5 py-3.5 text-gray-500 whitespace-nowrap">{p.end_date ? <DateDisplay adDate={p.end_date} compact /> : '—'}</td>
                 </tr>
               ))}
             </tbody>

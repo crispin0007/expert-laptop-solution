@@ -4,6 +4,15 @@ report_service.py
 Accounting reports derived from posted JournalLines.
 
 All reports return plain Python dicts so views can serialize them directly.
+Every report includes a ``period`` block with both BS and AD date info::
+
+    "period": {
+        "date_from":    "2024-07-17",
+        "date_to":      "2025-07-16",
+        "date_from_bs": {"bs": "2081-04-01", "bs_en": "1 Shrawan 2081", ...},
+        "date_to_bs":   {"bs": "2082-03-32", "bs_en": "32 Ashadh 2082", ...},
+        "fiscal_year":  "2081/082",
+    }
 """
 from decimal import Decimal
 from django.db.models import Sum, Q
@@ -11,6 +20,25 @@ from django.db.models import Sum, Q
 
 def _zero():
     return Decimal('0')
+
+
+def _period_meta(date_from=None, date_to=None):
+    """Return a period block with both AD and BS date information."""
+    from core.nepali_date import date_to_bs_display, fiscal_year_of
+    meta = {
+        'date_from':    str(date_from) if date_from else None,
+        'date_to':      str(date_to)   if date_to   else None,
+        'date_from_bs': date_to_bs_display(date_from) if date_from else None,
+        'date_to_bs':   date_to_bs_display(date_to)   if date_to   else None,
+        'fiscal_year':  None,
+    }
+    # Attach fiscal year label when both dates are provided
+    if date_from and date_to:
+        try:
+            meta['fiscal_year'] = str(fiscal_year_of(date_from))
+        except Exception:
+            pass
+    return meta
 
 
 def _account_balance(tenant, account_code, date_from=None, date_to=None):
@@ -102,6 +130,7 @@ def profit_and_loss(tenant, date_from, date_to):
     net_profit     = total_revenue - total_expenses
 
     return {
+        'period':         _period_meta(date_from, date_to),
         'date_from':      str(date_from),
         'date_to':        str(date_to),
         'revenue':        revenue_lines,
@@ -147,8 +176,10 @@ def balance_sheet(tenant, as_of_date):
         }]
         total_equity += current_earnings
 
+    from core.nepali_date import date_to_bs_display
     return {
         'as_of_date':        str(as_of_date),
+        'as_of_date_bs':     date_to_bs_display(as_of_date),
         'assets':            assets,
         'total_assets':      total_assets,
         'liabilities':       liabilities,
@@ -338,6 +369,7 @@ def vat_report(tenant, period_start, period_end):
     vat_payable     = vat_collected - vat_reclaimable
 
     return {
+        'period':          _period_meta(period_start, period_end),
         'period_start':    str(period_start),
         'period_end':      str(period_end),
         'vat_collected':   vat_collected,   # from sales

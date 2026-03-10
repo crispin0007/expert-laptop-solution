@@ -4,6 +4,8 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from django.db.models import Q, Count
 from core.mixins import TenantMixin
+from core.views import NexusViewSet
+from core.response import ApiResponse
 from core.permissions import make_role_permission, STAFF_ROLES, MANAGER_ROLES, ALL_ROLES
 from .models import Customer, CustomerContact
 from .serializers import CustomerSerializer, CustomerMinimalSerializer, CustomerContactSerializer
@@ -15,7 +17,7 @@ class CustomerPagePagination(PageNumberPagination):
     max_page_size = 200
 
 
-class CustomerViewSet(TenantMixin, viewsets.ModelViewSet):
+class CustomerViewSet(NexusViewSet):
     """
     GET/POST   /api/v1/customers/        — list active / create
     GET/PUT/PATCH /api/v1/customers/{id}/ — detail / update
@@ -146,26 +148,29 @@ class CustomerViewSet(TenantMixin, viewsets.ModelViewSet):
                 })
             return out
 
-        return Response({
+        return ApiResponse.success(data={
             'total': total,
             'unlocated': unlocated,
             'provinces': flatten(provinces),
         })
 
-    def perform_create(self, serializer):
-        serializer.save(
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save(
             tenant=self.tenant,
             created_by=self.request.user,
             is_active=True,
         )
+        return ApiResponse.created(data=self.get_serializer(instance).data)
 
     def destroy(self, request, *args, **kwargs):
         customer = self.get_object()
         customer.soft_delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return ApiResponse.no_content()
 
 
-class CustomerContactViewSet(TenantMixin, viewsets.ModelViewSet):
+class CustomerContactViewSet(NexusViewSet):
     """Contacts inherit the parent customer's permission level."""
 
     required_module = 'customers'
@@ -187,5 +192,8 @@ class CustomerContactViewSet(TenantMixin, viewsets.ModelViewSet):
             customer__tenant=self.tenant,
         )
 
-    def perform_create(self, serializer):
-        serializer.save(customer_id=self.kwargs['customer_pk'])
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save(customer_id=self.kwargs['customer_pk'])
+        return ApiResponse.created(data=self.get_serializer(instance).data)

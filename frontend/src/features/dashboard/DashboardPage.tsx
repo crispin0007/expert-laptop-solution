@@ -5,6 +5,9 @@ import apiClient from '../../api/client'
 import { DASHBOARD, TICKETS, PROJECTS, ACCOUNTING } from '../../api/endpoints'
 import { usePermissions } from '../../hooks/usePermissions'
 import { useModules } from '../../hooks/useModules'
+import DateDisplay from '../../components/DateDisplay'
+import { adStringToBsDisplay } from '../../utils/nepaliDate'
+import { useFyStore } from '../../store/fyStore'
 import {
   Ticket as TicketIcon, FolderKanban, Coins, AlertTriangle,
   Clock, CheckCircle2, CircleDot, ArrowRight, Plus,
@@ -112,31 +115,33 @@ export default function DashboardPage() {
   const navigate = useNavigate()
   const perms = usePermissions()
   const modules = useModules()
+  const { fyYear } = useFyStore()
+  const fyParam = fyYear ? { fiscal_year: fyYear } : {}
 
   // ── Aggregated KPI stats (single request) ────────────────────────────────
   const { data: stats } = useQuery<DashboardStats>({
-    queryKey: ['dashboard', 'stats'],
-    queryFn: () => apiClient.get(DASHBOARD.STATS).then(r => r.data),
+    queryKey: ['dashboard', 'stats', fyYear],
+    queryFn: () => apiClient.get(DASHBOARD.STATS, { params: fyParam }).then(r => r.data),
     staleTime: 60_000,
     refetchInterval: 120_000,
   })
 
   // ── Full list data (needed for table/list rendering) ─────────────────────
   const { data: openData } = useQuery({
-    queryKey: ['tickets', 'open'],
-    queryFn: () => apiClient.get(TICKETS.LIST, { params: { status: 'open' } }).then(r => r.data),
+    queryKey: ['tickets', 'open', fyYear],
+    queryFn: () => apiClient.get(TICKETS.LIST, { params: { status: 'open', ...fyParam } }).then(r => r.data),
     enabled: modules.has('tickets') && perms.can('can_view_tickets'),
   })
 
   const { data: projectsData } = useQuery({
-    queryKey: ['projects', 'active'],
-    queryFn: () => apiClient.get(PROJECTS.LIST, { params: { status: 'active' } }).then(r => r.data),
+    queryKey: ['projects', 'active', fyYear],
+    queryFn: () => apiClient.get(PROJECTS.LIST, { params: { status: 'active', ...fyParam } }).then(r => r.data),
     enabled: modules.has('projects') && perms.can('can_view_projects'),
   })
 
   const { data: coinsData } = useQuery({
-    queryKey: ['coins', 'pending'],
-    queryFn: () => apiClient.get(ACCOUNTING.COINS, { params: { status: 'pending' } }).then(r => r.data),
+    queryKey: ['coins', 'pending', fyYear],
+    queryFn: () => apiClient.get(ACCOUNTING.COINS, { params: { status: 'pending', ...fyParam } }).then(r => r.data),
     enabled: modules.has('accounting') && perms.can('can_approve_coins'),
   })
 
@@ -169,7 +174,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+            <DateDisplay adDate={new Date().toISOString().slice(0, 10)} />
           </p>
         </div>
         {showTickets && perms.can('can_create_tickets') && (
@@ -260,7 +265,7 @@ export default function DashboardPage() {
         {!showTickets && !showProjects && !showAccounting && (
           <StatCard
             label="Today"
-            value={new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+            value={adStringToBsDisplay(new Date().toISOString().slice(0, 10))?.bs ?? new Date().toISOString().slice(0, 10)}
             icon={CheckCircle2}
             iconBg="bg-gray-50"
             iconColor="text-gray-400"

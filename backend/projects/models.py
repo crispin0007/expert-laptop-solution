@@ -208,6 +208,44 @@ class ProjectProductRequest(TenantModel):
         return f"{self.project.project_number} — {self.product.name} ({self.status})"
 
 
+class ProjectMemberSchedule(TenantModel):
+    """
+    Tracks which specific dates each team member is scheduled to work on a project.
+
+    One row = one member + one date on a project.
+    Managers schedule dates upfront; presence is marked after the day.
+    Coin/salary for the period = tasks_completed_coins + days_present × daily_coin_rate.
+    """
+
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name='schedules',
+    )
+    member = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='project_schedules',
+    )
+    work_date = models.DateField(help_text='The calendar date this member is scheduled to work.')
+    is_present = models.BooleanField(
+        default=False,
+        help_text='Set to True by the manager once the member has worked this day.',
+    )
+    note = models.TextField(blank=True)
+
+    class Meta:
+        unique_together = ('project', 'member', 'work_date')
+        ordering = ['work_date', 'member__first_name']
+        indexes = [
+            models.Index(fields=['project', 'member'], name='sched_proj_member_idx'),
+            models.Index(fields=['project', 'work_date'], name='sched_proj_date_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.project.project_number} — {self.member} on {self.work_date}"
+
+
 class ProjectAttachment(TenantModel):
     """Files attached to a project."""
 
