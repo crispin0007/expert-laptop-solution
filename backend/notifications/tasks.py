@@ -90,13 +90,15 @@ def task_send_ticket_comment(self, ticket_id: int, comment_id: int, recipient_id
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def task_send_push(self, user_id: int, title: str, body: str, data: dict | None = None) -> None:
+def task_send_push(self, user_id: int, tenant_id: int, title: str, body: str, data: dict | None = None) -> None:
     try:
         from accounts.models import User
+        from tenants.models import Tenant
         from notifications.push import send_push
 
         user = User.objects.get(pk=user_id)
-        send_push(user=user, title=title, body=body, data=data or {})
+        tenant = Tenant.objects.get(pk=tenant_id)
+        send_push(user=user, tenant=tenant, title=title, body=body, data=data or {})
     except Exception as exc:
         logger.error("task_send_push failed: %s", exc, exc_info=True)
         raise self.retry(exc=exc)

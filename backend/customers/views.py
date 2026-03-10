@@ -1,20 +1,14 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
-from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from django.db.models import Q, Count
 from core.mixins import TenantMixin
 from core.views import NexusViewSet
 from core.response import ApiResponse
+from core.pagination import NexusCursorPagination
 from core.permissions import make_role_permission, STAFF_ROLES, MANAGER_ROLES, ALL_ROLES
 from .models import Customer, CustomerContact
 from .serializers import CustomerSerializer, CustomerMinimalSerializer, CustomerContactSerializer
-
-
-class CustomerPagePagination(PageNumberPagination):
-    page_size = 25
-    page_size_query_param = 'page_size'
-    max_page_size = 200
 
 
 class CustomerViewSet(NexusViewSet):
@@ -34,7 +28,7 @@ class CustomerViewSet(NexusViewSet):
     """
     required_module = 'customers'
     serializer_class = CustomerSerializer
-    pagination_class = CustomerPagePagination
+    pagination_class = NexusCursorPagination
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):

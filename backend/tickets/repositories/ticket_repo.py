@@ -46,6 +46,7 @@ class TicketRepository(BaseRepository):
                 'ticket_type', 'customer', 'department',
                 'assigned_to', 'created_by', 'sla',
             )
+            .prefetch_related('team_members', 'vehicles')
         )
         if status:
             qs = qs.filter(status=status)

@@ -1,7 +1,7 @@
 from django.db import models
 from django.db.models import Q
 from django.conf import settings
-from core.models import TenantModel
+from core.models import TenantModel, next_seq
 
 
 class Customer(TenantModel):
@@ -83,19 +83,7 @@ class Customer(TenantModel):
 
     def save(self, *args, **kwargs):
         if not self.customer_number and self.tenant_id:
-            last = (
-                Customer.objects.filter(tenant_id=self.tenant_id)
-                .order_by('-created_at')
-                .values_list('customer_number', flat=True)
-                .first()
-            )
-            if last:
-                try:
-                    seq = int(last.split('-')[-1]) + 1
-                except (ValueError, IndexError):
-                    seq = 1
-            else:
-                seq = 1
+            seq = next_seq(self.tenant_id, 'customer', Customer, 'customer_number')
             self.customer_number = f"CUS-{seq:04d}"
         super().save(*args, **kwargs)
 
@@ -106,7 +94,7 @@ class Customer(TenantModel):
         self.save(update_fields=['is_deleted', 'deleted_at'])
 
 
-class CustomerContact(models.Model):
+class CustomerContact(TenantModel):
     """Additional contacts for an organisation customer."""
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='contacts')
     name = models.CharField(max_length=255)

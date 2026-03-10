@@ -17,7 +17,7 @@ const API_PERM_MAP: Record<string, string> = {
   can_delete_projects:    'projects.edit',
   can_view_customers:     'customers.view',
   can_create_customers:   'customers.create',
-  can_delete_customers:   'customers.edit',
+  can_delete_customers:   'customers.delete',
   can_view_inventory:     'inventory.view',
   can_manage_inventory:   'inventory.edit',
   can_view_accounting:    'accounting.view',
@@ -78,7 +78,7 @@ export type PermissionKey =
   | 'tickets.view' | 'tickets.create' | 'tickets.edit' | 'tickets.delete'
   | 'tickets.assign' | 'tickets.transfer' | 'tickets.close'
   | 'projects.view' | 'projects.create' | 'projects.edit' | 'projects.manage'
-  | 'customers.view' | 'customers.create' | 'customers.edit' | 'customers.manage'
+  | 'customers.view' | 'customers.create' | 'customers.edit' | 'customers.delete' | 'customers.manage'
   | 'inventory.view' | 'inventory.edit'
   | 'accounting.view' | 'accounting.manage' | 'accounting.coins.approve' | 'accounting.payslip.view'
   | 'staff.view' | 'staff.manage'

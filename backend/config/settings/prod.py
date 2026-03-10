@@ -49,7 +49,11 @@ _escaped_root = _re.escape(_root)
 CORS_ALLOWED_ORIGIN_REGEXES = [
     rf'^https?://.*\.{_escaped_root}$',   # all tenant subdomains of ROOT_DOMAIN
     rf'^https?://{_escaped_root}$',        # root domain (landing / super-admin)
-    r'^https?://.*$',                      # custom tenant domains — validated by TenantMiddleware
+    # NOTE: custom tenant vanity domains must be added here or validated via
+    # a CORS_ORIGIN_ALLOW_ALL approach with CORS_URLS_REGEX once Phase 2 custom
+    # domains are implemented.  The former wildcard r'^https?://.*$' was removed
+    # as it allowed any origin — TenantMiddleware alone is not sufficient CORS
+    # protection because CORS preflight is handled before middleware.
     r'^http://localhost(:\d+)?$',           # local frontend dev server
 ]
 CORS_ALLOW_ALL_ORIGINS = False

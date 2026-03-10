@@ -52,7 +52,7 @@ def task_generate_monthly_payslips(self):
     profiles = (
         StaffSalaryProfile.objects
         .select_related('staff', 'tenant')
-        .all()
+        .iterator(chunk_size=200)
     )
 
     for profile in profiles:

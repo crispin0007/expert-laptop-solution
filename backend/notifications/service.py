@@ -63,6 +63,7 @@ def notify_ticket_assigned(ticket: 'Ticket') -> None:
         from notifications.tasks import task_send_push
         task_send_push.delay(
             user_id=ticket.assigned_to_id,
+            tenant_id=ticket.tenant_id,
             title=f'Ticket assigned: {ticket.ticket_number}',
             body=f'You have been assigned to ticket "{ticket.title}".',
             data={'type': 'ticket_assigned', 'source_id': ticket.pk},
@@ -91,6 +92,7 @@ def notify_sla_warning(ticket: 'Ticket', recipient) -> None:
         from notifications.tasks import task_send_push
         task_send_push.delay(
             user_id=recipient.pk,
+            tenant_id=ticket.tenant_id,
             title=f'SLA warning: {ticket.ticket_number}',
             body=f'Ticket "{ticket.title}" is approaching its SLA deadline.',
             data={'type': 'sla_warning', 'source_id': ticket.pk},
@@ -114,6 +116,7 @@ def notify_coin_approved(coin_txn) -> None:
         from notifications.tasks import task_send_push
         task_send_push.delay(
             user_id=coin_txn.staff_id,
+            tenant_id=coin_txn.tenant_id,
             title='Coins approved!',
             body=f'Your {coin_txn.amount} coin(s) have been approved.',
             data={'type': 'coin_approved', 'source_id': coin_txn.pk},
@@ -137,6 +140,7 @@ def notify_coin_rejected(coin_txn) -> None:
         from notifications.tasks import task_send_push
         task_send_push.delay(
             user_id=coin_txn.staff_id,
+            tenant_id=coin_txn.tenant_id,
             title='Coins rejected',
             body=f'Your {coin_txn.amount} coin(s) were rejected.',
             data={'type': 'coin_rejected', 'source_id': coin_txn.pk},
@@ -174,6 +178,7 @@ def notify_task_assigned(task: 'ProjectTask') -> None:
         from notifications.tasks import task_send_push
         task_send_push.delay(
             user_id=task.assigned_to_id,
+            tenant_id=task.tenant_id,
             title=f'Task assigned: {task.title}',
             body=f'You have been assigned task "{task.title}" in project {task.project.project_number}.',
             data={'type': 'task_assigned', 'source_id': task.pk},
@@ -207,6 +212,7 @@ def notify_ticket_comment(ticket, comment, recipient) -> None:
         from notifications.tasks import task_send_push
         task_send_push.delay(
             user_id=recipient.pk,
+            tenant_id=ticket.tenant_id,
             title=f'New comment on {ticket.ticket_number}',
             body=comment.body[:200] if hasattr(comment, 'body') else '',
             data={'type': 'ticket_comment', 'source_id': ticket.pk},
@@ -241,6 +247,7 @@ def notify_ticket_transfer(ticket, new_assignee) -> None:
         from notifications.tasks import task_send_push
         task_send_push.delay(
             user_id=new_assignee.pk,
+            tenant_id=ticket.tenant_id,
             title=f'Ticket transferred to you: {ticket.ticket_number}',
             body=f'Ticket "{ticket.title}" has been transferred to you.',
             data={'type': 'ticket_transfer', 'source_id': ticket.pk},
@@ -314,6 +321,7 @@ def notify_low_stock(product, quantity_on_hand: int) -> None:
             from notifications.tasks import task_send_push
             task_send_push.delay(
                 user_id=recipient.pk,
+                tenant_id=product.tenant_id,
                 title=f'Low stock: {product.name}',
                 body=f'{product.name} is at {quantity_on_hand} units — at or below reorder level.',
                 data={'type': 'low_stock', 'source_id': product.pk},
@@ -346,6 +354,7 @@ def notify_po_status_changed(po) -> None:
         from notifications.tasks import task_send_push
         task_send_push.delay(
             user_id=po.created_by_id,
+            tenant_id=po.tenant_id,
             title=f'Purchase Order {po.po_number}: {po.get_status_display()}',
             body=f'PO {po.po_number} from {po.supplier.name} is now {po.get_status_display()}.',
             data={'type': 'po_status', 'source_id': po.pk},
@@ -378,6 +387,7 @@ def notify_return_status_changed(return_order) -> None:
         from notifications.tasks import task_send_push
         task_send_push.delay(
             user_id=return_order.created_by_id,
+            tenant_id=return_order.tenant_id,
             title=f'Return Order {return_order.return_number}: {return_order.get_status_display()}',
             body=f'Return {return_order.return_number} is now {return_order.get_status_display()}.',
             data={'type': 'return_status', 'source_id': return_order.pk},
@@ -411,6 +421,7 @@ def notify_project_assigned(project) -> None:
         from notifications.tasks import task_send_push
         task_send_push.delay(
             user_id=project.manager_id,
+            tenant_id=project.tenant_id,
             title=f'You are managing project {project.project_number}',
             body=f'You have been set as manager for project "{project.name}".',
             data={'type': 'project_assigned', 'source_id': project.pk},
@@ -450,6 +461,7 @@ def notify_task_completed(task) -> None:
         from notifications.tasks import task_send_push
         task_send_push.delay(
             user_id=manager.pk,
+            tenant_id=task.tenant_id,
             title=f'Task done in {task.project.project_number}: {task.title}',
             body=f'Task "{task.title}" has been marked as done.',
             data={'type': 'task_done', 'source_id': task.pk},
