@@ -74,5 +74,8 @@ urlpatterns = [
     # Sprint 5
     path('api/v1/projects/', include('projects.urls')),
     path('api/v1/notifications/', include('notifications.urls')),
+
+    # CMS & Website Builder
+    path('api/v1/cms/', include('cms.urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 

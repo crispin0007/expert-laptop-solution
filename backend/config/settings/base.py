@@ -70,6 +70,9 @@ INSTALLED_APPS = [
 
     # local — Sprint 5
     'projects',
+
+    # local — CMS
+    'cms',
 ]
 
 # Use a custom user model provided by the accounts app

@@ -304,3 +304,37 @@ export const INVENTORY = {
   STOCK_COUNT_COMPLETE: (id: number) => `/inventory/stock-counts/${id}/complete/`,
   STOCK_COUNT_CANCEL: (id: number) => `/inventory/stock-counts/${id}/cancel/`,
 } as const
+
+export const CMS = {
+  // Site
+  SITE:            '/cms/site/',
+  SITE_PUBLISH:    '/cms/site/publish/',
+
+  // Pages
+  PAGES:           '/cms/pages/',
+  PAGE_DETAIL:     (id: number) => `/cms/pages/${id}/`,
+  PAGE_PUBLISH:    (id: number) => `/cms/pages/${id}/publish/`,
+
+  // Blocks
+  BLOCKS:          (pageId: number) => `/cms/pages/${pageId}/blocks/`,
+  BLOCK_DETAIL:    (pageId: number, blockId: number) => `/cms/pages/${pageId}/blocks/${blockId}/`,
+  BLOCK_REORDER:   (pageId: number) => `/cms/pages/${pageId}/blocks/reorder/`,
+
+  // Blog
+  BLOG:            '/cms/blog/',
+  BLOG_POST:       (id: number) => `/cms/blog/${id}/`,
+  BLOG_PUBLISH:    (id: number) => `/cms/blog/${id}/publish/`,
+
+  // Custom domain
+  DOMAIN:          '/cms/domain/',
+
+  // AI generation
+  GENERATE:        '/cms/generate/',
+  GENERATE_DETAIL: (id: number) => `/cms/generate/${id}/`,
+
+  // Public (no auth — Next.js renderer)
+  PUBLIC_SITE:     (subdomain: string) => `/cms/public/${subdomain}/`,
+  PUBLIC_PAGE:     (subdomain: string, slug: string) => `/cms/public/${subdomain}/pages/${slug}/`,
+  PUBLIC_BLOG:     (subdomain: string) => `/cms/public/${subdomain}/blog/`,
+  PUBLIC_POST:     (subdomain: string, slug: string) => `/cms/public/${subdomain}/blog/${slug}/`,
+} as const

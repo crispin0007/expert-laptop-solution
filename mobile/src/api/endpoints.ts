@@ -222,3 +222,19 @@ export const INVENTORY_FULL = {
   SUPPLIERS: '/inventory/suppliers/',
   PURCHASE_ORDERS: '/inventory/purchase-orders/',
 } as const
+
+// ── CMS / Website Builder ──────────────────────────────────────────────────
+
+export const CMS = {
+  // Private (authenticated)
+  SITE:         '/cms/site/',
+  PAGES:        '/cms/pages/',
+  BLOG:         '/cms/blog/',
+  GENERATE:     '/cms/generate/',
+
+  // Public (no auth — Next.js renderer / mobile preview)
+  PUBLIC_SITE:  (subdomain: string) => `/cms/public/${subdomain}/`,
+  PUBLIC_PAGE:  (subdomain: string, slug: string) => `/cms/public/${subdomain}/pages/${slug}/`,
+  PUBLIC_BLOG:  (subdomain: string) => `/cms/public/${subdomain}/blog/`,
+  PUBLIC_POST:  (subdomain: string, slug: string) => `/cms/public/${subdomain}/blog/${slug}/`,
+} as const
