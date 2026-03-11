@@ -4,8 +4,9 @@
  * Full drag-and-drop block builder is Phase 2 (GrapeJS integration).
  */
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Plus, Eye, EyeOff, Trash2, FileText } from 'lucide-react'
+import { Plus, Eye, EyeOff, Trash2, FileText, Pencil, LayoutTemplate } from 'lucide-react'
 import { useCMSPages, useCreateCMSPage, useDeleteCMSPage, usePublishCMSPage } from './hooks'
 import type { CMSPageWritePayload, PageType } from './types'
 
@@ -31,6 +32,7 @@ export default function PageListPanel() {
   const createMutation  = useCreateCMSPage()
   const deleteMutation  = useDeleteCMSPage()
   const publishMutation = usePublishCMSPage()
+  const navigate = useNavigate()
 
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState<CMSPageWritePayload>(BLANK)
@@ -142,6 +144,20 @@ export default function PageListPanel() {
               <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${page.is_published ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
                 {page.is_published ? 'Published' : 'Draft'}
               </span>
+              <button
+                onClick={() => navigate(`/cms/pages/${page.id}/blocks`)}
+                className="text-gray-400 hover:text-emerald-600 transition-colors"
+                title="Manage sections"
+              >
+                <LayoutTemplate size={15} />
+              </button>
+              <button
+                onClick={() => navigate(`/cms/pages/${page.id}/edit`)}
+                className="text-gray-400 hover:text-indigo-600 transition-colors"
+                title="Open GrapeJS visual editor"
+              >
+                <Pencil size={15} />
+              </button>
               <button
                 onClick={() => togglePublish(page.id, page.is_published)}
                 className="text-gray-400 hover:text-indigo-600 transition-colors"

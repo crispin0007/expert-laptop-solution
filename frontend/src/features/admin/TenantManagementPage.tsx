@@ -65,7 +65,9 @@ export default function TenantManagementPage() {
     queryKey: ['admin', 'tenants'],
     queryFn: async () => {
       const res = await apiClient.get('/tenants/')
-      return res.data.results ?? res.data
+      // NEXUS envelope: { success, data: [...], meta: {} }
+      const payload = res.data.data ?? res.data.results ?? res.data
+      return Array.isArray(payload) ? payload : []
     },
   })
 

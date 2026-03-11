@@ -33,6 +33,10 @@ import RolesListPage from '../features/roles/RolesListPage'
 import TenantManagementPage from '../features/admin/TenantManagementPage'
 import PlanManagementPage from '../features/admin/PlanManagementPage'
 import SettingsPage from '../features/settings/SettingsPage'
+import CMSSitePage from '../features/cms/CMSSitePage'
+import PageEditor from '../features/cms/PageEditor'
+import PageBlockManager from '../features/cms/PageBlockManager'
+import PublicSite from '../features/cms/public/PublicSite'
 
 // Force TicketDetailPage to fully remount when navigating between tickets
 function KeyedTicketDetail() {
@@ -168,6 +172,34 @@ export default function Router() {
             }
           />
 
+          {/* CMS / Website Builder module */}
+          <Route
+            path="cms"
+            element={
+              <ModuleGuard module="cms">
+                <CMSSitePage />
+              </ModuleGuard>
+            }
+          />
+          {/* CMS Phase 2: GrapeJS visual page editor (full-screen, no Layout chrome) */}
+          <Route
+            path="cms/pages/:pageId/edit"
+            element={
+              <ModuleGuard module="cms">
+                <PageEditor />
+              </ModuleGuard>
+            }
+          />
+          {/* CMS: Section / block manager for a page */}
+          <Route
+            path="cms/pages/:pageId/blocks"
+            element={
+              <ModuleGuard module="cms">
+                <PageBlockManager />
+              </ModuleGuard>
+            }
+          />
+
           {/* Accounting — manager+ */}
           <Route
             path="accounting"
@@ -216,6 +248,8 @@ export default function Router() {
             }
           />
         </Route>
+        {/* Public website preview — no auth required */}
+        <Route path="/preview/*" element={<PublicSite />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

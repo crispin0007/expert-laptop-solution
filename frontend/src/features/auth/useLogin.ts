@@ -4,6 +4,7 @@ import { AUTH } from '../../api/endpoints'
 import { useAuthStore } from '../../store/authStore'
 import { useTenantStore } from '../../store/tenantStore'
 
+
 interface LoginPayload {
   email: string
   password: string
@@ -28,7 +29,7 @@ export function isTwoFAPending(r: LoginResponse): r is TwoFAPendingResponse {
 
 export function useLogin() {
   const { setTokens, setUser } = useAuthStore()
-  const { setTenant } = useTenantStore()
+  const { setTenant, clearTenant } = useTenantStore()
 
   return useMutation({
     mutationFn: async (payload: LoginPayload) => {
@@ -46,9 +47,9 @@ export function useLogin() {
       })
       setUser(me.data)
 
-      // Superadmins operate on the root domain — never pin them to a tenant subdomain.
-      // Only set the tenant context for regular tenant members.
-      if (!me.data.is_superadmin) {
+      if (me.data.is_superadmin) {
+        clearTenant()
+      } else {
         const tenants: Array<{
           subdomain: string
           name: string

@@ -16,7 +16,7 @@ import { type ReactNode } from 'react'
  */
 export default function ProtectedRoute({ children }: { children: ReactNode }) {
   const { isAuthenticated, accessToken, setUser, logout } = useAuthStore()
-  const { subdomain, setTenant } = useTenantStore()
+  const { subdomain, setTenant, clearTenant } = useTenantStore()
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
@@ -29,7 +29,6 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
     apiClient
       .get('/accounts/me/')
       .then((res) => {
-        setUser(res.data)
         const tenants: Array<{
           subdomain: string
           name: string
@@ -37,9 +36,9 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
           vat_rate: number
         }> = res.data.tenants ?? []
 
-        // Superadmins always operate on the root domain — never pin them to a
-        // tenant subdomain, otherwise X-Tenant-Slug leaks into every request.
-        if (!res.data.is_superadmin) {
+        if (res.data.is_superadmin) {
+          clearTenant()
+        } else {
           // Use the current subdomain (from URL/store) or fall back to first tenant
           const resolvedSubdomain = subdomain ?? tenants[0]?.subdomain
           const tenantMeta = tenants.find(t => t.subdomain === resolvedSubdomain) ?? tenants[0]

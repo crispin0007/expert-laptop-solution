@@ -7,9 +7,22 @@ ALLOWED_HOSTS = ['*']
 # Development-specific settings
 INSTALLED_APPS += []
 
-# Disable throttling in dev — no rate limits during local testing
+# In dev, allow ALL origins so any IP/port can access the API without CORS
+# errors. This covers local dev from 192.168.x.x IP addresses, Vite on any
+# port, mobile emulators, etc. Never use this in production.
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
+
+# Disable ALL throttling in dev — no rate limits during local testing.
+# This also neutralises LoginRateThrottle which uses the 'login' scope.
 REST_FRAMEWORK['DEFAULT_THROTTLE_CLASSES'] = []
-REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {}
+REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
+    'anon': '1000/min',
+    'user': '100000/day',
+    'login': '1000/min',     # effectively unlimited in dev
+    'tenant': '100000/min',
+    'anon_strict': '1000/min',
+}
 
 LOGGING = {
     'version': 1,

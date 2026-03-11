@@ -63,6 +63,7 @@ class CmsPageDetailSerializer(serializers.ModelSerializer):
             'sort_order', 'show_in_nav',
             'is_published', 'published_at',
             'blocks',
+            'grapes_data', 'custom_html', 'custom_css',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'blocks']
@@ -81,6 +82,13 @@ class CmsPageWriteSerializer(serializers.ModelSerializer):
     def validate_slug(self, value: str) -> str:
         from django.utils.text import slugify
         return slugify(value)
+
+
+class CmsPageGrapesSerializer(serializers.ModelSerializer):
+    """Save/load GrapeJS visual editor state for a page (Phase 2)."""
+    class Meta:
+        model  = CMSPage
+        fields = ['grapes_data', 'custom_html', 'custom_css']
 
 
 # ── CMS Site ─────────────────────────────────────────────────────────────────
@@ -126,50 +134,51 @@ class CmsSiteWriteSerializer(serializers.ModelSerializer):
         ]
 
     def validate_primary_color(self, value: str) -> str:
-        if not value.startswith('#') or len(value) not in (4, 7):
+        if value and (not value.startswith('#') or len(value) not in (4, 7)):
             raise serializers.ValidationError("Must be a valid hex colour, e.g. #4F46E5")
-        return value
+        return value or '#4F46E5'
 
     def validate_secondary_color(self, value: str) -> str:
-        if not value.startswith('#') or len(value) not in (4, 7):
+        if value and (not value.startswith('#') or len(value) not in (4, 7)):
             raise serializers.ValidationError("Must be a valid hex colour, e.g. #7C3AED")
-        return value
+        return value or '#7C3AED'
 
 
 # ── CMS Blog Post ─────────────────────────────────────────────────────────────
 
 class CmsBlogPostListSerializer(serializers.ModelSerializer):
     """Lightweight — for blog list endpoint."""
-    author_name = serializers.SerializerMethodField()
+    display_author_name = serializers.SerializerMethodField()
 
     class Meta:
         model  = CMSBlogPost
         fields = [
             'id', 'title', 'slug', 'excerpt',
-            'featured_image', 'author_name', 'tags',
+            'featured_image', 'author_name', 'display_author_name', 'tags',
             'read_time_minutes', 'is_published', 'published_at', 'created_at',
         ]
 
-    def get_author_name(self, obj):
-        return obj.author.get_full_name() if obj.author else None
+    def get_display_author_name(self, obj):
+        return obj.author_name or (obj.author.get_full_name() if obj.author else '')
 
 
 class CmsBlogPostDetailSerializer(serializers.ModelSerializer):
     """Full post for detail / edit view."""
-    author_name = serializers.SerializerMethodField()
+    display_author_name = serializers.SerializerMethodField()
 
     class Meta:
         model  = CMSBlogPost
         fields = [
             'id', 'title', 'slug', 'excerpt', 'body',
-            'featured_image', 'author', 'author_name', 'tags',
+            'featured_image', 'author', 'author_name', 'display_author_name', 'tags',
             'read_time_minutes', 'is_published', 'published_at',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'published_at', 'author_name']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'published_at', 'display_author_name']
 
-    def get_author_name(self, obj):
-        return obj.author.get_full_name() if obj.author else None
+    def get_display_author_name(self, obj):
+        """author_name field wins; fall back to linked user's full name."""
+        return obj.author_name or (obj.author.get_full_name() if obj.author else '')
 
 
 class CmsBlogPostWriteSerializer(serializers.ModelSerializer):
@@ -178,7 +187,7 @@ class CmsBlogPostWriteSerializer(serializers.ModelSerializer):
         model  = CMSBlogPost
         fields = [
             'title', 'slug', 'excerpt', 'body',
-            'featured_image', 'author', 'tags', 'is_published',
+            'featured_image', 'author', 'author_name', 'tags', 'is_published',
         ]
 
     def validate_slug(self, value: str) -> str:
@@ -247,9 +256,7 @@ class PublicBlockSerializer(serializers.ModelSerializer):
 
 
 class PublicPageSerializer(serializers.ModelSerializer):
-    """Page + blocks — safe for public renderer."""
-    blocks = PublicBlockSerializer(many=True, read_only=True,
-                 source='blocks.filter')  # filtered in view/service
+    """Page summary used for site navigation listing — no blocks needed."""
 
     class Meta:
         model  = CMSPage
@@ -261,7 +268,11 @@ class PublicPageSerializer(serializers.ModelSerializer):
 
 
 class PublicPageDetailSerializer(serializers.ModelSerializer):
-    """Full page with blocks for public rendering."""
+    """Full page with blocks for public rendering.
+
+    If grapes_data exists (visual editor was used), custom_html/css are
+    served directly. Otherwise blocks are used by the renderer.
+    """
     blocks = serializers.SerializerMethodField()
 
     class Meta:
@@ -270,9 +281,13 @@ class PublicPageDetailSerializer(serializers.ModelSerializer):
             'page_type', 'title', 'slug',
             'meta_title', 'meta_description',
             'blocks',
+            'custom_html', 'custom_css',
         ]
 
     def get_blocks(self, obj):
+        # If page has custom GrapeJS HTML, skip block rendering
+        if obj.custom_html:
+            return []
         qs = obj.blocks.filter(is_visible=True).order_by('sort_order')
         return PublicBlockSerializer(qs, many=True).data
 
@@ -294,6 +309,34 @@ class PublicSiteSerializer(serializers.ModelSerializer):
 
     def get_pages(self, obj):
         pages = obj.pages.filter(is_published=True).order_by('sort_order', 'title')
+        return PublicPageSerializer(pages, many=True).data
+
+    def get_custom_domain(self, obj):
+        try:
+            cd = obj.custom_domain
+            return cd.domain if cd and cd.is_verified else None
+        except CMSCustomDomain.DoesNotExist:
+            return None
+
+
+class DraftSiteSerializer(serializers.ModelSerializer):
+    """Site config for the in-app draft preview — includes ALL pages (published or not)."""
+    pages        = serializers.SerializerMethodField()
+    custom_domain = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = CMSSite
+        fields = [
+            'site_name', 'tagline', 'logo', 'favicon',
+            'theme_key', 'primary_color', 'secondary_color', 'font_family',
+            'custom_head_script',
+            'default_meta_title', 'default_meta_description',
+            'pages', 'custom_domain',
+        ]
+
+    def get_pages(self, obj):
+        # Show ALL pages (draft or published) in the preview nav
+        pages = obj.pages.all().order_by('sort_order', 'title')
         return PublicPageSerializer(pages, many=True).data
 
     def get_custom_domain(self, obj):
@@ -334,3 +377,46 @@ class PublicBlogPostDetailSerializer(serializers.ModelSerializer):
 
     def get_author_name(self, obj):
         return obj.author.get_full_name() if obj.author else None
+
+
+# ── Newsletter ────────────────────────────────────────────────────────────────
+
+class NewsletterSubscribeSerializer(serializers.Serializer):
+    """Input for public newsletter subscribe endpoint."""
+    email  = serializers.EmailField()
+    name   = serializers.CharField(max_length=200, required=False, allow_blank=True, default='')
+    source = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
+
+
+class NewsletterUnsubscribeSerializer(serializers.Serializer):
+    token = serializers.UUIDField()
+
+
+# ── Public Product Catalogue ──────────────────────────────────────────────────
+
+class PublicProductSerializer(serializers.Serializer):
+    """
+    Read-only product data for the public catalogue block.
+    Only is_published=True items are returned.
+    """
+    id          = serializers.IntegerField()
+    name        = serializers.CharField()
+    description = serializers.CharField()
+    sku         = serializers.CharField()
+    brand       = serializers.CharField()
+    unit_price  = serializers.DecimalField(max_digits=12, decimal_places=2)
+    category    = serializers.SerializerMethodField()
+    image_url   = serializers.SerializerMethodField()
+    in_stock    = serializers.SerializerMethodField()
+
+    def get_category(self, obj):
+        return obj.category.name if obj.category else None
+
+    def get_image_url(self, obj):
+        return obj.primary_image_url or ''
+
+    def get_in_stock(self, obj):
+        stock_qty = getattr(obj, 'stock_qty', None)
+        if stock_qty is not None:
+            return int(stock_qty) > 0
+        return True  # service / non-tracked items are always "in stock"

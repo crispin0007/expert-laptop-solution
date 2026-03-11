@@ -56,6 +56,10 @@ export interface CMSPage {
   og_image: string | null
   is_published: boolean
   published_at: string | null
+  // Phase 2: GrapeJS visual editor
+  grapes_data?: Record<string, unknown> | null
+  custom_html?: string
+  custom_css?: string
   created_at: string
   updated_at: string
 }
@@ -72,11 +76,22 @@ export interface CMSPageWritePayload {
   is_published?: boolean
 }
 
+// Phase 2: GrapeJS editor state
+export interface CMSPageGrapesPayload {
+  grapes_data?: Record<string, unknown> | null
+  custom_html?: string
+  custom_css?: string
+  /** Pre-rendered block HTML returned by the API when grapes_data is null.
+   *  Used to seed the editor so pages with block content aren't blank. */
+  bootstrap_html?: string
+}
+
 // ── Blocks ────────────────────────────────────────────────────────────────────
 
 export type BlockType =
   | 'hero' | 'text' | 'services' | 'gallery' | 'testimonials'
   | 'cta' | 'contact_form' | 'pricing' | 'team' | 'faq' | 'html' | 'video' | 'stats'
+  | 'newsletter' | 'product_catalog' | 'blog_preview'
 
 export interface CMSBlock {
   id: number
@@ -99,7 +114,7 @@ export interface CMSBlockWritePayload {
 }
 
 export interface CMSBlockReorderPayload {
-  ordered_ids: number[]
+  order: number[]   // ordered list of block IDs
 }
 
 // ── Blog ──────────────────────────────────────────────────────────────────────
@@ -111,10 +126,9 @@ export interface CMSBlogPost {
   slug: string
   excerpt: string
   body: string
-  cover_image: string | null
+  featured_image: string | null
   tags: string[]
   author_name: string
-  author_image: string | null
   is_published: boolean
   published_at: string | null
   is_deleted: boolean
@@ -128,10 +142,9 @@ export interface CMSBlogPostWritePayload {
   slug?: string
   excerpt?: string
   body?: string
-  cover_image?: string | null
+  featured_image?: string | null
   tags?: string[]
   author_name?: string
-  author_image?: string | null
   is_published?: boolean
 }
 

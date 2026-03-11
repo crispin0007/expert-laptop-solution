@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.mixins import TenantMixin
+from core.pagination import NexusCursorPagination
 from core.permissions import IsSuperAdmin
 from core.audit import log_event, AuditEvent
 from .models import Tenant, Plan, Module, TenantModuleOverride
@@ -538,11 +539,17 @@ class PlanViewSet(viewsets.ModelViewSet):
 
 # ── Module list (read-only, super admin) ──────────────────────────────────────
 
+class _ModulePagination(NexusCursorPagination):
+    """Module has no created_at — order by the explicit display order field."""
+    ordering = 'order'
+
+
 class ModuleViewSet(viewsets.ReadOnlyModelViewSet):
     """GET /api/v1/modules/ — catalogue of all available modules."""
     permission_classes = [IsSuperAdmin]
     serializer_class = ModuleSerializer
-    queryset = Module.objects.all()
+    pagination_class = _ModulePagination
+    queryset = Module.objects.all().order_by('order')
 
 
 class TenantSettingsView(TenantMixin, APIView):

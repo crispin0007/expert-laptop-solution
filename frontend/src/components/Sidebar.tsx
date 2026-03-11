@@ -37,11 +37,39 @@ import {
   Repeat2,
   BookMarked,
   CalendarDays,
+  Globe,
+  Layout,
+  Link2,
+  Sparkles,
+  ExternalLink,
+  Pencil,
+  FileImage,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { useTenantStore } from '../store/tenantStore'
 import { usePermissions } from '../hooks/usePermissions'
 import { useModules } from '../hooks/useModules'
+
+// ── Simple module nav registry ─────────────────────────────────────────────────
+// Add a new entry here and it automatically appears in the sidebar whenever the
+// module is active for the tenant — no other file needs to change.
+// For complex modules with nested sub-navigation (tickets, projects, accounting,
+// inventory), keep them as explicit JSX below.
+type SimpleModuleEntry = {
+  key: string
+  label: string
+  icon: React.ElementType
+  to: string
+  perm?: string
+  /** 'main' = above Settings; 'people' = inside the People section */
+  section: 'main' | 'people'
+}
+
+const SIMPLE_MODULE_NAV: SimpleModuleEntry[] = [
+  // ── People section ──────────────────────────────────────────────────────────
+  { key: 'departments', label: 'Departments', icon: Building2, to: '/departments', perm: 'can_view_departments', section: 'people' },
+  { key: 'customers',   label: 'Customers',   icon: Users,     to: '/customers',   perm: 'can_view_customers',   section: 'people' },
+]
 
 function NavItem({
   to,
@@ -384,6 +412,25 @@ function SidebarContent({
                 </NavSubSection>
               </NavSection>
             )}
+            {modules.has('cms') && (
+              <NavSection label="Website / CMS" icon={Globe} basePath="/cms" collapsed={collapsed}>
+                <SubNavItem to="/cms?tab=settings" label="Site Settings"   icon={<Globe size={13} />} />
+                <SubNavItem to="/cms?tab=pages"    label="Pages"           icon={<Layout size={13} />} />
+                <SubNavItem to="/cms?tab=blog"     label="Blog"            icon={<BookOpen size={13} />} />
+                <SubNavItem to="/cms?tab=domain"   label="Domain"          icon={<Link2 size={13} />} />
+                <SubNavItem to="/cms?tab=ai"       label="AI Generator"    icon={<Sparkles size={13} />} />
+                {/* View Site opens the public renderer */}
+                <a
+                  href="/preview"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-colors text-gray-500 hover:text-gray-900 hover:bg-gray-100"
+                >
+                  <ExternalLink size={13} className="shrink-0 opacity-75" />
+                  <span className="truncate">View Live Site</span>
+                </a>
+              </NavSection>
+            )}
             {modules.has('inventory') && perms.can('can_view_inventory') && (
               <NavSection label="Inventory" icon={Package} basePath="/inventory" collapsed={collapsed}>
                 <NavSubSection label="Products" icon={<Package size={11} />} matchTabs={['products','categories','uom','variants']}>
@@ -411,6 +458,15 @@ function SidebarContent({
                 </NavSubSection>
               </NavSection>
             )}
+            {/* Auto-rendered simple module nav items (main section). */}
+            {/* Register new simple modules in SIMPLE_MODULE_NAV above. */}
+            {SIMPLE_MODULE_NAV
+              .filter(m => m.section === 'main' && modules.has(m.key) && (!m.perm || perms.can(m.perm)))
+              .map(m => (
+                <NavItem key={m.key} to={m.to} label={m.label} icon={m.icon} collapsed={collapsed} />
+              ))
+            }
+
             {perms.can('can_manage_settings') && (
               <NavItem to="/settings"   label="Settings"   icon={Settings}     collapsed={collapsed} />
             )}
@@ -423,12 +479,13 @@ function SidebarContent({
             {perms.can('can_manage_roles') && (
               <NavItem to="/roles"       label="Roles"       icon={Shield}     collapsed={collapsed} />
             )}
-            {modules.has('departments') && perms.can('can_view_departments') && (
-              <NavItem to="/departments" label="Departments" icon={Building2}  collapsed={collapsed} />
-            )}
-            {modules.has('customers') && perms.can('can_view_customers') && (
-              <NavItem to="/customers"   label="Customers"   icon={Users}      collapsed={collapsed} />
-            )}
+            {/* Auto-rendered people-section module items. */}
+            {SIMPLE_MODULE_NAV
+              .filter(m => m.section === 'people' && modules.has(m.key) && (!m.perm || perms.can(m.perm)))
+              .map(m => (
+                <NavItem key={m.key} to={m.to} label={m.label} icon={m.icon} collapsed={collapsed} />
+              ))
+            }
           </>
         )}
       </nav>

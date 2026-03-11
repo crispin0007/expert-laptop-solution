@@ -2,6 +2,7 @@ import { useState, useEffect, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLogin, useTwoFAVerify, isTwoFAPending } from './useLogin'
 import { useAuthStore } from '../../store/authStore'
+import { useTenantStore } from '../../store/tenantStore'
 import apiClient from '../../api/client'
 import toast from 'react-hot-toast'
 import { ShieldCheck, ArrowLeft, KeyRound } from 'lucide-react'
@@ -10,6 +11,7 @@ export default function LoginPage() {
   const navigate = useNavigate()
   const login = useLogin()
   const verify2FA = useTwoFAVerify()
+  const { clearTenant } = useTenantStore()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [tenantName, setTenantName] = useState<string | null>(null)
@@ -18,7 +20,24 @@ export default function LoginPage() {
   const [twoFAToken, setTwoFAToken] = useState<string | null>(null)
   const [otpCode, setOtpCode] = useState('')
 
+  // Always clear any stale tenant slug when the login page loads.
+  // This prevents persisted localStorage from a previous tenant session
+  // from being sent as X-Tenant-Slug on the login POST, which would cause
+  // the backend to reject superadmin logins with 401.
+  useEffect(() => { clearTenant() }, [clearTenant])
+
   useEffect(() => {
+    // Only fetch tenant branding when on a tenant subdomain.
+    // On localhost / bare IP (super-admin root domain) this endpoint always
+    // returns 404 by design — skip the call to avoid console noise.
+    const hostname = window.location.hostname
+    const isRootDomain =
+      hostname === 'localhost' ||
+      /^\d+\.\d+\.\d+\.\d+$/.test(hostname) ||   // bare IP
+      hostname === (import.meta.env.VITE_ROOT_DOMAIN ?? '')
+
+    if (isRootDomain) return
+
     apiClient.get('/tenants/public-info/')
       .then((r) => { if (r.data?.name) setTenantName(r.data.name) })
       .catch(() => {})

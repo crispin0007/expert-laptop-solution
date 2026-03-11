@@ -280,7 +280,8 @@ export default function PlanManagementPage() {
       queryKey: ['plans'],
       queryFn: () => apiClient.get(PLANS.LIST).then((r) => {
         const d = r.data
-        return Array.isArray(d) ? d : d.results ?? []
+        const payload = d.data ?? d.results ?? d
+        return Array.isArray(payload) ? payload : []
       }),
     })
 
@@ -289,7 +290,8 @@ export default function PlanManagementPage() {
       queryKey: ['modules'],
       queryFn: () => apiClient.get(MODULES.LIST).then((r) => {
         const d = r.data
-        return Array.isArray(d) ? d : d.results ?? []
+        const payload = d.data ?? d.results ?? d
+        return Array.isArray(payload) ? payload : []
       }),
     })
 

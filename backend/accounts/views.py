@@ -27,11 +27,12 @@ from core.audit import log_event, AuditEvent
 
 
 class LoginRateThrottle(AnonRateThrottle):
-    """Strict per-IP rate limit on the token endpoint (3/min, burst=5).
+    """Strict per-IP rate limit on the token endpoint.
+    Rate is configured via DEFAULT_THROTTLE_RATES['login'] in settings.
+    Dev settings raise this to 1000/min to allow unrestricted testing.
     This is a Django-layer defence; nginx applies limit_req zone=auth_limit
     (5/min) as a first layer so direct-to-gunicorn calls are also covered."""
     scope = 'login'
-    rate = '5/min'
 
 
 class TenantTokenObtainPairView(TokenObtainPairView):
@@ -57,6 +58,13 @@ class TenantTokenObtainPairView(TokenObtainPairView):
       Superuser on tenant:      rejected — superusers are root-domain only
       Staff on root domain:     rejected — staff must use workspace URL
     """
+    # Login endpoint must NOT authenticate the incoming request — the caller
+    # is unauthenticated by definition.  Without this, DRF's default auth
+    # classes (TenantJWTAuthentication) try to validate any stale Bearer token
+    # that the browser attached from a previous session and return 401 before
+    # the view even reads the credentials in the POST body.
+    authentication_classes = []
+    permission_classes = []
     throttle_classes = [LoginRateThrottle]
 
     def post(self, request, *args, **kwargs):
@@ -174,6 +182,8 @@ class TenantTokenRefreshView(TokenRefreshView):
     the rotated tokens.  Without this, the default RefreshToken class would
     strip the custom claim from the refreshed access token.
     """
+    authentication_classes = []
+    permission_classes = []
 
     def post(self, request, *args, **kwargs):
         raw_refresh = request.data.get('refresh', '')

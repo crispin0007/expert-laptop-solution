@@ -5,6 +5,7 @@ import { useAuthStore } from '../../store/authStore'
 import {
   Ticket as TicketIcon, Plus, Search, Filter, AlertCircle,
   Clock, CheckCircle2, CircleDot, Settings2,
+  ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import apiClient from '../../api/client'
 import { TICKETS } from '../../api/endpoints'
@@ -12,6 +13,8 @@ import CreateTicketWizard from './CreateTicketWizard'
 import { usePermissions } from '../../hooks/usePermissions'
 import DateDisplay from '../../components/DateDisplay'
 import { useFyStore } from '../../store/fyStore'
+
+const PAGE_SIZE = 25
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -104,46 +107,50 @@ export default function TicketListPage() {
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all')
   const assignedToMe = urlParams.get('assigned') === 'me'
   const [showCreate, setShowCreate] = useState(false)
+  const [page, setPage] = useState(1)
 
-  const { data: tickets = [], isLoading } = useQuery<Ticket[]>({
-    queryKey: ['tickets', fyYear],
+  // Reset to page 1 whenever filters change
+  const resetPage = () => setPage(1)
+
+  const queryParams = useMemo(() => {
+    const p: Record<string, string | number> = {
+      page,
+      page_size: PAGE_SIZE,
+      ordering: '-created_at',
+    }
+    if (fyYear)                           p.fiscal_year  = fyYear
+    if (statusFilter !== 'all')           p.status       = statusFilter
+    if (priorityFilter !== 'all')         p.priority     = priorityFilter
+    if (search.trim())                    p.search       = search.trim()
+    if (assignedToMe && currentUser?.id)  p.assigned_to  = currentUser.id
+    return p
+  }, [page, fyYear, statusFilter, priorityFilter, search, assignedToMe, currentUser])
+
+  const { data: response, isLoading } = useQuery({
+    queryKey: ['tickets', queryParams],
     queryFn: () =>
-      apiClient.get(TICKETS.LIST, { params: fyYear ? { fiscal_year: fyYear } : {} }).then(r =>
-        Array.isArray(r.data) ? r.data : (r.data.results ?? r.data.data ?? [])
-      ),
+      apiClient.get(TICKETS.LIST, { params: queryParams }).then(r => r.data),
+    placeholderData: (prev) => prev,
   })
 
-  const filtered = useMemo(() => {
-    return tickets.filter(t => {
-      if (assignedToMe && currentUser && t.assigned_to !== currentUser.id) return false
-      if (statusFilter !== 'all' && t.status !== statusFilter) return false
-      if (priorityFilter !== 'all' && t.priority !== priorityFilter) return false
-      if (search.trim()) {
-        const q = search.toLowerCase()
-        return (
-          t.title.toLowerCase().includes(q) ||
-          t.ticket_number.toLowerCase().includes(q) ||
-          t.customer_name.toLowerCase().includes(q)
-        )
-      }
-      return true
-    })
-  }, [tickets, statusFilter, priorityFilter, search, assignedToMe, currentUser])
+  const tickets: Ticket[] = useMemo(() => {
+    if (!response) return []
+    if (Array.isArray(response)) return response
+    return response.results ?? response.data ?? []
+  }, [response])
+
+  const totalCount: number = response?.count ?? tickets.length
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
 
   // ── Stats ──────────────────────────────────────────────────────────────────
-  const baseTickets = useMemo(() =>
-    assignedToMe && currentUser
-      ? tickets.filter(t => t.assigned_to === currentUser.id)
-      : tickets
-  , [tickets, assignedToMe, currentUser])
-
+  // Stats come from the current page only — show counts based on what we know
   const stats = useMemo(() => ({
-    total: baseTickets.length,
-    open: baseTickets.filter(t => t.status === 'open').length,
-    inProgress: baseTickets.filter(t => t.status === 'in_progress').length,
-    resolved: baseTickets.filter(t => t.status === 'resolved').length,
-    breached: baseTickets.filter(t => t.sla_breached).length,
-  }), [baseTickets])
+    total: totalCount,
+    open: tickets.filter(t => t.status === 'open').length,
+    inProgress: tickets.filter(t => t.status === 'in_progress').length,
+    resolved: tickets.filter(t => t.status === 'resolved').length,
+    breached: tickets.filter(t => t.sla_breached).length,
+  }), [tickets, totalCount])
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -211,7 +218,7 @@ export default function TicketListPage() {
             type="text"
             placeholder="Search tickets…"
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => { setSearch(e.target.value); resetPage() }}
             className="pl-9 pr-4 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 w-56"
           />
         </div>
@@ -223,7 +230,7 @@ export default function TicketListPage() {
             {(['all', 'open', 'in_progress', 'pending_customer', 'resolved', 'closed'] as StatusFilter[]).map(s => (
               <button
                 key={s}
-                onClick={() => setStatusFilter(s)}
+                onClick={() => { setStatusFilter(s); resetPage() }}
                 className={`px-3 py-1.5 text-xs font-medium transition-colors ${
                   statusFilter === s
                     ? 'bg-indigo-600 text-white'
@@ -241,7 +248,7 @@ export default function TicketListPage() {
           {PRIORITY_FILTERS.map(p => (
             <button
               key={p}
-              onClick={() => setPriorityFilter(p)}
+              onClick={() => { setPriorityFilter(p); resetPage() }}
               className={`px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
                 priorityFilter === p
                   ? 'bg-indigo-600 text-white'
@@ -279,7 +286,7 @@ export default function TicketListPage() {
                 </td>
               </tr>
             )}
-            {!isLoading && filtered.length === 0 && (
+            {!isLoading && tickets.length === 0 && (
               <tr>
                 <td colSpan={9} className="px-4 py-10 text-center text-gray-400">
                   {search || statusFilter !== 'all' || priorityFilter !== 'all'
@@ -288,7 +295,7 @@ export default function TicketListPage() {
                 </td>
               </tr>
             )}
-            {filtered.map(ticket => (
+            {tickets.map(ticket => (
               <tr
                 key={ticket.id}
                 onClick={() => navigate(`/tickets/${ticket.id}`)}
@@ -330,6 +337,34 @@ export default function TicketListPage() {
           </tbody>
         </table>
       </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50 rounded-b-xl">
+          <p className="text-xs text-gray-500">
+            Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalCount)} of {totalCount}
+          </p>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="p-1.5 rounded-lg border border-gray-300 text-gray-500 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            <span className="px-3 py-1 text-xs font-medium text-gray-700">
+              {page} / {totalPages}
+            </span>
+            <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+              className="p-1.5 rounded-lg border border-gray-300 text-gray-500 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Create wizard */}
       <CreateTicketWizard

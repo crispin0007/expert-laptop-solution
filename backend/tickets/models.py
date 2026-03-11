@@ -260,6 +260,9 @@ class TicketComment(TenantModel):
         null=True,
         related_name='ticket_comments',
     )
+    # Optional display-name override — used for migrated data where the original
+    # author is not a NEXUS user (e.g. old CRM staff / customer names).
+    author_override = models.CharField(max_length=128, blank=True, default='')
     body = models.TextField()
     is_internal = models.BooleanField(default=False)  # internal notes hidden from customer
     attachment_files = models.JSONField(default=list, blank=True)  # [{file_url, file_name, file_size}]

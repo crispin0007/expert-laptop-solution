@@ -145,6 +145,11 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'nexus-auth',
+      // Bump this version whenever the stored shape changes.
+      // Zustand calls migrate() when the stored version differs — returning {}
+      // falls back to the initial state, clearing any stale tokens/user data.
+      version: 1,
+      migrate: () => ({}),
       partialize: (state) => ({
         accessToken: state.accessToken,
         refreshToken: state.refreshToken,

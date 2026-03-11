@@ -84,3 +84,6 @@ uploads/
 *.pem
 *.crt
 firebase-credentials.json
+
+# Migration data scripts & scraped data
+data/

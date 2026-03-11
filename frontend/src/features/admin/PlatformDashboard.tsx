@@ -58,7 +58,11 @@ export default function PlatformDashboard() {
     queryKey: ['admin', 'tenants'],
     queryFn: async () => {
       const res = await apiClient.get(TENANTS.LIST)
-      return res.data.results ?? res.data
+      // API returns the NEXUS envelope: { success, data: [...], meta: {} }
+      // Cursor paginator puts the array in res.data.data.
+      // Fall back to res.data.results (standard DRF) or bare array.
+      const payload = res.data.data ?? res.data.results ?? res.data
+      return Array.isArray(payload) ? payload : []
     },
   })
 

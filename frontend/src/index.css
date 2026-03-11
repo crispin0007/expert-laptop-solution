@@ -1,5 +1,25 @@
 @import "tailwindcss";
 
+/*
+ * ── GrapeJS isolation ──────────────────────────────────────────────────────
+ * Tailwind's universal box-sizing reset fights GrapeJS's internal layout.
+ * We revert to the browser default within the editor wrapper so GrapeJS
+ * can manage its own box model.  The .gjs-editor class is added by GrapeJS
+ * itself on the root element it creates inside our container div.
+ */
+.gjs-editor,
+.gjs-editor *,
+.gjs-editor *::before,
+.gjs-editor *::after {
+  box-sizing: initial;
+}
+
+/* Ensure the editor fills its absolutely-positioned container */
+.gjs-editor {
+  height: 100%;
+  width: 100%;
+}
+
 @layer components {
   /* Shared form input style used across all feature modules */
   .input {

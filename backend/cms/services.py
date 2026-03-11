@@ -512,3 +512,513 @@ def _fire_event(event_name: str, site, user, extra: dict | None = None) -> None:
         logger.debug("CMS event fired: %s payload=%r", event_name, payload)
     except Exception:
         logger.exception("CMS event fire failed for %s", event_name)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 2 — Block → HTML bootstrap for GrapeJS editor
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Rules for all _block_* functions:
+#   • Use INLINE styles only — no Tailwind classes (they don't apply in the GrapeJS iframe).
+#   • NEVER use backslashes inside f-string expressions (SyntaxError in Python < 3.12).
+#     Pre-compute any conditional or escaped value as a plain variable first.
+#   • _esc() HTML-escapes user content for safe embedding.
+# ───────────────────────────────────────────────────────────────────────────────
+
+
+
+def blocks_to_html(page) -> str:
+    """
+    Convert a CMSPage's existing blocks to inline-styled HTML for GrapeJS.
+
+    Called when a page has never been opened in the visual editor
+    (grapes_data is null).  The editor loads this as its starting content
+    so the tenant sees their existing blocks rather than a blank canvas.
+
+    All styling is inline — Tailwind classes don't apply inside the GrapeJS
+    canvas iframe.
+    """
+    blocks = page.blocks.filter(is_visible=True).order_by('sort_order')
+    parts = []
+
+    handlers = {
+        'hero':            _block_hero,
+        'stats':           _block_stats,
+        'services':        _block_services,
+        'testimonials':    _block_testimonials,
+        'cta':             _block_cta,
+        'pricing':         _block_pricing,
+        'team':            _block_team,
+        'text':            _block_text,
+        'faq':             _block_faq,
+        'contact_form':    _block_contact_form,
+        'video':           _block_video,
+        'gallery':         _block_gallery,
+        'newsletter':      _block_newsletter,
+        'product_catalog': _block_product_catalog,
+        'blog_preview':    _block_blog_preview,
+    }
+
+    for block in blocks:
+        c = block.content or {}
+        bt = block.block_type
+        if bt == 'html':
+            raw = block.raw_html or ''
+            if raw:
+                parts.append('<div class="gjs-block-html">' + raw + '</div>')
+        elif bt in handlers:
+            parts.append(handlers[bt](c))
+
+    return '\n'.join(parts) if parts else _block_empty_placeholder()
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _esc(v) -> str:
+    """HTML-escape a value for safe embedding."""
+    import html as _html
+    return _html.escape(str(v or ''))
+
+
+def _tag(tag, content, style='', **attrs):
+    """Build a simple HTML tag string without backslashes in f-expressions."""
+    attr_str = ''
+    if style:
+        attr_str += ' style="' + style + '"'
+    for k, v in attrs.items():
+        attr_str += ' ' + k + '="' + _esc(v) + '"'
+    return '<' + tag + attr_str + '>' + content + '</' + tag + '>'
+
+
+def _section(content, style=''):
+    default = 'font-family:Inter,sans-serif'
+    s = (style + ';' + default) if style else default
+    return _tag('section', content, s)
+
+
+def _center_header(heading, subhead):
+    """Render a centred heading + subheading, pre-computing conditionals."""
+    if not heading and not subhead:
+        return ''
+    inner = ''
+    if heading:
+        inner += _tag('h2', heading,
+                      'font-size:2rem;font-weight:700;color:#111827;margin:0 0 12px')
+    if subhead:
+        inner += _tag('p', subhead,
+                      'color:#6B7280;max-width:480px;margin:0 auto')
+    return _tag('div', inner, 'text-align:center;margin-bottom:56px')
+
+
+def _block_empty_placeholder() -> str:
+    return (
+        '<section style="padding:80px 24px;text-align:center;color:#9CA3AF;font-family:Inter,sans-serif">'
+        '<p style="font-size:18px">This page has no content blocks yet.</p>'
+        '<p style="font-size:14px;margin-top:8px">Drag blocks from the left panel to start building.</p>'
+        '</section>'
+    )
+
+
+# ── Block renderers ────────────────────────────────────────────────────────────
+
+def _block_hero(c: dict) -> str:
+    heading  = _esc(c.get('heading', ''))
+    subhead  = _esc(c.get('subheading', ''))
+    cta_lbl  = _esc(c.get('cta_label', ''))
+    cta_url  = _esc(c.get('cta_url', '#'))
+    cta2_lbl = _esc(c.get('cta_secondary_label', ''))
+    cta2_url = _esc(c.get('cta_secondary_url', '#'))
+
+    ctas = ''
+    if cta_lbl:
+        ctas += (
+            '<a href="' + cta_url + '" style="display:inline-block;padding:14px 32px;'
+            'background:#fff;color:#4F46E5;font-weight:700;border-radius:9999px;'
+            'font-size:14px;text-decoration:none;margin:0 8px 12px;'
+            'box-shadow:0 4px 14px rgba(0,0,0,.15)">' + cta_lbl + '</a>'
+        )
+    if cta2_lbl:
+        ctas += (
+            '<a href="' + cta2_url + '" style="display:inline-block;padding:14px 32px;'
+            'border:2px solid rgba(255,255,255,.7);color:#fff;font-weight:700;'
+            'border-radius:9999px;font-size:14px;text-decoration:none;margin:0 8px 12px">'
+            + cta2_lbl + '</a>'
+        )
+
+    h1 = _tag('h1', heading,
+              'font-size:clamp(2rem,5vw,3.5rem);font-weight:800;line-height:1.15;margin:0 0 24px') if heading else ''
+    p  = _tag('p', subhead,
+              'font-size:1.125rem;color:rgba(255,255,255,.85);max-width:640px;margin:0 auto 40px;line-height:1.6') if subhead else ''
+    cta_row = _tag('div', ctas, 'display:flex;flex-wrap:wrap;justify-content:center') if ctas else ''
+
+    inner = _tag('div', h1 + p + cta_row,
+                 'position:relative;z-index:1;max-width:800px;margin:0 auto')
+    blob1 = '<div style="position:absolute;top:-80px;right:-80px;width:320px;height:320px;border-radius:50%;opacity:.1;background:#fff;pointer-events:none"></div>'
+    blob2 = '<div style="position:absolute;bottom:-80px;left:-80px;width:384px;height:384px;border-radius:50%;opacity:.1;background:#fff;pointer-events:none"></div>'
+
+    return (
+        '<section style="position:relative;padding:96px 24px;text-align:center;color:#fff;'
+        'background:linear-gradient(135deg,#4F46E5 0%,#7C3AED 100%);overflow:hidden;font-family:Inter,sans-serif">'
+        + inner + blob1 + blob2 + '</section>'
+    )
+
+
+def _block_stats(c: dict) -> str:
+    items = c.get('items', [])
+    cells = ''
+    for item in items:
+        val   = _esc(item.get('value', ''))
+        label = _esc(item.get('label', ''))
+        cells += (
+            '<div style="text-align:center;padding:16px">'
+            + _tag('div', val, 'font-size:2.5rem;font-weight:800;color:#4F46E5;margin-bottom:6px')
+            + _tag('div', label, 'font-size:.75rem;text-transform:uppercase;letter-spacing:.1em;color:#6B7280;font-weight:600')
+            + '</div>'
+        )
+    grid = _tag('div', cells,
+                'max-width:960px;margin:0 auto;display:grid;'
+                'grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:24px')
+    return _section(grid, 'padding:64px 24px;background:#fff')
+
+
+def _block_services(c: dict) -> str:
+    heading = _esc(c.get('heading', ''))
+    subhead = _esc(c.get('subheading', ''))
+    items   = c.get('items', [])
+    cards   = ''
+    for item in items:
+        icon  = _esc(item.get('icon', ''))
+        title = _esc(item.get('title', ''))
+        desc  = _esc(item.get('description', ''))
+        icon_html = _tag('div', icon, 'font-size:2rem;margin-bottom:16px') if icon else ''
+        cards += (
+            '<div style="background:#fff;border-radius:16px;padding:28px;'
+            'box-shadow:0 1px 3px rgba(0,0,0,.08);border:1px solid #F3F4F6">'
+            + icon_html
+            + _tag('h3', title, 'font-size:1.1rem;font-weight:700;color:#111827;margin:0 0 10px')
+            + _tag('p', desc, 'font-size:.875rem;color:#6B7280;line-height:1.6;margin:0')
+            + '</div>'
+        )
+    header = _center_header(heading, subhead)
+    grid   = _tag('div', cards,
+                  'display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px')
+    wrap   = _tag('div', header + grid, 'max-width:1120px;margin:0 auto')
+    return _section(wrap, 'padding:80px 24px;background:#F9FAFB')
+
+
+def _block_testimonials(c: dict) -> str:
+    heading = _esc(c.get('heading', ''))
+    items   = c.get('items', [])
+    cards   = ''
+    for item in items:
+        rating      = int(item.get('rating', 5))
+        stars       = '★' * rating
+        role        = _esc(item.get('role', ''))
+        company     = _esc(item.get('company', ''))
+        role_co     = (role + ', ' + company) if (role and company) else (role or company)
+        text        = _esc(item.get('text', ''))
+        name        = _esc(item.get('name', ''))
+        cards += (
+            '<div style="background:#F9FAFB;border-radius:16px;padding:28px;border:1px solid #F3F4F6">'
+            + _tag('div', stars, 'color:#FBBF24;font-size:1rem;margin-bottom:12px;letter-spacing:2px')
+            + '<p style="font-size:.875rem;color:#374151;line-height:1.7;margin:0 0 20px;font-style:italic">'
+              '&ldquo;' + text + '&rdquo;</p>'
+            + _tag('div', name, 'font-weight:700;font-size:.875rem;color:#111827')
+            + _tag('div', role_co, 'font-size:.75rem;color:#9CA3AF')
+            + '</div>'
+        )
+    h2 = _tag('h2', heading,
+              'font-size:2rem;font-weight:700;color:#111827;text-align:center;margin:0 0 48px') if heading else ''
+    grid = _tag('div', cards,
+                'display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px')
+    wrap = _tag('div', h2 + grid, 'max-width:1120px;margin:0 auto')
+    return _section(wrap, 'padding:80px 24px;background:#fff')
+
+
+def _block_cta(c: dict) -> str:
+    heading = _esc(c.get('heading', ''))
+    body    = _esc(c.get('body', ''))
+    lbl     = _esc(c.get('cta_label', ''))
+    url     = _esc(c.get('cta_url', '#'))
+    bg      = _esc(c.get('bg_color', '#4F46E5'))
+
+    h2  = _tag('h2', heading, 'font-size:2rem;font-weight:700;margin:0 0 16px') if heading else ''
+    p   = _tag('p', body, 'color:rgba(255,255,255,.8);margin:0 0 32px;line-height:1.6') if body else ''
+    btn = (
+        '<a href="' + url + '" style="display:inline-block;padding:14px 40px;background:#fff;'
+        'color:' + bg + ';font-weight:700;border-radius:9999px;font-size:.875rem;'
+        'text-decoration:none;box-shadow:0 4px 14px rgba(0,0,0,.15)">' + lbl + '</a>'
+    ) if lbl else ''
+
+    inner = _tag('div', h2 + p + btn, 'max-width:640px;margin:0 auto')
+    return (
+        '<section style="padding:80px 24px;background:' + bg + ';text-align:center;'
+        'color:#fff;font-family:Inter,sans-serif">' + inner + '</section>'
+    )
+
+
+def _block_pricing(c: dict) -> str:
+    heading = _esc(c.get('heading', ''))
+    subhead = _esc(c.get('subheading', ''))
+    plans   = c.get('plans', [])
+    cards   = ''
+
+    for plan in plans:
+        is_hl   = bool(plan.get('highlight', False))
+        bg      = 'linear-gradient(135deg,#4F46E5,#7C3AED)' if is_hl else '#fff'
+        fg      = '#fff' if is_hl else '#111827'
+        muted   = 'rgba(255,255,255,.7)' if is_hl else '#9CA3AF'
+        feat_fg = 'rgba(255,255,255,.9)' if is_hl else '#4B5563'
+        chk_fg  = 'rgba(255,255,255,.8)' if is_hl else '#22C55E'
+        shadow  = '0 20px 40px rgba(79,70,229,.3)' if is_hl else '0 1px 3px rgba(0,0,0,.08)'
+        border  = '' if is_hl else 'border:1px solid #F3F4F6;'
+        btn_sty = 'background:#fff;color:#4F46E5' if is_hl else 'border:2px solid #4F46E5;color:#4F46E5'
+
+        name    = _esc(plan.get('name', ''))
+        price   = _esc(plan.get('price', ''))
+        period  = _esc(plan.get('period', ''))
+        cta_lbl = _esc(plan.get('cta_label', 'Get started'))
+        cta_url = _esc(plan.get('cta_url', '#'))
+
+        feat_html = ''
+        for feat in plan.get('features', []):
+            feat_html += (
+                '<li style="display:flex;align-items:flex-start;gap:10px;font-size:.875rem;'
+                'color:' + feat_fg + ';margin-bottom:12px">'
+                '<span style="color:' + chk_fg + ';flex-shrink:0">&#10003;</span>'
+                + _esc(feat) + '</li>'
+            )
+
+        period_html = (
+            _tag('div', period, 'font-size:.875rem;color:' + muted + ';margin-bottom:24px')
+            if period else
+            '<div style="margin-bottom:24px"></div>'
+        )
+
+        cards += (
+            '<div style="border-radius:16px;padding:32px;display:flex;flex-direction:column;'
+            'background:' + bg + ';' + border + 'box-shadow:' + shadow + '">'
+            + _tag('div', name,
+                   'font-size:.75rem;font-weight:700;text-transform:uppercase;'
+                   'letter-spacing:.1em;color:' + muted + ';margin-bottom:8px')
+            + _tag('div', price,
+                   'font-size:2.5rem;font-weight:800;color:' + fg + ';margin-bottom:4px')
+            + period_html
+            + '<ul style="list-style:none;padding:0;margin:0 0 32px;flex:1">' + feat_html + '</ul>'
+            + '<a href="' + cta_url + '" style="display:block;text-align:center;padding:14px;'
+              'border-radius:9999px;font-size:.875rem;font-weight:700;text-decoration:none;'
+            + btn_sty + '">' + cta_lbl + '</a>'
+            + '</div>'
+        )
+
+    header = _center_header(heading, subhead)
+    grid   = _tag('div', cards,
+                  'display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px;align-items:start')
+    wrap   = _tag('div', header + grid, 'max-width:1120px;margin:0 auto')
+    return _section(wrap, 'padding:80px 24px;background:#F9FAFB')
+
+
+def _block_team(c: dict) -> str:
+    heading = _esc(c.get('heading', ''))
+    items   = c.get('items', [])
+    cards   = ''
+    for member in items:
+        name    = _esc(member.get('name', ''))
+        role    = _esc(member.get('role', ''))
+        bio     = _esc(member.get('bio', ''))
+        initial = (name or '?')[0]
+        bio_html = _tag('p', bio,
+                        'font-size:.75rem;color:#6B7280;line-height:1.5;margin:4px 0 0') if bio else ''
+        cards += (
+            '<div style="text-align:center">'
+            '<div style="width:64px;height:64px;border-radius:50%;margin:0 auto 12px;'
+            'display:flex;align-items:center;justify-content:center;'
+            'background:linear-gradient(135deg,#4F46E5,#7C3AED);'
+            'color:#fff;font-size:1.5rem;font-weight:700">' + initial + '</div>'
+            + _tag('div', name, 'font-weight:700;font-size:.875rem;color:#111827')
+            + _tag('div', role, 'font-size:.75rem;color:#9CA3AF;margin-bottom:4px')
+            + bio_html + '</div>'
+        )
+    h2   = _tag('h2', heading,
+                'font-size:2rem;font-weight:700;color:#111827;text-align:center;margin:0 0 48px') if heading else ''
+    grid = _tag('div', cards,
+                'display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:24px')
+    wrap = _tag('div', h2 + grid, 'max-width:960px;margin:0 auto')
+    return _section(wrap, 'padding:80px 24px;background:#fff')
+
+
+def _block_text(c: dict) -> str:
+    heading = _esc(c.get('heading', ''))
+    body    = c.get('body', '')   # may contain HTML — don't escape
+    h2  = _tag('h2', heading,
+               'font-size:2rem;font-weight:700;color:#111827;margin:0 0 24px') if heading else ''
+    div = _tag('div', body,
+               'color:#4B5563;line-height:1.8;font-size:1rem') if body else ''
+    wrap = _tag('div', h2 + div, 'max-width:720px;margin:0 auto')
+    return _section(wrap, 'padding:64px 24px;background:#fff')
+
+
+def _block_faq(c: dict) -> str:
+    heading = _esc(c.get('heading', ''))
+    items   = c.get('items', [])
+    rows    = ''
+    for item in items:
+        question = _esc(item.get('question', ''))
+        answer   = _esc(item.get('answer', ''))
+        rows += (
+            '<div style="background:#fff;border-radius:12px;border:1px solid #F3F4F6;'
+            'overflow:hidden;margin-bottom:12px">'
+            + _tag('div', question,
+                   'padding:20px 24px;font-size:.9rem;font-weight:700;color:#111827;border-bottom:1px solid #F3F4F6')
+            + _tag('div', answer,
+                   'padding:16px 24px;font-size:.875rem;color:#4B5563;line-height:1.6')
+            + '</div>'
+        )
+    h2   = _tag('h2', heading,
+                'font-size:2rem;font-weight:700;color:#111827;text-align:center;margin:0 0 40px') if heading else ''
+    wrap = _tag('div', h2 + rows, 'max-width:720px;margin:0 auto')
+    return _section(wrap, 'padding:80px 24px;background:#F9FAFB')
+
+
+def _block_contact_form(c: dict) -> str:
+    heading    = _esc(c.get('heading', ''))
+    fields     = c.get('fields', ['name', 'email', 'message'])
+    submit_lbl = _esc(c.get('submit_label', 'Send Message'))
+    inputs     = ''
+    for field in fields:
+        label = _esc(field.replace('_', ' ').title())
+        lbl_tag = _tag('label', label,
+                       'display:block;font-size:.875rem;font-weight:600;color:#374151;margin-bottom:6px')
+        field_style = 'width:100%;border:1px solid #E5E7EB;border-radius:12px;padding:12px 16px;font-size:.875rem;box-sizing:border-box'
+        if field == 'message':
+            input_tag = '<textarea rows="4" style="' + field_style + ';resize:none"></textarea>'
+        elif field == 'email':
+            input_tag = '<input type="email" style="' + field_style + '" />'
+        else:
+            input_tag = '<input type="text" style="' + field_style + '" />'
+        inputs += _tag('div', lbl_tag + input_tag, 'margin-bottom:16px')
+
+    h2  = _tag('h2', heading,
+               'font-size:1.75rem;font-weight:700;color:#111827;margin:0 0 32px') if heading else ''
+    btn = ('<button type="submit" style="width:100%;padding:14px;background:#4F46E5;'
+           'color:#fff;font-weight:700;border-radius:12px;border:none;font-size:.875rem;cursor:pointer">'
+           + submit_lbl + '</button>')
+    form = '<form>' + inputs + btn + '</form>'
+    wrap = _tag('div', h2 + form, 'max-width:520px;margin:0 auto')
+    return _section(wrap, 'padding:80px 24px;background:#fff')
+
+
+def _block_video(c: dict) -> str:
+    url   = str(c.get('url', ''))
+    title = _esc(c.get('title', 'Video'))
+    embed = url.replace('watch?v=', 'embed/').replace('youtu.be/', 'www.youtube.com/embed/')
+    if embed:
+        inner = ('<iframe src="' + _esc(embed) + '" style="width:100%;height:100%;border:none"'
+                 ' allowfullscreen title="' + title + '"></iframe>')
+    else:
+        inner = ('<div style="width:100%;height:100%;background:#F3F4F6;display:flex;'
+                 'align-items:center;justify-content:center;color:#9CA3AF">No video URL</div>')
+    container = _tag('div', inner,
+                     'max-width:960px;margin:0 auto;aspect-ratio:16/9;border-radius:16px;'
+                     'overflow:hidden;box-shadow:0 20px 40px rgba(0,0,0,.15)')
+    return _section(container, 'padding:64px 24px;background:#fff')
+
+
+def _block_gallery(c: dict) -> str:
+    heading = _esc(c.get('heading', ''))
+    items   = c.get('items', [])
+    imgs    = ''
+    for img in items:
+        url = _esc(img.get('url', ''))
+        alt = _esc(img.get('alt', ''))
+        if url:
+            img_tag = '<img src="' + url + '" alt="' + alt + '" style="width:100%;height:100%;object-fit:cover">'
+        else:
+            img_tag = ''
+        imgs += _tag('div', img_tag,
+                     'aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#F3F4F6')
+    h2   = _tag('h2', heading,
+                'font-size:2rem;font-weight:700;color:#111827;text-align:center;margin:0 0 40px') if heading else ''
+    grid = _tag('div', imgs,
+                'display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px')
+    wrap = _tag('div', h2 + grid, 'max-width:1120px;margin:0 auto')
+    return _section(wrap, 'padding:64px 24px;background:#fff')
+
+
+def _block_newsletter(c: dict) -> str:
+    heading  = _esc(c.get('heading', 'Stay in the loop'))
+    subhead  = _esc(c.get('subheading', 'Subscribe to our newsletter for updates and offers.'))
+    btn_lbl  = _esc(c.get('button_label', 'Subscribe'))
+    bg       = _esc(c.get('bg_color', '#4F46E5'))
+
+    h2  = _tag('h2', heading,
+               'font-size:1.75rem;font-weight:700;color:#fff;margin:0 0 10px') if heading else ''
+    p   = _tag('p', subhead,
+               'color:rgba(255,255,255,.8);margin:0 0 28px;font-size:.9375rem') if subhead else ''
+    form = (
+        '<form style="display:flex;flex-wrap:wrap;gap:12px;justify-content:center">'
+        '<input type="email" placeholder="Your email address" required '
+        'style="flex:1;min-width:220px;padding:14px 20px;border-radius:9999px;border:none;'
+        'font-size:.875rem;outline:none" />'
+        '<button type="submit" style="padding:14px 32px;background:#fff;color:' + bg + ';'
+        'font-weight:700;border-radius:9999px;border:none;font-size:.875rem;cursor:pointer">'
+        + btn_lbl + '</button></form>'
+    )
+    inner = _tag('div', h2 + p + form, 'max-width:540px;margin:0 auto;text-align:center')
+    return (
+        '<section style="padding:80px 24px;background:' + bg + ';font-family:Inter,sans-serif">'
+        + inner + '</section>'
+    )
+
+
+def _block_product_catalog(c: dict) -> str:
+    """
+    Renders a placeholder grid at bootstrap time.
+    The real data (from is_published=True inventory products) is fetched
+    client-side by the ProductCatalogBlock React component.
+    """
+    heading = _esc(c.get('heading', 'Our Products'))
+    subhead = _esc(c.get('subheading', ''))
+    header  = _center_header(heading, subhead)
+    # 6 placeholder cards to indicate structure
+    cards   = ''
+    for _ in range(6):
+        cards += (
+            '<div style="background:#fff;border-radius:16px;border:1px solid #F3F4F6;overflow:hidden">'
+            '<div style="aspect-ratio:4/3;background:#F9FAFB"></div>'
+            '<div style="padding:16px">'
+            '<div style="height:14px;background:#E5E7EB;border-radius:4px;margin-bottom:8px;width:70%"></div>'
+            '<div style="height:12px;background:#F3F4F6;border-radius:4px;width:40%"></div>'
+            '</div></div>'
+        )
+    grid = _tag('div', cards,
+                'display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px')
+    note = _tag('p', 'Product catalogue — populated dynamically on the live site.',
+                'text-align:center;color:#9CA3AF;font-size:.75rem;margin:24px 0 0')
+    wrap = _tag('div', header + grid + note, 'max-width:1120px;margin:0 auto')
+    return _section(wrap, 'padding:64px 24px;background:#F9FAFB')
+
+
+def _block_blog_preview(c: dict) -> str:
+    """Bootstrap placeholder for the latest-posts preview block."""
+    heading = _esc(c.get('heading', 'Latest from our Blog'))
+    subhead = _esc(c.get('subheading', ''))
+    header  = _center_header(heading, subhead)
+    cards   = ''
+    for _ in range(3):
+        cards += (
+            '<div style="background:#fff;border-radius:16px;overflow:hidden;'
+            'border:1px solid #F3F4F6;box-shadow:0 1px 3px rgba(0,0,0,.06)">'
+            '<div style="height:180px;background:#F9FAFB"></div>'
+            '<div style="padding:20px">'
+            '<div style="height:14px;background:#E5E7EB;border-radius:4px;margin-bottom:10px;width:80%"></div>'
+            '<div style="height:11px;background:#F3F4F6;border-radius:4px;margin-bottom:6px"></div>'
+            '<div style="height:11px;background:#F3F4F6;border-radius:4px;width:60%"></div>'
+            '</div></div>'
+        )
+    grid = _tag('div', cards,
+                'display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px')
+    note = _tag('p', 'Blog preview — shows latest published posts on the live site.',
+                'text-align:center;color:#9CA3AF;font-size:.75rem;margin:24px 0 0')
+    wrap = _tag('div', header + grid + note, 'max-width:1120px;margin:0 auto')
+    return _section(wrap, 'padding:64px 24px;background:#fff')

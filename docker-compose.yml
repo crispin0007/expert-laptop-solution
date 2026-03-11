@@ -103,7 +103,11 @@ services:
     ports:
       - "5173:5173"
     environment:
-      - VITE_API_BASE=http://localhost:8000
+      # Inside Docker, the Django backend service is 'web', not 'localhost'.
+      # Vite reads this in vite.config.ts (process.env) to configure the
+      # dev-server proxy target. Never use localhost here — it refers to the
+      # frontend container itself, not the Django container.
+      - VITE_API_BASE=http://web:8000
     depends_on:
       - web
     restart: unless-stopped

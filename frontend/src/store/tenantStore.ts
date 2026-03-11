@@ -60,6 +60,13 @@ export const useTenantStore = create<TenantState>()(
           plan: null,
         }),
     }),
-    { name: 'nexus-tenant' }
+    {
+      name: 'nexus-tenant',
+      // Bump this version whenever the stored shape changes.
+      // Zustand calls migrate() when the stored version differs — returning {}
+      // falls back to the initial state, clearing any stale subdomain/tenant data.
+      version: 1,
+      migrate: () => ({}),
+    }
   )
 )

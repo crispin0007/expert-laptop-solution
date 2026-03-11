@@ -289,15 +289,20 @@ class TicketCommentSerializer(serializers.ModelSerializer):
     author_name   = serializers.SerializerMethodField()
     author_email  = serializers.CharField(source='author.email',     read_only=True, default='')
     attachments   = serializers.JSONField(source='attachment_files', default=list)
+    # Write-only override accepted on create; ignored on display (get_author_name handles it)
+    author_override = serializers.CharField(required=False, allow_blank=True, max_length=128, write_only=False)
 
     def get_author_name(self, obj):
+        # Prefer explicit override (migration / legacy data), fall back to NEXUS user
+        if getattr(obj, 'author_override', ''):
+            return obj.author_override
         return _user_display_name(obj.author)
 
     class Meta:
         model = TicketComment
         fields = (
             'id', 'ticket', 'author', 'author_name', 'author_email',
-            'body', 'is_internal', 'attachments', 'created_at',
+            'body', 'is_internal', 'attachments', 'author_override', 'created_at',
         )
         read_only_fields = ('ticket', 'author', 'author_name', 'author_email', 'created_at')
 

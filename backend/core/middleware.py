@@ -180,7 +180,28 @@ class TenantMiddleware(MiddlewareMixin):
                     # Record the slug for enumeration probe logging below.
                     _probed_slug = slug
 
-        # --- 3. Fallback: X-Tenant-Slug header (mobile apps + dev/localhost) ---
+        # --- 3. Fallback: X-Forwarded-Host (Vite dev proxy + reverse proxies) ---
+        # When the Vite dev proxy is in use, changeOrigin rewrites the Host
+        # header to the backend hostname, losing the subdomain. The proxy is
+        # configured to re-attach the original browser Host as X-Forwarded-Host
+        # so we can recover the slug here. This also covers production reverse
+        # proxy setups (Nginx/Caddy) that set X-Forwarded-Host.
+        if tenant is None:
+            fwd_host = request.headers.get('X-Forwarded-Host', '').split(':')[0].strip().lower()
+            if fwd_host and fwd_host != host:
+                # Custom domain?
+                tenant = _resolve_by_domain(fwd_host)
+                if tenant is None:
+                    from django.conf import settings as _sfwd
+                    _rd = _sfwd.ROOT_DOMAIN.lower()
+                    fwd_parts = fwd_host.split('.')
+                    if len(fwd_parts) >= 2:
+                        if fwd_host.endswith(f'.{_rd}'):
+                            tenant = _resolve_tenant(fwd_parts[0])
+                        elif fwd_host.endswith('.localhost'):  # local dev *.localhost
+                            tenant = _resolve_tenant(fwd_parts[0])
+
+        # --- 4. Fallback: X-Tenant-Slug header (mobile apps + dev/localhost) ---
         # Intentional: mobile clients have no subdomain, so they send the tenant
         # slug as an HTTP header.  This is secure because:
         #   a) All data access still requires a valid JWT scoped to that tenant.
@@ -191,6 +212,17 @@ class TenantMiddleware(MiddlewareMixin):
         #      tenant's data — TenantManager + JWT auth enforces the boundary.
         if tenant is None:
             from django.conf import settings
+            # X-Tenant-Slug header is now accepted on ALL paths, including the
+            # token (login/refresh) endpoints.  The stale-localStorage concern
+            # that motivated the old _AUTH_PATHS block is handled at the
+            # frontend layer:
+            #   1. LoginPage clears the tenant store on mount (clearTenant()).
+            #   2. The Axios interceptor only sends X-Tenant-Slug on token
+            #      endpoints when the slug is derived from the URL hostname
+            #      (e.g. pro.localhost → 'pro'), never from localStorage.
+            # This is necessary for dev because Vite's proxy rewrites the Host
+            # header to localhost:8000, so subdomain detection (step 2 above)
+            # always fails — the header is the only way to pass the tenant slug.
             if getattr(settings, 'ALLOW_TENANT_SLUG_HEADER', settings.DEBUG):
                 header_slug = request.headers.get('X-Tenant-Slug', '').strip()
                 if header_slug:

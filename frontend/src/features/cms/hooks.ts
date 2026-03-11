@@ -8,7 +8,7 @@ import apiClient from '../../api/client'
 import { CMS } from '../../api/endpoints'
 import type {
   CMSSite, CMSSiteWritePayload,
-  CMSPage, CMSPageWritePayload,
+  CMSPage, CMSPageWritePayload, CMSPageGrapesPayload,
   CMSBlock, CMSBlockWritePayload, CMSBlockReorderPayload,
   CMSBlogPost, CMSBlogPostWritePayload,
   CMSCustomDomain, CMSCustomDomainWritePayload,
@@ -43,7 +43,7 @@ export function usePublishCMSSite() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (action: 'publish' | 'unpublish') =>
-      apiClient.post(CMS.SITE_PUBLISH, { action }).then(unwrap<CMSSite>),
+      apiClient.post(CMS.SITE_PUBLISH(action)).then(unwrap<CMSSite>),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cms', 'site'] }),
   })
 }
@@ -102,10 +102,32 @@ export function usePublishCMSPage() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, action }: { id: number; action: 'publish' | 'unpublish' }) =>
-      apiClient.post(CMS.PAGE_PUBLISH(id), { action }).then(unwrap<CMSPage>),
+      apiClient.post(CMS.PAGE_PUBLISH(id, action)).then(unwrap<CMSPage>),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ['cms', 'pages'] })
       qc.invalidateQueries({ queryKey: ['cms', 'page', variables.id] })
+    },
+  })
+}
+
+// Phase 2: GrapeJS visual editor — load / save page grapes state
+export function useCMSPageGrapes(pageId: number) {
+  return useQuery<CMSPageGrapesPayload>({
+    queryKey: ['cms', 'page', pageId, 'grapes'],
+    queryFn: () => apiClient.get(CMS.PAGE_GRAPES(pageId)).then(unwrap<CMSPageGrapesPayload>),
+    enabled: !!pageId,
+  })
+}
+
+export function useSaveCMSPageGrapes(pageId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: CMSPageGrapesPayload) =>
+      apiClient.put(CMS.PAGE_GRAPES(pageId), payload).then(unwrap<CMSPage>),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cms', 'pages'] })
+      qc.invalidateQueries({ queryKey: ['cms', 'page', pageId] })
+      qc.invalidateQueries({ queryKey: ['cms', 'page', pageId, 'grapes'] })
     },
   })
 }
@@ -138,6 +160,16 @@ export function useUpdateCMSBlock(pageId: number, blockId: number) {
   return useMutation({
     mutationFn: (payload: Partial<CMSBlockWritePayload>) =>
       apiClient.patch(CMS.BLOCK_DETAIL(pageId, blockId), payload).then(unwrap<CMSBlock>),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cms', 'blocks', pageId] }),
+  })
+}
+
+/** Patch any block on this page — pass blockId as part of the mutation payload. */
+export function usePatchCMSBlock(pageId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ blockId, data }: { blockId: number; data: Partial<CMSBlockWritePayload> }) =>
+      apiClient.patch(CMS.BLOCK_DETAIL(pageId, blockId), data).then(unwrap<CMSBlock>),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cms', 'blocks', pageId] }),
   })
 }
@@ -183,8 +215,10 @@ export function useCMSBlogPost(id: number) {
 export function useCreateCMSBlogPost() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (payload: CMSBlogPostWritePayload) =>
-      apiClient.post(CMS.BLOG, payload).then(unwrap<CMSBlogPost>),
+    mutationFn: (payload: CMSBlogPostWritePayload | FormData) =>
+      apiClient.post(CMS.BLOG, payload, {
+        headers: payload instanceof FormData ? { 'Content-Type': 'multipart/form-data' } : undefined,
+      }).then(unwrap<CMSBlogPost>),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['cms', 'blog'] }),
   })
 }
@@ -192,8 +226,10 @@ export function useCreateCMSBlogPost() {
 export function useUpdateCMSBlogPost(id: number) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (payload: Partial<CMSBlogPostWritePayload>) =>
-      apiClient.patch(CMS.BLOG_POST(id), payload).then(unwrap<CMSBlogPost>),
+    mutationFn: (payload: Partial<CMSBlogPostWritePayload> | FormData) =>
+      apiClient.patch(CMS.BLOG_POST(id), payload, {
+        headers: payload instanceof FormData ? { 'Content-Type': 'multipart/form-data' } : undefined,
+      }).then(unwrap<CMSBlogPost>),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cms', 'blog'] })
       qc.invalidateQueries({ queryKey: ['cms', 'blog', id] })
@@ -213,7 +249,7 @@ export function usePublishCMSBlogPost() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, action }: { id: number; action: 'publish' | 'unpublish' }) =>
-      apiClient.post(CMS.BLOG_PUBLISH(id), { action }).then(unwrap<CMSBlogPost>),
+      apiClient.post(CMS.BLOG_PUBLISH(id, action)).then(unwrap<CMSBlogPost>),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ['cms', 'blog'] })
       qc.invalidateQueries({ queryKey: ['cms', 'blog', variables.id] })

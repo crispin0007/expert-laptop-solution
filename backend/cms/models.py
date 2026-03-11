@@ -115,6 +115,23 @@ class CMSPage(TenantModel):
         related_name='cms_pages_created',
     )
 
+    # ── Phase 2: GrapeJS visual editor data ────────────────────────────────────
+    # grapes_data stores the GrapeJS JSON state (components + styles).
+    # custom_html / custom_css hold the rendered output used by the public renderer.
+    # When set, the public renderer serves custom_html instead of block-based content.
+    grapes_data       = models.JSONField(
+        null=True, blank=True,
+        help_text='GrapeJS editor state (components + styles JSON). Phase 2.'
+    )
+    custom_html       = models.TextField(
+        blank=True,
+        help_text='Rendered HTML from GrapeJS. Overrides block content in public renderer.'
+    )
+    custom_css        = models.TextField(
+        blank=True,
+        help_text='Rendered CSS from GrapeJS.'
+    )
+
     class Meta:
         ordering           = ['sort_order', 'title']
         unique_together    = [('site', 'slug')]
@@ -139,34 +156,41 @@ class CMSBlock(TenantModel):
     bleach before storing (enforced in CMSBlockService.save_block).
     """
 
-    BLOCK_HERO         = 'hero'
-    BLOCK_TEXT         = 'text'
-    BLOCK_SERVICES     = 'services'
-    BLOCK_GALLERY      = 'gallery'
-    BLOCK_TESTIMONIALS = 'testimonials'
-    BLOCK_CTA          = 'cta'
-    BLOCK_CONTACT_FORM = 'contact_form'
-    BLOCK_PRICING      = 'pricing'
-    BLOCK_TEAM         = 'team'
-    BLOCK_FAQ          = 'faq'
-    BLOCK_HTML         = 'html'
-    BLOCK_VIDEO        = 'video'
-    BLOCK_STATS        = 'stats'
+    BLOCK_HERO            = 'hero'
+    BLOCK_TEXT            = 'text'
+    BLOCK_SERVICES        = 'services'
+    BLOCK_GALLERY         = 'gallery'
+    BLOCK_TESTIMONIALS    = 'testimonials'
+    BLOCK_CTA             = 'cta'
+    BLOCK_CONTACT_FORM    = 'contact_form'
+    BLOCK_PRICING         = 'pricing'
+    BLOCK_TEAM            = 'team'
+    BLOCK_FAQ             = 'faq'
+    BLOCK_HTML            = 'html'
+    BLOCK_VIDEO           = 'video'
+    BLOCK_STATS           = 'stats'
+    # Phase 2 additions
+    BLOCK_NEWSLETTER      = 'newsletter'      # email subscribe CTA
+    BLOCK_PRODUCT_CATALOG = 'product_catalog' # inventory items with is_published=True
+    BLOCK_BLOG_PREVIEW    = 'blog_preview'    # latest N posts from the site's blog
 
     BLOCK_TYPE_CHOICES = [
-        (BLOCK_HERO,         'Hero Banner'),
-        (BLOCK_TEXT,         'Rich Text'),
-        (BLOCK_SERVICES,     'Services Grid'),
-        (BLOCK_GALLERY,      'Image Gallery'),
-        (BLOCK_TESTIMONIALS, 'Testimonials'),
-        (BLOCK_CTA,          'Call to Action'),
-        (BLOCK_CONTACT_FORM, 'Contact Form'),
-        (BLOCK_PRICING,      'Pricing Table'),
-        (BLOCK_TEAM,         'Team Members'),
-        (BLOCK_FAQ,          'FAQ Accordion'),
-        (BLOCK_HTML,         'Custom HTML'),
-        (BLOCK_VIDEO,        'Video Embed'),
-        (BLOCK_STATS,        'Stats / Numbers'),
+        (BLOCK_HERO,            'Hero Banner'),
+        (BLOCK_TEXT,            'Rich Text'),
+        (BLOCK_SERVICES,        'Services Grid'),
+        (BLOCK_GALLERY,         'Image Gallery'),
+        (BLOCK_TESTIMONIALS,    'Testimonials'),
+        (BLOCK_CTA,             'Call to Action'),
+        (BLOCK_CONTACT_FORM,    'Contact Form'),
+        (BLOCK_PRICING,         'Pricing Table'),
+        (BLOCK_TEAM,            'Team Members'),
+        (BLOCK_FAQ,             'FAQ Accordion'),
+        (BLOCK_HTML,            'Custom HTML'),
+        (BLOCK_VIDEO,           'Video Embed'),
+        (BLOCK_STATS,           'Stats / Numbers'),
+        (BLOCK_NEWSLETTER,      'Newsletter Signup'),
+        (BLOCK_PRODUCT_CATALOG, 'Product Catalogue'),
+        (BLOCK_BLOG_PREVIEW,    'Blog Preview'),
     ]
 
     page        = models.ForeignKey(CMSPage, on_delete=models.CASCADE, related_name='blocks')
@@ -207,6 +231,8 @@ class CMSBlogPost(TenantModel):
     # Full HTML body — must be sanitized via bleach in the service before saving
     body            = models.TextField(blank=True)
     featured_image  = models.ImageField(upload_to='cms/blog/', null=True, blank=True)
+    author_name     = models.CharField(max_length=150, blank=True, default='',
+                          help_text='Display name for the post author (overrides user full name)')
     author          = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True, blank=True,
@@ -369,3 +395,53 @@ class CMSGenerationJob(TenantModel):
 
     def __str__(self):
         return f"GenerationJob#{self.pk} [{self.status}] tenant={self.tenant_id}"
+
+
+# ── Newsletter Subscribers ────────────────────────────────────────────────────
+
+class NewsletterSubscriber(TenantModel):
+    """
+    Email addresses collected via the Newsletter block on the public site.
+
+    Each row is scoped to the tenant's site.  Duplicate emails per-tenant are
+    prevented by the unique_together constraint.  Subscribers can unsubscribe
+    at any time via the token link (no auth required).
+    """
+    STATUS_ACTIVE      = 'active'
+    STATUS_UNSUBSCRIBED = 'unsubscribed'
+    STATUS_CHOICES = [
+        (STATUS_ACTIVE,       'Active'),
+        (STATUS_UNSUBSCRIBED, 'Unsubscribed'),
+    ]
+
+    site       = models.ForeignKey(
+        CMSSite,
+        on_delete=models.CASCADE,
+        related_name='newsletter_subscribers',
+    )
+    email      = models.EmailField()
+    name       = models.CharField(max_length=200, blank=True)
+    status     = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE, db_index=True)
+    # UUID token used in one-click unsubscribe links — never expose in list API
+    token      = models.UUIDField(unique=True, editable=False)
+    subscribed_at   = models.DateTimeField(auto_now_add=True)
+    unsubscribed_at = models.DateTimeField(null=True, blank=True)
+    source     = models.CharField(max_length=100, blank=True, help_text='Which page/block captured this email')
+
+    class Meta:
+        ordering        = ['-subscribed_at']
+        unique_together = ('tenant', 'site', 'email')
+        verbose_name        = 'Newsletter Subscriber'
+        verbose_name_plural = 'Newsletter Subscribers'
+        indexes = [
+            models.Index(fields=['tenant', 'site', 'status'], name='cms_nl_tenant_site_status_idx'),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.token:
+            import uuid
+            self.token = uuid.uuid4()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.email} [{self.status}]"

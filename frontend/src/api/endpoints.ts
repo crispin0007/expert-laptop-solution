@@ -308,22 +308,24 @@ export const INVENTORY = {
 export const CMS = {
   // Site
   SITE:            '/cms/site/',
-  SITE_PUBLISH:    '/cms/site/publish/',
+  SITE_PUBLISH:    (action: 'publish' | 'unpublish') => `/cms/site/${action}/`,
 
   // Pages
   PAGES:           '/cms/pages/',
   PAGE_DETAIL:     (id: number) => `/cms/pages/${id}/`,
-  PAGE_PUBLISH:    (id: number) => `/cms/pages/${id}/publish/`,
+  PAGE_PUBLISH:    (id: number, action: 'publish' | 'unpublish') => `/cms/pages/${id}/${action}/`,
+  PAGE_GRAPES:     (id: number) => `/cms/pages/${id}/grapes/`,
 
   // Blocks
   BLOCKS:          (pageId: number) => `/cms/pages/${pageId}/blocks/`,
   BLOCK_DETAIL:    (pageId: number, blockId: number) => `/cms/pages/${pageId}/blocks/${blockId}/`,
   BLOCK_REORDER:   (pageId: number) => `/cms/pages/${pageId}/blocks/reorder/`,
+  MEDIA_UPLOAD:    '/cms/media/',
 
   // Blog
   BLOG:            '/cms/blog/',
   BLOG_POST:       (id: number) => `/cms/blog/${id}/`,
-  BLOG_PUBLISH:    (id: number) => `/cms/blog/${id}/publish/`,
+  BLOG_PUBLISH:    (id: number, action: 'publish' | 'unpublish') => `/cms/blog/${id}/${action}/`,
 
   // Custom domain
   DOMAIN:          '/cms/domain/',

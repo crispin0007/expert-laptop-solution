@@ -5,6 +5,7 @@ import apiClient from '../api/client'
 import { NOTIFICATIONS } from '../api/endpoints'
 import { adStringToBsDisplay } from '../utils/nepaliDate'
 import { usePreferenceStore } from '../store/preferenceStore'
+import { useAuthStore } from '../store/authStore'
 
 interface NotificationItem {
   id: number
@@ -38,6 +39,12 @@ export default function NotificationBell() {
   const ref = useRef<HTMLDivElement>(null)
   const qc = useQueryClient()
 
+  // Superadmins operate on the root domain with no tenant context.
+  // The notifications endpoints are tenant-only (middleware returns 404 for
+  // root-domain requests). Skip all polling for superadmin users.
+  const user = useAuthStore(s => s.user)
+  const isSuperAdmin = user?.is_superadmin ?? false
+
   // Close on outside click
   useEffect(() => {
     const h = (e: MouseEvent) => {
@@ -47,12 +54,13 @@ export default function NotificationBell() {
     return () => document.removeEventListener('mousedown', h)
   }, [])
 
-  // Poll unread count every 30s
+  // Poll unread count every 30s — disabled for superadmin (no tenant context)
   const { data: countData } = useQuery<{ success: boolean; data: { count: number } }>({
     queryKey: ['notifications-count'],
     queryFn: () => apiClient.get(NOTIFICATIONS.UNREAD_COUNT).then(r => r.data),
     refetchInterval: 30_000,
     staleTime: 15_000,
+    enabled: !isSuperAdmin,
   })
 
   const unreadCount = countData?.data?.count ?? 0
@@ -63,9 +71,13 @@ export default function NotificationBell() {
     queryFn: () =>
       apiClient.get(NOTIFICATIONS.LIST, { params: { page_size: 15 } })
         .then(r => r.data.data ?? r.data.results ?? []),
-    enabled: open,
+    enabled: open && !isSuperAdmin,
     staleTime: 10_000,
   })
+
+  // Superadmin has no tenant — notification endpoints are tenant-only.
+  // Render nothing so no 404s are fired.
+  if (isSuperAdmin) return null
 
   const markReadMutation = useMutation({
     mutationFn: (id: number) => apiClient.post(NOTIFICATIONS.MARK_READ(id)),
