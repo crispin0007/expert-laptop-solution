@@ -161,7 +161,11 @@ function GeoOverviewSection() {
   const [expanded, setExpanded] = useState(true)
   const { data: geo, isLoading, isError } = useQuery<GeoOverview>({
     queryKey: ['customers-geo-overview'],
-    queryFn: () => apiClient.get(CUSTOMERS.GEO_OVERVIEW).then(r => r.data),
+    queryFn: () => apiClient.get(CUSTOMERS.GEO_OVERVIEW).then(r => {
+      // Backend wraps in { success, data: { total, unlocated, provinces } }
+      if (r.data && typeof r.data.total === 'undefined' && r.data.data) return r.data.data
+      return r.data
+    }),
     staleTime: 60_000,
   })
 

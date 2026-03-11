@@ -19,6 +19,7 @@ from rest_framework.response import Response
 
 from core.mixins import TenantMixin
 from core.views import NexusViewSet
+from core.pagination import NexusPageNumberPagination
 from core.response import ApiResponse
 from core.exceptions import ConflictError, AppException, NotFoundError, ValidationError as AppValidationError
 from core.permissions import make_role_permission, ALL_ROLES, STAFF_ROLES, MANAGER_ROLES, ADMIN_ROLES
@@ -168,6 +169,7 @@ class TicketViewSet(NexusViewSet):
     input_serializer_class = TicketCreateSerializer
     service_class          = TicketService
     required_module        = 'tickets'
+    pagination_class       = NexusPageNumberPagination
     filter_backends        = [filters.SearchFilter, filters.OrderingFilter]
     search_fields          = ['title', 'ticket_number', 'description']
     ordering_fields        = ['created_at', 'priority', 'status', 'sla_deadline']

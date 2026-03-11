@@ -136,10 +136,12 @@ export default function TicketListPage() {
   const tickets: Ticket[] = useMemo(() => {
     if (!response) return []
     if (Array.isArray(response)) return response
-    return response.results ?? response.data ?? []
+    // Backend wraps in { success, data: [...], meta: { pagination: { total, ... } } }
+    return (Array.isArray(response.data) ? response.data : null) ?? response.results ?? []
   }, [response])
 
-  const totalCount: number = response?.count ?? tickets.length
+  const totalCount: number =
+    response?.meta?.pagination?.total ?? response?.count ?? tickets.length
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
 
   // ── Stats ──────────────────────────────────────────────────────────────────
