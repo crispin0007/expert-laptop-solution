@@ -20,7 +20,11 @@ export default function CreateDepartmentModal({ open, onClose }: Props) {
     queryKey: ['staff'],
     queryFn: async () => {
       const res = await apiClient.get('/staff/')
-      return res.data.results ?? res.data
+      const d = res.data
+      if (Array.isArray(d)) return d
+      if (Array.isArray(d.results)) return d.results
+      if (Array.isArray(d.data)) return d.data
+      return []
     },
     enabled: open,
   })

@@ -47,7 +47,9 @@ export default function RoleEditorModal({ open, onClose, role }: Props) {
     queryKey: ['roles-permission-map'],
     queryFn: async () => {
       const res = await apiClient.get(ROLES.PERMISSION_MAP)
-      return res.data
+      // Unwrap envelope: { success, data: {...} } or raw object
+      const d = res.data
+      return d.data ?? d
     },
     staleTime: 5 * 60 * 1000,
   })

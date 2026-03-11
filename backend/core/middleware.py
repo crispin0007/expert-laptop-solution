@@ -332,8 +332,22 @@ class TenantMiddleware(MiddlewareMixin):
 
 
 def _get_ip(request: HttpRequest) -> str:
-    """Extract real client IP respecting common reverse-proxy headers."""
+    """
+    Extract real client IP respecting common reverse-proxy headers.
+
+    SECURITY: X-Forwarded-For can be spoofed by any client.  We only trust the
+    *rightmost* IP that was appended by our own reverse proxy (Caddy), NOT the
+    leftmost value which the client controls.  The rightmost entry is the socket
+    address that Caddy actually connected from — that cannot be faked.
+
+    In practice Caddy appends exactly one entry (the downstream socket IP), so
+    xff.split(',')[-1] reliably gives us the real client IP without allowing
+    an attacker to impersonate a whitelisted address by prepending it.
+
+    Fallback to REMOTE_ADDR when the header is absent.
+    """
     xff = request.META.get('HTTP_X_FORWARDED_FOR', '')
     if xff:
-        return xff.split(',')[0].strip()
+        # Take the last (rightmost) entry — set by our trusted proxy, not the client
+        return xff.split(',')[-1].strip()
     return request.META.get('REMOTE_ADDR', 'unknown')

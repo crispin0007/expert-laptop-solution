@@ -41,7 +41,11 @@ export default function RolesListPage() {
     queryKey: ['roles'],
     queryFn: async () => {
       const res = await apiClient.get(ROLES.LIST)
-      return res.data.results ?? res.data
+      const d = res.data
+      if (Array.isArray(d)) return d
+      if (Array.isArray(d.results)) return d.results
+      if (Array.isArray(d.data)) return d.data
+      return []
     },
   })
 

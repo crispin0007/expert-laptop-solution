@@ -6,13 +6,42 @@
  * Tabs: Site Settings | Pages | Blog | Domain | AI Generator
  */
 import { useSearchParams } from 'react-router-dom'
-import { Globe, Layout, BookOpen, Link2, Sparkles, ExternalLink } from 'lucide-react'
+import { Globe, Layout, BookOpen, Link2, Sparkles, ExternalLink, Eye } from 'lucide-react'
 import { useCMSSite } from './hooks'
+import { useTenantStore } from '../../store/tenantStore'
 import SiteSettingsPanel from './SiteSettingsPanel'
 import PageListPanel from './PageListPanel'
 import BlogManager from './BlogManager'
 import DomainSetup from './DomainSetup'
 import AIGenerator from './AIGenerator'
+
+/**
+ * Derive the public website URL for the current tenant.
+ *
+ * Dev:  http://pro.localhost:5173/preview  (same host, /preview route)
+ * Prod: https://els.bms.techyatra.com.np/preview (or custom domain)
+ *
+ * When a verified custom domain is set it takes precedence.
+ */
+function useWebsiteUrls(customDomain: string | null) {
+  const subdomain = useTenantStore(s => s.subdomain)
+  const { hostname, port, protocol } = window.location
+
+  // Custom domain always wins
+  if (customDomain) {
+    return {
+      liveUrl:    `https://${customDomain}`,
+      previewUrl: `${protocol}//${hostname}${port ? ':' + port : ''}/preview`,
+    }
+  }
+
+  // Build the subdomain URL for the current environment
+  const base = `${protocol}//${hostname}${port ? ':' + port : ''}`
+  return {
+    liveUrl:    subdomain ? `https://${subdomain}.bms.techyatra.com.np` : null,
+    previewUrl: `${base}/preview`,
+  }
+}
 
 type Tab = 'settings' | 'pages' | 'blog' | 'domain' | 'ai'
 
@@ -32,6 +61,7 @@ export default function CMSSitePage() {
   const setTab = (id: Tab) => setParams({ tab: id }, { replace: true })
 
   const { data: site, isLoading } = useCMSSite()
+  const { liveUrl, previewUrl } = useWebsiteUrls(site?.custom_domain ?? null)
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -47,16 +77,45 @@ export default function CMSSitePage() {
                 ? `${site.site_name || 'Untitled Site'} · ${site.is_published ? '🟢 Published' : '⚪ Draft'}`
                 : 'Configure your public website'}
             </p>
+            {/* Public website URL display */}
+            {!isLoading && site && (
+              <div className="flex items-center gap-3 mt-1.5">
+                {liveUrl && (
+                  <a
+                    href={liveUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 hover:underline"
+                  >
+                    <Globe size={11} />
+                    {liveUrl.replace('https://', '')}
+                  </a>
+                )}
+              </div>
+            )}
           </div>
-          <a
-            href="/preview"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
-          >
-            <ExternalLink size={14} />
-            View Site
-          </a>
+          <div className="flex items-center gap-2">
+            <a
+              href={previewUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              <Eye size={14} />
+              Preview
+            </a>
+            {liveUrl && site?.is_published && (
+              <a
+                href={liveUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+              >
+                <ExternalLink size={14} />
+                Visit Live Site
+              </a>
+            )}
+          </div>
         </div>
 
         {/* Tabs */}

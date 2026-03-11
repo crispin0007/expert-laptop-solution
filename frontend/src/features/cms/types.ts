@@ -21,6 +21,8 @@ export interface CMSSite {
   custom_head_script: string
   is_published: boolean
   published_at: string | null
+  /** Verified custom domain, if any (e.g. "www.acmecorp.com") */
+  custom_domain: string | null
   created_at: string
   updated_at: string
 }

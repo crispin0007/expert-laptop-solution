@@ -252,17 +252,22 @@ export default function TenantDetailPage() {
     queryKey: ['admin', 'tenant', id],
     queryFn: async () => {
       const res = await apiClient.get(TENANTS.DETAIL(Number(id!)))
-      return res.data.data ?? res.data
+      const d = res.data
+      return d.data ?? d
     },
     enabled: !!id,
   })
 
   // Fetch members
-  const { data: members, isLoading: membersLoading } = useQuery<Member[]>({
+  const { data: members = [], isLoading: membersLoading } = useQuery<Member[]>({
     queryKey: ['admin', 'tenant-members', id],
     queryFn: async () => {
       const res = await apiClient.get(TENANTS.MEMBERS(Number(id!)))
-      return res.data.results ?? res.data.data ?? res.data
+      const d = res.data
+      if (Array.isArray(d)) return d
+      if (Array.isArray(d.results)) return d.results
+      if (Array.isArray(d.data)) return d.data
+      return []
     },
     enabled: !!id,
   })

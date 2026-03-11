@@ -19,7 +19,8 @@ import { Menu, X, ChevronRight, Clock, Tag } from 'lucide-react'
 
 // Draft endpoints: auth-required, bypass is_published
 // This renderer is only ever mounted at /preview/* (logged-in staff)
-const BASE = '/api/v1/cms/draft'
+// NOTE: apiClient already has baseURL='/api/v1' — do NOT repeat the prefix here
+const BASE = '/cms/draft'
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 async function fetchSite() {
@@ -171,7 +172,7 @@ function PageView({ slug, site, pageId }: { slug: string; site: SiteData; pageId
     setError('')
     // If a numeric pageId is provided, fetch by ID (bypasses slug requirement)
     const fetcher = pageId
-      ? apiClient.get(`/api/v1/cms/draft/pages/${pageId}/`).then(r => r.data.data)
+      ? apiClient.get(`${BASE}/pages/${pageId}/`).then(r => r.data.data)
       : fetchPage(slug)
     fetcher
       .then(setPage)
@@ -363,6 +364,8 @@ export default function PublicSite() {
   const [site, setSite] = useState<SiteData | null>(null)
   const [loading, setLoading] = useState(true)
   const basePath = '/preview'
+  // Must be called unconditionally, before any early return (Rules of Hooks)
+  const [searchParams] = useSearchParams()
 
   useEffect(() => {
     fetchSite()
@@ -376,7 +379,6 @@ export default function PublicSite() {
   const activeSite = site ?? FALLBACK_SITE
 
   // If ?pageId=<n> on the index route, pass it through
-  const [searchParams] = useSearchParams()
   const rootPageId = searchParams.get('pageId') ?? undefined
 
   return (

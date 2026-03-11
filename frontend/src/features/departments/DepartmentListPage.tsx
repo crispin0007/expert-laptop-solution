@@ -20,7 +20,14 @@ export default function DepartmentListPage() {
     queryKey: ['departments'],
     queryFn: async () => {
       const res = await apiClient.get('/departments/')
-      return res.data.results ?? res.data
+      // Handles paginated: { results: [...] }
+      // Handles envelope:  { success: true, data: [...] }
+      // Handles raw array: [...]
+      const d = res.data
+      if (Array.isArray(d)) return d
+      if (Array.isArray(d.results)) return d.results
+      if (Array.isArray(d.data)) return d.data
+      return []
     },
   })
 

@@ -75,7 +75,11 @@ export default function StaffListPage() {
     queryKey: ['staff'],
     queryFn: async () => {
       const res = await apiClient.get('/staff/')
-      return res.data.results ?? res.data
+      const d = res.data
+      if (Array.isArray(d)) return d
+      if (Array.isArray(d.results)) return d.results
+      if (Array.isArray(d.data)) return d.data
+      return []
     },
   })
 
@@ -83,7 +87,11 @@ export default function StaffListPage() {
     queryKey: ['departments'],
     queryFn: async () => {
       const res = await apiClient.get('/departments/')
-      return res.data.results ?? res.data
+      const d = res.data
+      if (Array.isArray(d)) return d
+      if (Array.isArray(d.results)) return d.results
+      if (Array.isArray(d.data)) return d.data
+      return []
     },
   })
 
@@ -91,7 +99,11 @@ export default function StaffListPage() {
     queryKey: ['staff', 'availability'],
     queryFn: async () => {
       const res = await apiClient.get('/staff/availability/')
-      return res.data
+      const d = res.data
+      if (Array.isArray(d)) return d
+      if (Array.isArray(d.results)) return d.results
+      if (Array.isArray(d.data)) return d.data
+      return []
     },
     refetchInterval: 60_000,
   })

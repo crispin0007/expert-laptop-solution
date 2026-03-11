@@ -29,6 +29,7 @@ from core.mixins import TenantMixin
 from core.pagination import NexusCursorPagination
 from core.permissions import make_role_permission, STAFF_ROLES, MANAGER_ROLES, ALL_ROLES
 from core.response import ApiResponse
+from core.throttles import StrictAnonRateThrottle
 
 from . import services
 from .models import CMSSite, CMSPage, CMSBlock, CMSBlogPost, CMSCustomDomain, CMSGenerationJob, NewsletterSubscriber
@@ -265,14 +266,22 @@ class CMSBlockDetailView(TenantMixin, APIView):
     """
     permission_classes = [permissions.IsAuthenticated, make_role_permission(*STAFF_ROLES)]
 
-    def _get_block(self, pk):
+    def _get_block(self, pk, page_pk=None):
         try:
-            return CMSBlock.objects.get(pk=pk, tenant=self.request.tenant)
+            qs = CMSBlock.objects.filter(pk=pk, tenant=self.request.tenant)
+            # When accessed via the nested /pages/{page_pk}/blocks/{pk}/ URL,
+            # also verify the block actually belongs to that page.
+            # Without this check a staff member could read/update/delete blocks
+            # from other pages within the same tenant by supplying a mismatched
+            # page_pk — a form of IDOR (Insecure Direct Object Reference).
+            if page_pk is not None:
+                qs = qs.filter(page_id=page_pk)
+            return qs.get()
         except CMSBlock.DoesNotExist:
             return None
 
     def put(self, request, pk, page_pk=None):
-        block = self._get_block(pk)
+        block = self._get_block(pk, page_pk=page_pk)
         if not block:
             return ApiResponse.not_found('Block')
         block = services.update_block(block, request.data, request.user)
@@ -283,7 +292,7 @@ class CMSBlockDetailView(TenantMixin, APIView):
         return self.put(request, pk, page_pk)
 
     def delete(self, request, pk, page_pk=None):
-        block = self._get_block(pk)
+        block = self._get_block(pk, page_pk=page_pk)
         if not block:
             return ApiResponse.not_found('Block')
         services.delete_block(block)
@@ -303,7 +312,15 @@ class CMSMediaUploadView(TenantMixin, APIView):
     parser_classes = [MultiPartParser, FormParser]
     permission_classes = [permissions.IsAuthenticated, make_role_permission(*STAFF_ROLES)]
 
-    ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'}
+    # SVG is intentionally excluded — SVG files can embed JavaScript (XSS).
+    # If SVG support is ever needed, sanitise with defusedxml + bleach first.
+    ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+    # Map extension → expected MIME prefix for double-verification
+    ALLOWED_MIME_PREFIXES = {
+        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+        '.png': 'image/png', '.gif': 'image/gif',
+        '.webp': 'image/webp',
+    }
     MAX_SIZE_MB = 10
 
     def post(self, request):
@@ -314,10 +331,22 @@ class CMSMediaUploadView(TenantMixin, APIView):
         if not file:
             return ApiResponse.bad_request('No file provided. Send a multipart/form-data request with a "file" field.')
 
-        # Extension check
+        # Extension check (case-insensitive)
         ext = os.path.splitext(file.name)[1].lower()
         if ext not in self.ALLOWED_EXTENSIONS:
-            return ApiResponse.bad_request(f'File type "{ext}" not allowed. Allowed: {", ".join(self.ALLOWED_EXTENSIONS)}')
+            return ApiResponse.bad_request(
+                f'File type "{ext}" not allowed. Allowed: {", ".join(sorted(self.ALLOWED_EXTENSIONS))}'
+            )
+
+        # MIME type double-check — prevents extension spoofing (e.g. shell.php renamed to shell.jpg)
+        expected_mime = self.ALLOWED_MIME_PREFIXES.get(ext, '')
+        actual_mime = getattr(file, 'content_type', '') or ''
+        if expected_mime and not actual_mime.startswith(expected_mime.split('/')[0]):
+            logger.warning(
+                'CMS_MEDIA_MIME_MISMATCH | tenant=%s | ext=%s | content_type=%s',
+                getattr(request.tenant, 'slug', '?'), ext, actual_mime,
+            )
+            return ApiResponse.bad_request('File content does not match its extension.')
 
         # Size check
         if file.size > self.MAX_SIZE_MB * 1024 * 1024:
@@ -344,6 +373,24 @@ class CMSBlockReorderView(TenantMixin, APIView):
         ordered_ids = request.data.get('order', [])
         if not isinstance(ordered_ids, list):
             return ApiResponse.error('order must be a list of block IDs.')
+        # Validate every entry is an integer — protects against injection via
+        # non-integer values that could cause unexpected ORM behaviour.
+        if not all(isinstance(i, int) for i in ordered_ids):
+            return ApiResponse.bad_request('All block IDs in order must be integers.')
+        # Validate every supplied ID belongs to this page (same tenant enforced
+        # by the page lookup above). Prevents cross-page block manipulation.
+        if ordered_ids:
+            valid_ids = set(
+                CMSBlock.objects.filter(page=page, tenant=request.tenant)
+                .values_list('id', flat=True)
+            )
+            foreign_ids = [i for i in ordered_ids if i not in valid_ids]
+            if foreign_ids:
+                logger.warning(
+                    'CMS_BLOCK_REORDER_FOREIGN_IDS | tenant=%s | page=%s | ids=%s',
+                    getattr(request.tenant, 'slug', '?'), page_pk, foreign_ids,
+                )
+                return ApiResponse.bad_request('One or more block IDs do not belong to this page.')
         services.reorder_blocks(page, ordered_ids)
         return ApiResponse.success(message='Blocks reordered.')
 
@@ -467,10 +514,65 @@ class CMSCustomDomainView(TenantMixin, APIView):
             return ApiResponse.not_found('Custom domain')
         return ApiResponse.success(data=CmsCustomDomainSerializer(cd).data)
 
+    # Domains that must never be accepted as custom domains — they point to
+    # internal infrastructure and accepting them would allow a tenant to
+    # hijack traffic destined for other tenants or the platform itself.
+    _BLOCKED_DOMAIN_PATTERNS = (
+        'localhost',
+        '127.0.0.1',
+        '0.0.0.0',
+        '::1',
+        '.local',
+        '.internal',
+        '.localhost',
+    )
+
+    def _validate_domain(self, domain: str) -> str | None:
+        """
+        Returns an error string if the domain is invalid, else None.
+
+        Checks:
+          1. Matches a valid FQDN pattern (labels separated by dots, no spaces)
+          2. Is not an IP address (IPv4 or IPv6)
+          3. Does not match blocked infrastructure patterns
+          4. Does not end with the platform's own root domain (would create
+             a conflicting wildcard — e.g. evil.bms.techyatra.com.np)
+        """
+        import re
+        from django.conf import settings as _s
+
+        # Must look like a domain name
+        fqdn_re = re.compile(
+            r'^(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$'
+        )
+        if not fqdn_re.match(domain):
+            return 'Invalid domain format. Use a fully-qualified domain name (e.g. crm.mycompany.com).'
+
+        # Block bare IP addresses
+        ip4_re = re.compile(r'^\d{1,3}(\.\d{1,3}){3}$')
+        if ip4_re.match(domain):
+            return 'IP addresses cannot be used as custom domains.'
+
+        # Block infrastructure / reserved patterns
+        root = getattr(_s, 'ROOT_DOMAIN', '').lower()
+        if domain.endswith(f'.{root}') or domain == root:
+            return f'Custom domain cannot be a subdomain of the platform domain ({root}).'
+
+        for pattern in self._BLOCKED_DOMAIN_PATTERNS:
+            if domain == pattern or domain.endswith(pattern):
+                return f'Domain "{domain}" is reserved and cannot be used.'
+
+        return None  # all good
+
     def post(self, request):
         domain = (request.data.get('domain') or '').strip().lower()
         if not domain:
             return ApiResponse.error('domain is required.')
+
+        err = self._validate_domain(domain)
+        if err:
+            return ApiResponse.error(err)
+
         site = self._get_site()
         cd = services.setup_custom_domain(site, domain, request.user)
         return ApiResponse.created(data=CmsCustomDomainSerializer(cd).data)
@@ -769,9 +871,11 @@ class PublicNewsletterSubscribeView(APIView):
     POST /api/v1/cms/public/newsletter/subscribe/
     Subscribe an email address to the tenant's newsletter list.
     Idempotent — subscribing again with an existing email re-activates it.
+    Rate-limited: 5/min per IP (StrictAnonRateThrottle) to prevent spam harvesting.
     """
     permission_classes = []
     authentication_classes = []
+    throttle_classes = [StrictAnonRateThrottle]
 
     def post(self, request):
         from .models import NewsletterSubscriber
@@ -881,7 +985,9 @@ class PublicProductCatalogView(APIView):
                 )
             )
         except Exception:
-            pass  # annotation failure → in_stock defaults to True
+            # Only swallow ImportError (inventory module not installed).
+            # Genuine DB errors should surface so they are not silently lost.
+            logger.warning('PublicProductCatalogView: stock annotation unavailable — inventory module missing.')
 
         # Filters
         category = request.query_params.get('category', '').strip()

@@ -113,8 +113,10 @@ class CmsSiteSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at', 'published_at', 'pages']
 
     def get_custom_domain(self, obj):
+        """Return the verified custom domain string, or None if unverified/absent."""
         try:
-            return obj.custom_domain.domain if obj.custom_domain else None
+            cd = obj.custom_domain
+            return cd.domain if cd and cd.is_verified else None
         except CMSCustomDomain.DoesNotExist:
             return None
 
