@@ -12,12 +12,16 @@ export interface Customer {
   id: number
   customer_number: string
   name: string
+  company_name?: string | null
   type: 'individual' | 'organization'
   email: string | null
   phone: string | null
   address: string | null
   city: string | null
   district: string | null
+  municipality: string | null
+  ward_no: string | null
+  province: string | null
   is_active: boolean
   open_tickets_count?: number
   notes: string | null

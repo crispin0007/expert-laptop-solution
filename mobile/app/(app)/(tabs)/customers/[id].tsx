@@ -12,16 +12,33 @@ import { RoleGuard } from '@/guards/RoleGuard'
 import { useCustomer, useUpdateCustomer, useCustomerContacts, useCreateContact } from '@/features/customers/useCustomers'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
+const PROVINCE_CHOICES: { value: string; label: string }[] = [
+  { value: 'koshi', label: 'Koshi Province' },
+  { value: 'madhesh', label: 'Madhesh Province' },
+  { value: 'bagmati', label: 'Bagmati Province' },
+  { value: 'gandaki', label: 'Gandaki Province' },
+  { value: 'lumbini', label: 'Lumbini Province' },
+  { value: 'karnali', label: 'Karnali Province' },
+  { value: 'sudurpashchim', label: 'Sudurpashchim Province' },
+]
+
 interface Customer {
   id: number
+  customer_number?: string
   name: string
   company_name?: string
-  email?: string
-  phone?: string
-  address?: string
+  type?: 'individual' | 'organization'
+  email?: string | null
+  phone?: string | null
+  address?: string | null
+  city?: string | null
+  district?: string | null
+  municipality?: string | null
+  ward_no?: string | null
+  province?: string | null
   is_active: boolean
   created_at: string
-  notes?: string
+  notes?: string | null
 }
 
 interface Ticket {
@@ -44,13 +61,28 @@ function EditCustomerModal({ visible, customer, onClose, onSaved }: { visible: b
   const [phone, setPhone] = useState(customer.phone ?? '')
   const [email, setEmail] = useState(customer.email ?? '')
   const [address, setAddress] = useState(customer.address ?? '')
+  const [province, setProvince] = useState(customer.province ?? '')
+  const [district, setDistrict] = useState(customer.district ?? '')
+  const [municipality, setMunicipality] = useState(customer.municipality ?? '')
+  const [wardNo, setWardNo] = useState(customer.ward_no ?? '')
   const [notes, setNotes] = useState(customer.notes ?? '')
 
   React.useEffect(() => {
-    setName(customer.name); setPhone(customer.phone ?? ''); setEmail(customer.email ?? ''); setAddress(customer.address ?? ''); setNotes(customer.notes ?? '')
+    setName(customer.name)
+    setPhone(customer.phone ?? '')
+    setEmail(customer.email ?? '')
+    setAddress(customer.address ?? '')
+    setProvince(customer.province ?? '')
+    setDistrict(customer.district ?? '')
+    setMunicipality(customer.municipality ?? '')
+    setWardNo(customer.ward_no ?? '')
+    setNotes(customer.notes ?? '')
   }, [customer.id])
 
   const mutation = useUpdateCustomer(customer.id)
+
+  const fieldStyle = { backgroundColor: theme.colors.surface, borderRadius: 10, padding: 12, fontSize: 15, color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.border } as const
+  const labelStyle = { fontSize: 12, fontWeight: '600' as const, color: theme.colors.textMuted, marginBottom: 6, textTransform: 'uppercase' as const }
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
@@ -60,21 +92,72 @@ function EditCustomerModal({ visible, customer, onClose, onSaved }: { visible: b
           <TouchableOpacity onPress={onClose}><Ionicons name="close" size={24} color={theme.colors.textMuted} /></TouchableOpacity>
         </View>
         <ScrollView contentContainerStyle={{ padding: 20, gap: 14 }} keyboardShouldPersistTaps="handled">
+          {/* Basic fields */}
           {[{ label: 'Name *', value: name, onChange: setName, placeholder: 'Full name' },
             { label: 'Phone', value: phone, onChange: setPhone, placeholder: '+977-xxx', keyboardType: 'phone-pad' as const },
             { label: 'Email', value: email, onChange: setEmail, placeholder: 'email@example.com', autoCapitalize: 'none' as const },
-            { label: 'Address', value: address, onChange: setAddress, placeholder: 'City, District' },
           ].map(({ label, value, onChange, placeholder, ...props }) => (
             <View key={label}>
-              <Text style={{ fontSize: 12, fontWeight: '600', color: theme.colors.textMuted, marginBottom: 6, textTransform: 'uppercase' }}>{label}</Text>
-              <TextInput value={value} onChangeText={onChange} placeholder={placeholder} placeholderTextColor={theme.colors.textMuted} style={{ backgroundColor: theme.colors.surface, borderRadius: 10, padding: 12, fontSize: 15, color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.border }} {...props} />
+              <Text style={labelStyle}>{label}</Text>
+              <TextInput value={value} onChangeText={onChange} placeholder={placeholder} placeholderTextColor={theme.colors.textMuted} style={fieldStyle} {...props} />
             </View>
           ))}
+
+          {/* Province picker */}
           <View>
-            <Text style={{ fontSize: 12, fontWeight: '600', color: theme.colors.textMuted, marginBottom: 6, textTransform: 'uppercase' }}>Notes</Text>
-            <TextInput value={notes} onChangeText={setNotes} placeholder="Notes…" placeholderTextColor={theme.colors.textMuted} multiline numberOfLines={3} style={{ backgroundColor: theme.colors.surface, borderRadius: 10, padding: 12, fontSize: 15, color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.border, minHeight: 80, textAlignVertical: 'top' }} />
+            <Text style={labelStyle}>Province</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
+              {PROVINCE_CHOICES.map((p) => (
+                <TouchableOpacity
+                  key={p.value}
+                  onPress={() => setProvince(province === p.value ? '' : p.value)}
+                  style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1.5, borderColor: province === p.value ? theme.primary[500] : theme.colors.border, backgroundColor: province === p.value ? `${theme.primary[500]}18` : theme.colors.surface }}
+                >
+                  <Text style={{ fontSize: 13, color: province === p.value ? theme.primary[600] : theme.colors.textMuted, fontWeight: province === p.value ? '700' : '400' }}>{p.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
-          <TouchableOpacity onPress={() => { if (!name.trim()) { Alert.alert('Validation', 'Name is required'); return } mutation.mutate({ name: name.trim(), phone: phone.trim() || null, email: email.trim() || null, address: address.trim() || null, notes: notes.trim() || null }, { onSuccess: () => { onSaved(); onClose() }, onError: (e: any) => Alert.alert('Error', e?.response?.data?.message ?? 'Could not update customer') }) }} disabled={mutation.isPending} style={{ backgroundColor: theme.primary[600], borderRadius: 12, padding: 14, alignItems: 'center', marginTop: 4 }}>
+
+          {/* District */}
+          <View>
+            <Text style={labelStyle}>District</Text>
+            <TextInput value={district} onChangeText={setDistrict} placeholder="e.g. Kathmandu" placeholderTextColor={theme.colors.textMuted} style={fieldStyle} />
+          </View>
+
+          {/* Municipality */}
+          <View>
+            <Text style={labelStyle}>Municipality / City</Text>
+            <TextInput value={municipality} onChangeText={setMunicipality} placeholder="e.g. Kathmandu Metropolitan" placeholderTextColor={theme.colors.textMuted} style={fieldStyle} />
+          </View>
+
+          {/* Ward No */}
+          <View>
+            <Text style={labelStyle}>Ward No.</Text>
+            <TextInput value={wardNo} onChangeText={setWardNo} placeholder="e.g. 10" placeholderTextColor={theme.colors.textMuted} keyboardType="numeric" style={fieldStyle} />
+          </View>
+
+          {/* Street address */}
+          <View>
+            <Text style={labelStyle}>Street Address</Text>
+            <TextInput value={address} onChangeText={setAddress} placeholder="Street / Tole" placeholderTextColor={theme.colors.textMuted} style={fieldStyle} />
+          </View>
+
+          <View>
+            <Text style={labelStyle}>Notes</Text>
+            <TextInput value={notes} onChangeText={setNotes} placeholder="Notes…" placeholderTextColor={theme.colors.textMuted} multiline numberOfLines={3} style={{ ...fieldStyle, minHeight: 80, textAlignVertical: 'top' }} />
+          </View>
+          <TouchableOpacity
+            onPress={() => {
+              if (!name.trim()) { Alert.alert('Validation', 'Name is required'); return }
+              mutation.mutate(
+                { name: name.trim(), phone: phone.trim() || null, email: email.trim() || null, address: address.trim() || null, province: province || null, district: district.trim() || null, municipality: municipality.trim() || null, ward_no: wardNo.trim() || null, notes: notes.trim() || null },
+                { onSuccess: () => { onSaved(); onClose() }, onError: (e: any) => Alert.alert('Error', e?.response?.data?.message ?? 'Could not update customer') }
+              )
+            }}
+            disabled={mutation.isPending}
+            style={{ backgroundColor: theme.primary[600], borderRadius: 12, padding: 14, alignItems: 'center', marginTop: 4 }}
+          >
             {mutation.isPending ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Save Changes</Text>}
           </TouchableOpacity>
         </ScrollView>
@@ -97,9 +180,16 @@ export default function CustomerDetailScreen() {
   const { data: customerData, isLoading, refetch, isRefetching } = useCustomer(id!)
   const customer = customerData as unknown as Customer
 
-  const { data: tickets, isLoading: ticketsLoading } = useQuery<{ results: Ticket[] }>({
+  const { data: tickets, isLoading: ticketsLoading } = useQuery<Ticket[]>({
     queryKey: QK.tickets({ customer: id }),
-    queryFn: () => apiClient.get(TICKETS.LIST, { params: { customer: id, page_size: 50 } }).then((r) => r.data.data ?? r.data),
+    queryFn: () =>
+      apiClient.get(TICKETS.LIST, { params: { customer: id, page_size: 50 } }).then((r) => {
+        // Handle NexusPageNumberPagination envelope: { success, data: [...], meta: { pagination: {...} } }
+        if (Array.isArray(r.data?.data)) return r.data.data as Ticket[]
+        if (Array.isArray(r.data?.results)) return r.data.results as Ticket[]
+        if (Array.isArray(r.data)) return r.data as Ticket[]
+        return [] as Ticket[]
+      }),
     enabled: !!validId && activeTab === 'tickets',
     staleTime: 60_000,
   })
@@ -179,9 +269,33 @@ export default function CustomerDetailScreen() {
                 <Text style={{ fontSize: theme.fontSize.sm, color: theme.primary[600], fontWeight: theme.fontWeight.medium }}>{customer.phone}</Text>
               </TouchableOpacity>
             )}
+            {customer.province && (
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
+                <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.textMuted }}>Province</Text>
+                <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.text, fontWeight: theme.fontWeight.medium }}>{PROVINCE_CHOICES.find((p) => p.value === customer.province)?.label ?? customer.province}</Text>
+              </View>
+            )}
+            {customer.district && (
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
+                <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.textMuted }}>District</Text>
+                <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.text, fontWeight: theme.fontWeight.medium }}>{customer.district}</Text>
+              </View>
+            )}
+            {customer.municipality && (
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
+                <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.textMuted }}>Municipality</Text>
+                <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.text, fontWeight: theme.fontWeight.medium }}>{customer.municipality}</Text>
+              </View>
+            )}
+            {customer.ward_no && (
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
+                <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.textMuted }}>Ward No.</Text>
+                <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.text, fontWeight: theme.fontWeight.medium }}>{customer.ward_no}</Text>
+              </View>
+            )}
             {customer.address && (
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingHorizontal: 16, paddingVertical: 13, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
-                <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.textMuted }}>Address</Text>
+                <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.textMuted }}>Street</Text>
                 <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.text, fontWeight: theme.fontWeight.medium, flex: 1, textAlign: 'right', marginLeft: 16 }}>{customer.address}</Text>
               </View>
             )}
@@ -208,7 +322,7 @@ export default function CustomerDetailScreen() {
           </View>
         ) : (
           <FlatList
-            data={tickets?.results ?? []}
+            data={tickets ?? []}
             keyExtractor={(t) => String(t.id)}
             renderItem={({ item: ticket }) => {
               const isBreached = ticket.sla_deadline && new Date(ticket.sla_deadline) < new Date() && !['closed', 'resolved', 'cancelled'].includes(ticket.status)
