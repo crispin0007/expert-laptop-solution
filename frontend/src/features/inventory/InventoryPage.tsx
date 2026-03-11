@@ -2539,8 +2539,8 @@ function ReportsTab() {
                         <td className="px-5 py-3 font-mono text-xs text-gray-400">{r.sku}</td>
                         <td className="px-5 py-3 text-gray-500 text-xs">{r.category ?? '—'}</td>
                         <td className="px-5 py-3 text-center text-gray-600">{r.quantity_on_hand}</td>
-                        <td className="px-5 py-3 text-right text-gray-500">Rs. {r.cost_price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                        <td className="px-5 py-3 text-right font-semibold text-gray-800">Rs. {r.total_value.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-5 py-3 text-right text-gray-500">Rs. {Number(r.cost_price ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-5 py-3 text-right font-semibold text-gray-800">Rs. {Number(r.total_value ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2613,7 +2613,7 @@ function ReportsTab() {
                       <td className="px-5 py-3 font-medium text-gray-800">{r.name}</td>
                       <td className="px-5 py-3 font-mono text-xs text-gray-400">{r.sku}</td>
                       <td className="px-5 py-3 text-center text-gray-600">{r.quantity_on_hand}</td>
-                      <td className="px-5 py-3 text-right font-semibold text-gray-800">Rs. {r.stock_value.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                      <td className="px-5 py-3 text-right font-semibold text-gray-800">Rs. {Number(r.stock_value ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                       <td className="px-5 py-3 text-center text-gray-500 text-xs">{r.cumulative_pct}%</td>
                       <td className="px-5 py-3 text-center"><span className={`px-2 py-0.5 rounded-full text-xs font-bold ${ABC_STYLE[r.class]}`}>{r.class}</span></td>
                     </tr>

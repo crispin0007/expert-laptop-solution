@@ -176,8 +176,8 @@ function GeoOverviewSection() {
           <span className="font-semibold text-gray-800 text-sm">Geographic Penetration Overview</span>
           {geo && (
             <span className="text-xs text-gray-400">
-              &mdash; {located.toLocaleString()} of {geo.total.toLocaleString()} customers have address
-              {geo.unlocated > 0 && (
+              &mdash; {located.toLocaleString()} of {(geo.total ?? 0).toLocaleString()} customers have address
+              {(geo.unlocated ?? 0) > 0 && (
                 <span className="ml-2 text-amber-500 inline-flex items-center gap-0.5">
                   <AlertTriangle size={10} /> {geo.unlocated} without location
                 </span>
