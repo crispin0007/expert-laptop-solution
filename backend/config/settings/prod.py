@@ -32,11 +32,11 @@ ALLOWED_HOSTS = ['*']
 
 # Throttle rates are tighter in production (base.py sets up the class list)
 REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
-    'anon': '5/min',         # auth endpoints — stricter in prod
-    'user': '2000/day',
-    'login': '5/min',        # dedicated scope on LoginRateThrottle
-    'tenant': '1000/min',    # per-tenant aggregate — more conservative in prod
-    'anon_strict': '10/min', # registration endpoints
+    'anon': '5/min',          # auth endpoints — stricter in prod
+    'user': '300/min',        # per-user: generous for SPA with many parallel requests
+    'login': '5/min',         # dedicated scope on LoginRateThrottle
+    'tenant': '3000/min',     # per-tenant aggregate across all users
+    'anon_strict': '10/min',  # registration endpoints
 }
 
 # CORS — allow all tenant subdomains + root domain in production.

@@ -58,7 +58,7 @@ export default function NotificationBell() {
   const { data: countData } = useQuery<{ success: boolean; data: { count: number } }>({
     queryKey: ['notifications-count'],
     queryFn: () => apiClient.get(NOTIFICATIONS.UNREAD_COUNT).then(r => r.data),
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
     staleTime: 15_000,
     enabled: !isSuperAdmin,
   })
