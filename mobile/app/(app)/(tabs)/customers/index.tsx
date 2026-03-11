@@ -66,7 +66,7 @@ function CreateCustomerModal({ visible, onClose, onCreated }: { visible: boolean
             onPress={() => {
               if (!name.trim()) { Alert.alert('Validation', 'Name is required'); return }
               createCustomer.mutate(
-                { name: name.trim(), phone: phone.trim() || null, email: email.trim() || null, type, address: address.trim() || null, notes: notes.trim() || null },
+                { name: name.trim(), phone: phone.trim() || null, email: email.trim() || null, type, street: address.trim() || null, notes: notes.trim() || null },
                 {
                   onSuccess: () => { onCreated(); onClose(); setName(''); setPhone(''); setEmail(''); setAddress(''); setNotes('') },
                   onError: (e: any) => Alert.alert('Error', e?.response?.data?.message ?? 'Could not create customer'),

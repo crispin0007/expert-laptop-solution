@@ -26,12 +26,11 @@ interface Customer {
   id: number
   customer_number?: string
   name: string
-  company_name?: string
   type?: 'individual' | 'organization'
   email?: string | null
   phone?: string | null
-  address?: string | null
-  city?: string | null
+  /** street / tole — backend field name is `street` (not `address`) */
+  street?: string | null
   district?: string | null
   municipality?: string | null
   ward_no?: string | null
@@ -39,6 +38,7 @@ interface Customer {
   is_active: boolean
   created_at: string
   notes?: string | null
+  full_address?: string | null
 }
 
 interface Ticket {
@@ -49,6 +49,8 @@ interface Ticket {
   priority: string
   created_at: string
   sla_deadline?: string
+  assigned_to_name?: string | null
+  team_member_names?: string[]
 }
 
 type Tab = 'info' | 'tickets'
@@ -60,7 +62,7 @@ function EditCustomerModal({ visible, customer, onClose, onSaved }: { visible: b
   const [name, setName] = useState(customer.name)
   const [phone, setPhone] = useState(customer.phone ?? '')
   const [email, setEmail] = useState(customer.email ?? '')
-  const [address, setAddress] = useState(customer.address ?? '')
+  const [street, setStreet] = useState(customer.street ?? '')
   const [province, setProvince] = useState(customer.province ?? '')
   const [district, setDistrict] = useState(customer.district ?? '')
   const [municipality, setMunicipality] = useState(customer.municipality ?? '')
@@ -71,7 +73,7 @@ function EditCustomerModal({ visible, customer, onClose, onSaved }: { visible: b
     setName(customer.name)
     setPhone(customer.phone ?? '')
     setEmail(customer.email ?? '')
-    setAddress(customer.address ?? '')
+    setStreet(customer.street ?? '')
     setProvince(customer.province ?? '')
     setDistrict(customer.district ?? '')
     setMunicipality(customer.municipality ?? '')
@@ -139,8 +141,8 @@ function EditCustomerModal({ visible, customer, onClose, onSaved }: { visible: b
 
           {/* Street address */}
           <View>
-            <Text style={labelStyle}>Street Address</Text>
-            <TextInput value={address} onChangeText={setAddress} placeholder="Street / Tole" placeholderTextColor={theme.colors.textMuted} style={fieldStyle} />
+            <Text style={labelStyle}>Street / Tole</Text>
+            <TextInput value={street} onChangeText={setStreet} placeholder="Street / Tole / Landmark" placeholderTextColor={theme.colors.textMuted} style={fieldStyle} />
           </View>
 
           <View>
@@ -151,7 +153,7 @@ function EditCustomerModal({ visible, customer, onClose, onSaved }: { visible: b
             onPress={() => {
               if (!name.trim()) { Alert.alert('Validation', 'Name is required'); return }
               mutation.mutate(
-                { name: name.trim(), phone: phone.trim() || null, email: email.trim() || null, address: address.trim() || null, province: province || null, district: district.trim() || null, municipality: municipality.trim() || null, ward_no: wardNo.trim() || null, notes: notes.trim() || null },
+                { name: name.trim(), phone: phone.trim() || null, email: email.trim() || null, street: street.trim() || null, province: province || null, district: district.trim() || null, municipality: municipality.trim() || null, ward_no: wardNo.trim() || null, notes: notes.trim() || null },
                 { onSuccess: () => { onSaved(); onClose() }, onError: (e: any) => Alert.alert('Error', e?.response?.data?.message ?? 'Could not update customer') }
               )
             }}
@@ -180,18 +182,21 @@ export default function CustomerDetailScreen() {
   const { data: customerData, isLoading, refetch, isRefetching } = useCustomer(id!)
   const customer = customerData as unknown as Customer
 
+  // Use a distinct key ('customer-tickets') to avoid stale-cache collisions with the
+  // global tickets infinite-query which previously stored the raw envelope under QK.tickets(...).
   const { data: tickets, isLoading: ticketsLoading } = useQuery<Ticket[]>({
-    queryKey: QK.tickets({ customer: id }),
+    queryKey: ['customer-tickets', id],
     queryFn: () =>
-      apiClient.get(TICKETS.LIST, { params: { customer: id, page_size: 50 } }).then((r) => {
-        // Handle NexusPageNumberPagination envelope: { success, data: [...], meta: { pagination: {...} } }
-        if (Array.isArray(r.data?.data)) return r.data.data as Ticket[]
-        if (Array.isArray(r.data?.results)) return r.data.results as Ticket[]
-        if (Array.isArray(r.data)) return r.data as Ticket[]
-        return [] as Ticket[]
+      apiClient.get(TICKETS.LIST, { params: { customer: id, page_size: 100 } }).then((r) => {
+        // NexusPageNumberPagination envelope: { success, data: [...], meta: {...} }
+        const raw = r.data
+        if (Array.isArray(raw?.data)) return raw.data as Ticket[]
+        if (Array.isArray(raw?.results)) return raw.results as Ticket[]
+        if (Array.isArray(raw)) return raw as Ticket[]
+        return []
       }),
     enabled: !!validId && activeTab === 'tickets',
-    staleTime: 60_000,
+    staleTime: 30_000,
   })
 
   if (isLoading) {
@@ -204,15 +209,15 @@ export default function CustomerDetailScreen() {
 
   if (!customer) return null
 
-  const initials = (customer.name ?? customer.company_name ?? '?').split(' ').slice(0, 2).map((w) => w[0]?.toUpperCase()).join('')
+  const initials = (customer.name || '?').split(' ').slice(0, 2).map((w: string) => w[0]?.toUpperCase()).join('')
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
       {/* Header */}
       <View style={{ paddingTop: insets.top + 12, paddingHorizontal: 16, paddingBottom: 20, backgroundColor: theme.colors.surface, borderBottomWidth: 1, borderBottomColor: theme.colors.border }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Text style={{ color: theme.primary[600], fontSize: theme.fontSize.sm }}>←</Text>
+          <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} style={{ padding: 4 }}>
+            <Ionicons name="arrow-back" size={24} color={theme.colors.text} />
           </TouchableOpacity>
           <RoleGuard permission="customers.manage">
             <TouchableOpacity onPress={() => setShowEdit(true)} style={{ backgroundColor: `${theme.primary[500]}12`, borderRadius: 20, padding: 8, marginLeft: 'auto' as any }}>
@@ -228,9 +233,6 @@ export default function CustomerDetailScreen() {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: theme.fontSize.xl, fontWeight: theme.fontWeight.bold, color: theme.colors.text }}>{customer.name}</Text>
-            {customer.company_name && customer.company_name !== customer.name && (
-              <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.textMuted, marginTop: 2 }}>{customer.company_name}</Text>
-            )}
             <View style={{ marginTop: 6 }}>
               <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 99, backgroundColor: customer.is_active ? '#f0fdf4' : '#fef2f2', alignSelf: 'flex-start' }}>
                 <Text style={{ fontSize: theme.fontSize.xs, color: customer.is_active ? '#166534' : '#991b1b', fontWeight: theme.fontWeight.semibold }}>
@@ -293,10 +295,10 @@ export default function CustomerDetailScreen() {
                 <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.text, fontWeight: theme.fontWeight.medium }}>{customer.ward_no}</Text>
               </View>
             )}
-            {customer.address && (
+            {customer.street && (
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingHorizontal: 16, paddingVertical: 13, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
                 <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.textMuted }}>Street</Text>
-                <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.text, fontWeight: theme.fontWeight.medium, flex: 1, textAlign: 'right', marginLeft: 16 }}>{customer.address}</Text>
+                <Text style={{ fontSize: theme.fontSize.sm, color: theme.colors.text, fontWeight: theme.fontWeight.medium, flex: 1, textAlign: 'right', marginLeft: 16 }}>{customer.street}</Text>
               </View>
             )}
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, borderTopWidth: 1, borderTopColor: theme.colors.border }}>
@@ -337,9 +339,20 @@ export default function CustomerDetailScreen() {
                     <Text style={{ fontSize: theme.fontSize.xs, color: theme.colors.textMuted }}>{new Date(ticket.created_at).toLocaleDateString()}</Text>
                   </View>
                   <Text style={{ fontSize: theme.fontSize.sm, fontWeight: theme.fontWeight.medium, color: theme.colors.text, marginBottom: 8 }} numberOfLines={2}>{ticket.title}</Text>
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                     <StatusBadge status={ticket.status} />
                     <PriorityBadge priority={ticket.priority} />
+                    {/* Show all assigned staff — supports multi-staff (team_members) */}
+                    {(() => {
+                      const names = ticket.team_member_names?.length
+                        ? ticket.team_member_names
+                        : ticket.assigned_to_name ? [ticket.assigned_to_name] : []
+                      return names.map((n) => (
+                        <View key={n} style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 99, backgroundColor: `${theme.primary[500]}14` }}>
+                          <Text style={{ fontSize: theme.fontSize.xs, color: theme.primary[700] }}>{n}</Text>
+                        </View>
+                      ))
+                    })()}
                   </View>
                 </TouchableOpacity>
               )

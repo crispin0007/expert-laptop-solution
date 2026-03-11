@@ -12,12 +12,11 @@ export interface Customer {
   id: number
   customer_number: string
   name: string
-  company_name?: string | null
   type: 'individual' | 'organization'
   email: string | null
   phone: string | null
-  address: string | null
-  city: string | null
+  /** Street / Tole / Landmark — backend field name is `street` */
+  street: string | null
   district: string | null
   municipality: string | null
   ward_no: string | null
@@ -26,6 +25,7 @@ export interface Customer {
   open_tickets_count?: number
   notes: string | null
   created_at: string
+  full_address?: string | null
 }
 
 export interface Contact {

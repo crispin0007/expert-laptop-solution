@@ -692,6 +692,22 @@ export default function TicketDetailScreen() {
               <InfoRow label="Customer" value={ticket.customer_name} icon="person-outline" />
               <View style={{ height: 1, backgroundColor: theme.colors.border, marginLeft: 52 }} />
               <InfoRow label="Assigned to" value={ticket.assigned_to_name ?? 'Unassigned'} icon="person-circle-outline" />
+              {(ticket.team_member_names ?? []).length > 0 && (
+                <>
+                  <View style={{ height: 1, backgroundColor: theme.colors.border, marginLeft: 52 }} />
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10 }}>
+                    <View style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: theme.colors.background, alignItems: 'center', justifyContent: 'center' }}>
+                      <Ionicons name="people-outline" size={14} color={theme.colors.textMuted} />
+                    </View>
+                    <Text style={{ fontSize: 13, color: theme.colors.textMuted, fontWeight: '500', flex: 1 }}>Team</Text>
+                    <View style={{ flex: 1, alignItems: 'flex-end', gap: 3 }}>
+                      {(ticket.team_member_names ?? []).map((name: string, i: number) => (
+                        <Text key={i} style={{ fontSize: 13, color: theme.colors.text, fontWeight: '600' }}>{name}</Text>
+                      ))}
+                    </View>
+                  </View>
+                </>
+              )}
               <View style={{ height: 1, backgroundColor: theme.colors.border, marginLeft: 52 }} />
               <InfoRow label="Department" value={ticket.department_name ?? '—'} icon="business-outline" />
               <View style={{ height: 1, backgroundColor: theme.colors.border, marginLeft: 52 }} />
