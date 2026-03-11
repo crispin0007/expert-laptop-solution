@@ -36,22 +36,38 @@ export interface StaffFilters {
   is_active?: boolean
 }
 
-function extractCursor(nextUrl: string | null): string | undefined {
-  if (!nextUrl) return undefined
-  try { return new URL(nextUrl).searchParams.get('cursor') ?? undefined } catch { return undefined }
+interface StaffPage { results: StaffMember[]; next: string | null; previous: string | null }
+
+function unwrapStaffPage(r: any): StaffPage {
+  // Page-number envelope
+  if (r.data?.meta?.pagination !== undefined) {
+    const pag = r.data.meta.pagination
+    const results: StaffMember[] = Array.isArray(r.data.data) ? r.data.data : []
+    return { results, next: pag.next ?? null, previous: pag.previous ?? null }
+  }
+  // Plain array (current staff endpoint behaviour)
+  if (Array.isArray(r.data)) {
+    return { results: r.data as StaffMember[], next: null, previous: null }
+  }
+  const d = r.data.data ?? r.data
+  const results: StaffMember[] = Array.isArray(d) ? d : (d?.results ?? [])
+  return { results, next: d?.next ?? null, previous: d?.previous ?? null }
 }
 
 // ── List ──────────────────────────────────────────────────────────────────────
 
 export function useStaffList(filters: StaffFilters = {}) {
-  return useInfiniteQuery<{ results: StaffMember[]; next: string | null }>({
-    queryKey: QK.staff(filters),
+  return useInfiniteQuery<StaffPage>({
+    queryKey: ['staff', 'pg', filters],
     queryFn: ({ pageParam }) =>
       apiClient
-        .get(STAFF.LIST, { params: { ...filters, cursor: pageParam } })
-        .then((r) => r.data.data ?? r.data),
-    initialPageParam: undefined,
-    getNextPageParam: (lastPage) => extractCursor(lastPage?.next),
+        .get(STAFF.LIST, { params: { ...filters, page: pageParam ?? 1 } })
+        .then((r) => unwrapStaffPage(r)),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, _allPages, lastParam) => {
+      if (!lastPage?.next) return undefined
+      return (typeof lastParam === 'number' ? lastParam : 1) + 1
+    },
     staleTime: 60_000,
   })
 }

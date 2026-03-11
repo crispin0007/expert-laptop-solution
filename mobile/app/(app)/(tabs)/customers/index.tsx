@@ -132,7 +132,9 @@ export default function CustomersScreen() {
 
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading, refetch, isRefetching } = useCustomerList({ search })
 
-  const allCustomers = (data?.pages ?? []).flatMap((p: { results?: Customer[] }) => p?.results ?? []).filter(Boolean) as Customer[]
+  const allCustomers = (data?.pages ?? []).flatMap((p: any) =>
+    Array.isArray(p) ? p : (p?.results ?? [])
+  ).filter(Boolean) as Customer[]
 
   const renderItem = useCallback(({ item }: { item: Customer }) => (
     <CustomerCard customer={item} onPress={() => router.push(`/(app)/(tabs)/customers/${item.id}` as never)} />

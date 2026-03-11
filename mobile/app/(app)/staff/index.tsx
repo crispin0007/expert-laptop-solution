@@ -187,7 +187,9 @@ export default function StaffScreen() {
 
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading, refetch, isRefetching } = useStaffList({ search })
 
-  const allStaff = (data?.pages ?? []).flatMap((p) => p?.results ?? []).filter(Boolean) as StaffMember[]
+  const allStaff = (data?.pages ?? []).flatMap((p: any) =>
+    Array.isArray(p) ? p : (p?.results ?? [])
+  ).filter(Boolean) as StaffMember[]
 
   const deactivateMutation = useDeactivateStaff()
   const reactivateMutation = useReactivateStaff()
