@@ -285,7 +285,7 @@ export default function CustomerListPage() {
           ? r.data.data
           : (r.data.data?.results ?? r.data.results ?? [])
         const pag = r.data.meta?.pagination ?? {}
-        return { count: r.data.count ?? r.data.data?.count ?? arr.length, next: pag.next ?? null, previous: pag.previous ?? null, results: arr }
+        return { count: pag.total ?? arr.length, next: pag.next ?? null, previous: pag.previous ?? null, results: arr }
       }),
     placeholderData: prev => prev,
     staleTime: 30_000,

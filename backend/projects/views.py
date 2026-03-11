@@ -4,6 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from core.mixins import TenantMixin
 from core.views import NexusViewSet
+from core.pagination import NexusPageNumberPagination
 from core.response import ApiResponse
 from core.exceptions import ConflictError
 from core.exceptions import ValidationError as AppValidationError
@@ -27,6 +28,7 @@ class ProjectViewSet(NexusViewSet):
     required_module = 'projects'
     queryset = Project.objects.filter(is_deleted=False).select_related('customer', 'manager')
     serializer_class = ProjectSerializer
+    pagination_class = NexusPageNumberPagination
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):

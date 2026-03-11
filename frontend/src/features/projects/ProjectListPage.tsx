@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import apiClient from '../../api/client'
@@ -41,14 +41,26 @@ export default function ProjectListPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [form, setForm] = useState(BLANK_FORM)
   const { fyYear } = useFyStore()
+  const [page, setPage] = useState(1)
 
-  const { data: rawProjects = [], isLoading } = useQuery<Project[]>({
-    queryKey: ['projects', fyYear],
-    queryFn: () => apiClient.get(PROJECTS.LIST, { params: fyYear ? { fiscal_year: fyYear } : {} }).then(r => {
+  useEffect(() => { setPage(1) }, [fyYear, assignedToMe])
+
+  const { data: projectPage, isLoading } = useQuery<{ projects: Project[]; total: number }>({
+    queryKey: ['projects', fyYear, page],
+    queryFn: () => apiClient.get(PROJECTS.LIST, {
+      params: { ...(fyYear ? { fiscal_year: fyYear } : {}), page, page_size: 25 },
+    }).then(r => {
       const d = r.data.data ?? r.data
-      return Array.isArray(d) ? d : d.results ?? []
+      const arr: Project[] = Array.isArray(d) ? d : d.results ?? []
+      const pag = r.data.meta?.pagination ?? {}
+      return { projects: arr, total: pag.total ?? arr.length }
     }),
+    placeholderData: prev => prev,
   })
+
+  const rawProjects = projectPage?.projects ?? []
+  const totalCount = projectPage?.total ?? 0
+  const totalPages = Math.ceil(totalCount / 25)
 
   const projects = useMemo(() => {
     if (!assignedToMe || !currentUser) return rawProjects
@@ -57,7 +69,7 @@ export default function ProjectListPage() {
 
   const { data: customers = [] } = useQuery<Customer[]>({
     queryKey: ['customers-simple'],
-    queryFn: () => apiClient.get(CUSTOMERS.LIST).then(r => {
+    queryFn: () => apiClient.get(`${CUSTOMERS.LIST}?minimal=true`).then(r => {
       const d = r.data.data ?? r.data
       return Array.isArray(d) ? d : d.results ?? []
     }),
@@ -266,6 +278,37 @@ export default function ProjectListPage() {
               ))}
             </tbody>
           </table>
+          </div>
+        )}
+
+        {/* Pagination */}
+        {!isLoading && totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50">
+            <span className="text-xs text-gray-500">
+              Page {page} of {totalPages} &middot; {totalCount.toLocaleString()} projects
+            </span>
+            <div className="flex items-center gap-1">
+              <button onClick={() => setPage(1)} disabled={page === 1}
+                className="px-2 py-1 text-xs rounded border border-gray-300 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">&laquo;</button>
+              <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+                className="px-2.5 py-1 text-xs rounded border border-gray-300 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">&lsaquo; Prev</button>
+              {(() => {
+                const pages: number[] = []
+                for (let i = Math.max(1, page - 2); i <= Math.min(totalPages, page + 2); i++) pages.push(i)
+                return pages.map(n => (
+                  <button key={n} onClick={() => setPage(n)}
+                    className={`w-7 h-7 text-xs rounded border transition ${
+                      n === page ? 'bg-indigo-600 text-white border-indigo-600' : 'border-gray-300 hover:bg-white text-gray-600'
+                    }`}>
+                    {n}
+                  </button>
+                ))
+              })()}
+              <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+                className="px-2.5 py-1 text-xs rounded border border-gray-300 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">Next &rsaquo;</button>
+              <button onClick={() => setPage(totalPages)} disabled={page === totalPages}
+                className="px-2 py-1 text-xs rounded border border-gray-300 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed">&raquo;</button>
+            </div>
           </div>
         )}
       </div>

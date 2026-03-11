@@ -5,7 +5,7 @@ from django.db.models import Q, Count
 from core.mixins import TenantMixin
 from core.views import NexusViewSet
 from core.response import ApiResponse
-from core.pagination import NexusCursorPagination
+from core.pagination import NexusCursorPagination, NexusPageNumberPagination
 from core.permissions import make_role_permission, STAFF_ROLES, MANAGER_ROLES, ALL_ROLES
 from .models import Customer, CustomerContact
 from .serializers import CustomerSerializer, CustomerMinimalSerializer, CustomerContactSerializer
@@ -28,7 +28,7 @@ class CustomerViewSet(NexusViewSet):
     """
     required_module = 'customers'
     serializer_class = CustomerSerializer
-    pagination_class = NexusCursorPagination
+    pagination_class = NexusPageNumberPagination
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
