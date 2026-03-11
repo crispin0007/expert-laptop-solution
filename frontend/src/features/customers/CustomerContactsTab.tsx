@@ -31,7 +31,8 @@ export default function CustomerContactsTab({ customerId }: Props) {
     queryKey: ['customers', customerId, 'contacts'],
     queryFn: async () => {
       const res = await apiClient.get(`/customers/${customerId}/contacts/`)
-      return res.data.results ?? res.data
+      const raw = res.data?.data ?? res.data
+      return Array.isArray(raw) ? raw : (raw?.results ?? [])
     },
   })
 

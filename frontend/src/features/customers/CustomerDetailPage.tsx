@@ -9,7 +9,7 @@ import CustomerContactsTab from './CustomerContactsTab'
 import NepalAddressFields, { type NepalAddressValue } from './NepalAddressFields'
 import DateDisplay from '../../components/DateDisplay'
 
-const TABS = ['Info', 'Contacts'] as const
+const TABS = ['Info', 'Tickets', 'Contacts'] as const
 type Tab = (typeof TABS)[number]
 
 export default function CustomerDetailPage() {
@@ -25,9 +25,20 @@ export default function CustomerDetailPage() {
     queryKey: ['customers', customerId],
     queryFn: async () => {
       const res = await apiClient.get(`/customers/${customerId}/`)
-      return res.data
+      // Unwrap NexusPageNumberPagination / ApiResponse envelope
+      return (res.data?.data ?? res.data) as Customer
     },
     enabled: !!customerId,
+  })
+
+  const { data: customerTickets } = useQuery<any[]>({
+    queryKey: ['customers', customerId, 'tickets'],
+    queryFn: async () => {
+      const res = await apiClient.get('/tickets/', { params: { customer: customerId, page_size: 100 } })
+      const d = res.data?.data ?? res.data
+      return Array.isArray(d) ? d : (d?.results ?? [])
+    },
+    enabled: !!customerId && tab === 'Tickets',
   })
 
   const patchMutation = useMutation({
@@ -189,6 +200,64 @@ export default function CustomerDetailPage() {
             <span>Created <DateDisplay adDate={customer.created_at} compact /></span>
             {customer.created_by_name && <span>by {customer.created_by_name}</span>}
           </div>
+        </div>
+      )}
+
+      {tab === 'Tickets' && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          {(!customerTickets || customerTickets.length === 0) ? (
+            <div className="p-10 text-center text-gray-400 text-sm">No tickets for this customer yet.</div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                <tr>
+                  <th className="px-4 py-3 text-left">#</th>
+                  <th className="px-4 py-3 text-left">Title</th>
+                  <th className="px-4 py-3 text-left">Status</th>
+                  <th className="px-4 py-3 text-left">Priority</th>
+                  <th className="px-4 py-3 text-left">Assigned</th>
+                  <th className="px-4 py-3 text-left">Created</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {customerTickets.map((t: any) => {
+                  const allAssignees = [
+                    t.assigned_to_name,
+                    ...(t.team_member_names ?? []),
+                  ].filter(Boolean)
+                  return (
+                    <tr key={t.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/tickets/${t.id}`)}>
+                      <td className="px-4 py-3 font-mono text-xs text-gray-400">{t.ticket_number}</td>
+                      <td className="px-4 py-3 font-medium text-gray-900 max-w-xs truncate">{t.title}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                          t.status === 'open' ? 'bg-blue-100 text-blue-700'
+                          : t.status === 'in_progress' ? 'bg-yellow-100 text-yellow-700'
+                          : t.status === 'resolved' ? 'bg-green-100 text-green-700'
+                          : t.status === 'closed' ? 'bg-gray-100 text-gray-600'
+                          : 'bg-red-100 text-red-700'
+                        }`}>{t.status.replace('_', ' ')}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                          t.priority === 'critical' ? 'bg-red-100 text-red-700'
+                          : t.priority === 'high' ? 'bg-orange-100 text-orange-700'
+                          : t.priority === 'medium' ? 'bg-yellow-100 text-yellow-700'
+                          : 'bg-gray-100 text-gray-500'
+                        }`}>{t.priority}</span>
+                      </td>
+                      <td className="px-4 py-3 text-gray-600 text-xs">
+                        {allAssignees.length > 0 ? allAssignees.join(', ') : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-gray-400 text-xs">
+                        {new Date(t.created_at).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 
