@@ -133,7 +133,10 @@ class ProjectTask(TenantModel):
 
 
 class ProjectProduct(TenantModel):
-    """Products / parts linked to a project (planned usage)."""
+    """
+    Products / parts linked to a project (planned usage).
+    If product has warranty, serial_number can be assigned when used.
+    """
     project = models.ForeignKey(
         Project,
         on_delete=models.CASCADE,
@@ -146,6 +149,13 @@ class ProjectProduct(TenantModel):
     )
     quantity_planned = models.PositiveIntegerField(default=1)
     note = models.TextField(blank=True)
+    serial_number = models.ForeignKey(
+        'inventory.SerialNumber',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='project_usages',
+        help_text='Required if product has warranty',
+    )
 
     class Meta:
         unique_together = ('project', 'product')

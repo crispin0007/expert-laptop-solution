@@ -49,6 +49,7 @@ export interface InventoryProduct {
   name: string
   sku: string | null
   unit_price: string
+  has_warranty: boolean
 }
 
 export interface TicketAttachment {
@@ -95,6 +96,8 @@ export interface TicketProduct {
   unit_price: string
   discount: string
   line_total: string
+  serial_number: number | null
+  serial_number_display: string | null
 }
 
 export interface PaginatedResponse<T> {
@@ -349,12 +352,26 @@ export function useInventoryProductSearch(search: string) {
   })
 }
 
+// ── Available serial numbers for a product ───────────────────────────────────
+
+export function useAvailableSerialNumbers(productId: number | null) {
+  return useQuery<Array<{ id: number; serial_number: string; warranty_expires: string | null }}>({
+    queryKey: ['serial-numbers-available', productId],
+    queryFn: () =>
+      apiClient
+        .get(INVENTORY.SERIAL_NUMBERS, { params: { product: productId, status: 'available' } })
+        .then((r) => r.data.results ?? r.data.data ?? r.data),
+    enabled: productId != null,
+    staleTime: 30_000,
+  })
+}
+
 // ── Ticket products (add / delete) ────────────────────────────────────────────
 
 export function useAddTicketProduct(ticketId: number) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (payload: { product: number; quantity: number; unit_price?: string }) =>
+    mutationFn: (payload: { product: number; quantity: number; unit_price?: string; serial_number?: number | null }) =>
       apiClient.post(TICKETS.PRODUCTS(ticketId), payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QK.ticket(ticketId) })

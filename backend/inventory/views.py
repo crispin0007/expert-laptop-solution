@@ -19,14 +19,14 @@ from core.response import ApiResponse
 from core.exceptions import ConflictError, AppException, ValidationError as AppValidationError
 from core.permissions import make_role_permission, ADMIN_ROLES, ALL_ROLES
 from .models import (
-    Category, Product, ProductImage, StockLevel,
+    Category, Product, ProductImage, SerialNumber, StockLevel,
     StockMovement, Supplier, PurchaseOrder, PurchaseOrderItem,
     UnitOfMeasure, ProductVariant, ReturnOrder, ReturnOrderItem,
     SupplierProduct, StockCount, StockCountItem,
 )
 from .serializers import (
     CategorySerializer, CategoryTreeSerializer,
-    ProductSerializer, ProductImageSerializer,
+    ProductSerializer, ProductImageSerializer, SerialNumberSerializer,
     StockLevelSerializer, StockMovementSerializer,
     SupplierSerializer,
     PurchaseOrderSerializer, PurchaseOrderWriteSerializer, ReceiveItemsSerializer,
@@ -87,6 +87,51 @@ class ProductImageViewSet(NexusViewSet):
         image.is_primary = True
         image.save(update_fields=['is_primary'])
         return ApiResponse.success(data=ProductImageSerializer(image).data)
+
+
+class SerialNumberViewSet(NexusViewSet):
+    """Serial number tracking for warranty products."""
+    required_module = 'inventory'
+    serializer_class = SerialNumberSerializer
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['product', 'status']
+    search_fields = ['serial_number']
+    ordering = ['-created_at']
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='inventory.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='inventory.manage')()]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        return SerialNumber.objects.filter(tenant=self.tenant).select_related('product')
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.tenant)
+
+    @action(detail=True, methods=['post'], url_path='mark-used')
+    def mark_used(self, request, pk=None):
+        """Mark a serial number as used (admin only)."""
+        serial = self.get_object()
+        if serial.status != SerialNumber.STATUS_AVAILABLE:
+            raise ConflictError('Serial number is not available')
+        
+        serial.status = SerialNumber.STATUS_USED
+        serial.used_at = timezone.now()
+        serial.reference_type = request.data.get('reference_type', '')
+        serial.reference_id = request.data.get('reference_id')
+        serial.save(update_fields=['status', 'used_at', 'reference_type', 'reference_id'])
+        return ApiResponse.success(data=SerialNumberSerializer(serial).data)
+
+    @action(detail=True, methods=['post'], url_path='mark-returned')
+    def mark_returned(self, request, pk=None):
+        """Mark a serial number as returned (admin only)."""
+        serial = self.get_object()
+        serial.status = SerialNumber.STATUS_RETURNED
+        serial.notes = request.data.get('notes', serial.notes)
+        serial.save(update_fields=['status', 'notes'])
+        return ApiResponse.success(data=SerialNumberSerializer(serial).data)
 
 
 class ProductViewSet(NexusViewSet):

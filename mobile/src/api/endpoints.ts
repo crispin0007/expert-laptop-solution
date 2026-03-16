@@ -101,6 +101,8 @@ export const INVENTORY = {
   PRODUCTS: '/inventory/products/',
   PRODUCT: (id: number) => `/inventory/products/${id}/`,
   STOCK_LEVELS: '/inventory/stock-levels/',
+  SERIAL_NUMBERS: '/inventory/serial-numbers/',
+  SERIAL_NUMBER_DETAIL: (id: number | string) => `/inventory/serial-numbers/${id}/`,
 } as const
 
 export const ACCOUNTING = {
@@ -221,6 +223,10 @@ export const INVENTORY_FULL = {
   MOVEMENTS: '/inventory/movements/',
   SUPPLIERS: '/inventory/suppliers/',
   PURCHASE_ORDERS: '/inventory/purchase-orders/',
+  SERIAL_NUMBERS: '/inventory/serial-numbers/',
+  SERIAL_NUMBER_DETAIL: (id: number | string) => `/inventory/serial-numbers/${id}/`,
+  SERIAL_NUMBER_MARK_USED: (id: number | string) => `/inventory/serial-numbers/${id}/mark-used/`,
+  SERIAL_NUMBER_MARK_RETURNED: (id: number | string) => `/inventory/serial-numbers/${id}/mark-returned/`,
 } as const
 
 // ── CMS / Website Builder ──────────────────────────────────────────────────

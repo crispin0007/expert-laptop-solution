@@ -100,6 +100,8 @@ interface TicketProduct {
   unit_price: string
   discount: string
   line_total: string
+  serial_number: number | null
+  serial_number_display: string | null
 }
 
 interface Product {
@@ -109,6 +111,13 @@ interface Product {
   unit_price: string
   is_service: boolean
   is_active: boolean
+  has_warranty: boolean
+}
+
+interface AvailableSerial {
+  id: number
+  serial_number: string
+  warranty_expires: string | null
 }
 
 interface TicketInvoiceLineItem {
@@ -390,6 +399,7 @@ function TicketProductsPanel({
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [showDropdown, setShowDropdown] = useState(false)
   const [qty, setQty] = useState(1)
+  const [selectedSerial, setSelectedSerial] = useState<number | ''>('')
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   // Lock panel once an invoice has been generated (shares cache with TicketInvoicePanel)
@@ -427,6 +437,17 @@ function TicketProductsPanel({
       ),
   })
 
+  // Fetch available serial numbers when a warranty product is selected
+  const { data: availableSerials = [] } = useQuery<AvailableSerial[]>({
+    queryKey: ['serial-numbers-available', selectedProduct?.id],
+    queryFn: () =>
+      apiClient
+        .get(INVENTORY.SERIAL_NUMBERS, { params: { product: selectedProduct!.id, status: 'available' } })
+        .then(r => Array.isArray(r.data) ? r.data : (r.data.data ?? r.data.results ?? [])),
+    enabled: !!(selectedProduct?.has_warranty),
+    staleTime: 30_000,
+  })
+
   // Only search when we have at least 1 char
   const { data: searchResults = [], isFetching: searching } = useQuery<Product[]>({
     queryKey: ['product-search', debouncedSearch],
@@ -442,12 +463,14 @@ function TicketProductsPanel({
       apiClient.post(TICKETS.TICKET_PRODUCTS(ticketId), {
         product: selectedProduct!.id,
         quantity: qty,
+        ...(selectedSerial !== '' ? { serial_number: selectedSerial } : {}),
       }),
     onSuccess: () => {
       toast.success('Product added')
       setSelectedProduct(null)
       setProductSearch('')
       setQty(1)
+      setSelectedSerial('')
       setShowDropdown(false)
       qc.invalidateQueries({ queryKey: ['ticket-products', ticketId] })
       qc.invalidateQueries({ queryKey: ['ticket-timeline', String(ticketId)] })
@@ -492,6 +515,9 @@ function TicketProductsPanel({
               <div className="flex-1">
                 <span className="font-medium text-gray-800">{p.product_name}</span>
                 <span className="text-gray-400 ml-2">×{p.quantity}</span>
+                {p.serial_number_display && (
+                  <span className="ml-2 text-xs font-mono text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">S/N: {p.serial_number_display}</span>
+                )}
               </div>
               <div className="text-gray-600 font-medium mr-3">
                 Rs. {parseFloat(p.line_total).toFixed(2)}
@@ -551,7 +577,7 @@ function TicketProductsPanel({
                         <button
                           key={p.id}
                           type="button"
-                          onClick={() => { setSelectedProduct(p); setShowDropdown(false) }}
+                          onClick={() => { setSelectedProduct(p); setShowDropdown(false); setSelectedSerial('') }}
                           className="w-full text-left px-3 py-2 text-sm hover:bg-amber-50 flex justify-between items-center"
                         >
                           <span className="font-medium text-gray-800">{p.name}</span>
@@ -566,6 +592,21 @@ function TicketProductsPanel({
               </>
             )}
           </div>
+          {selectedProduct?.has_warranty && (
+            <div className="w-48">
+              <label className="block text-xs text-gray-500 mb-1">Serial / S/N <span className="text-red-500">*</span></label>
+              <select
+                value={selectedSerial}
+                onChange={e => setSelectedSerial(e.target.value === '' ? '' : Number(e.target.value))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+              >
+                <option value="">Select serial…</option>
+                {availableSerials.map(s => (
+                  <option key={s.id} value={s.id}>{s.serial_number}{s.warranty_expires ? ` (exp ${new Date(s.warranty_expires).toLocaleDateString()})` : ''}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="w-20">
             <label className="block text-xs text-gray-500 mb-1">Qty</label>
             <input
@@ -578,7 +619,7 @@ function TicketProductsPanel({
           </div>
           <button
             onClick={() => addMutation.mutate()}
-            disabled={!selectedProduct || addMutation.isPending}
+            disabled={!selectedProduct || addMutation.isPending || (selectedProduct.has_warranty && selectedSerial === '')}
             className="flex items-center gap-1 px-3 py-1.5 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50 transition"
           >
             {addMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}

@@ -308,6 +308,11 @@ export const INVENTORY = {
   STOCK_COUNT_ITEM: (id: number) => `/inventory/stock-counts/${id}/count-item/`,
   STOCK_COUNT_COMPLETE: (id: number) => `/inventory/stock-counts/${id}/complete/`,
   STOCK_COUNT_CANCEL: (id: number) => `/inventory/stock-counts/${id}/cancel/`,
+  // Serial Numbers / Warranty
+  SERIAL_NUMBERS: '/inventory/serial-numbers/',
+  SERIAL_NUMBER_DETAIL: (id: number) => `/inventory/serial-numbers/${id}/`,
+  SERIAL_NUMBER_MARK_USED: (id: number) => `/inventory/serial-numbers/${id}/mark-used/`,
+  SERIAL_NUMBER_MARK_RETURNED: (id: number) => `/inventory/serial-numbers/${id}/mark-returned/`,
 } as const
 
 export const CMS = {

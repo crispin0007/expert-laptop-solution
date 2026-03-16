@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import (
-    Category, Product, ProductImage, StockLevel, StockMovement,
+    Category, Product, ProductImage, SerialNumber, StockLevel, StockMovement,
     Supplier, PurchaseOrder, PurchaseOrderItem,
     UnitOfMeasure, ProductVariant, VariantStockLevel,
     ReturnOrder, ReturnOrderItem,
@@ -61,6 +61,20 @@ class ProductImageSerializer(serializers.ModelSerializer):
         return obj.get_url()
 
 
+class SerialNumberSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    product_sku = serializers.CharField(source='product.sku', read_only=True)
+
+    class Meta:
+        model = SerialNumber
+        fields = (
+            'id', 'product', 'product_name', 'product_sku', 'serial_number',
+            'status', 'reference_type', 'reference_id', 'notes',
+            'used_at', 'warranty_expires', 'created_at', 'updated_at',
+        )
+        read_only_fields = ('created_at', 'updated_at', 'product_name', 'product_sku')
+
+
 class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True, default=None)
     category_parent_name = serializers.CharField(source='category.parent.name', read_only=True, default=None)
@@ -79,7 +93,8 @@ class ProductSerializer(serializers.ModelSerializer):
             'unit_price', 'cost_price', 'weight',
             'uom', 'uom_name', 'uom_abbreviation',
             'reorder_level', 'track_stock',
-            'has_variants', 'variant_count',
+            'has_variants', 'variant_count', 'has_warranty',
+            'warranty_months', 'warranty_description',
             'is_service', 'is_published', 'is_active',
             'images', 'primary_image_url', 'stock_on_hand',
             'created_at', 'updated_at',

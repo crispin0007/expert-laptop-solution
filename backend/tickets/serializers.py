@@ -332,16 +332,19 @@ class TicketTransferSerializer(serializers.ModelSerializer):
 # ── Product ───────────────────────────────────────────────────────────────────
 
 class TicketProductSerializer(serializers.ModelSerializer):
-    product_name = serializers.CharField(source='product.name', read_only=True, default='')
-    line_total   = serializers.SerializerMethodField()
+    product_name         = serializers.CharField(source='product.name',                  read_only=True, default='')
+    serial_number_display = serializers.CharField(source='serial_number.serial_number', read_only=True, default=None, allow_null=True)
+    line_total           = serializers.SerializerMethodField()
 
     class Meta:
         model = TicketProduct
         fields = (
             'id', 'ticket', 'product', 'product_name',
-            'quantity', 'unit_price', 'discount', 'line_total', 'created_at',
+            'quantity', 'unit_price', 'discount', 'line_total',
+            'serial_number', 'serial_number_display',
+            'created_at',
         )
-        read_only_fields = ('ticket', 'created_at')
+        read_only_fields = ('ticket', 'created_at', 'serial_number_display')
         extra_kwargs = {
             'unit_price': {'required': False},
             'discount': {'required': False},

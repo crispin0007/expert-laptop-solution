@@ -83,6 +83,15 @@ class Product(TenantModel):
     )
     track_stock = models.BooleanField(default=True, help_text='Disable for unlimited-stock items')
     has_variants = models.BooleanField(default=False, help_text='Product has size/color/spec variants')
+    has_warranty = models.BooleanField(default=False, help_text='Requires serial number tracking when used/sold')
+    warranty_months = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text='Default warranty duration in months (e.g. 12 = 1 year)',
+    )
+    warranty_description = models.TextField(
+        blank=True,
+        help_text='Warranty terms, conditions, or coverage details',
+    )
     is_service = models.BooleanField(default=False)  # services have no stock
     is_published = models.BooleanField(default=False, help_text='Show on website CMS (Phase 3)')
     is_active = models.BooleanField(default=True)
@@ -127,6 +136,54 @@ class ProductImage(TenantModel):
         if self.image:
             return self.image.url
         return self.image_url or ''
+
+
+class SerialNumber(TenantModel):
+    """
+    Serial number tracking for warranty products.
+    Created when a product with has_warranty=True is used/sold in tickets/projects.
+    Status: available → used | damaged | returned
+    """
+
+    STATUS_AVAILABLE = 'available'
+    STATUS_USED      = 'used'
+    STATUS_DAMAGED   = 'damaged'
+    STATUS_RETURNED  = 'returned'
+
+    STATUS_CHOICES = [
+        (STATUS_AVAILABLE, 'Available'),
+        (STATUS_USED,      'Used / Sold'),
+        (STATUS_DAMAGED,   'Damaged'),
+        (STATUS_RETURNED,  'Returned'),
+    ]
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name='serial_numbers',
+        limit_choices_to={'has_warranty': True},
+    )
+    serial_number = models.CharField(max_length=255, help_text='Unique serial/IMEI number')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_AVAILABLE)
+    # Reference to where this serial was used
+    reference_type = models.CharField(max_length=64, blank=True,  # e.g. 'ticket', 'project', 'invoice'
+                                        help_text='Model name where used')
+    reference_id = models.PositiveIntegerField(null=True, blank=True,
+                                                 help_text='ID of ticket/project/invoice')
+    notes = models.TextField(blank=True)
+    used_at = models.DateTimeField(null=True, blank=True, help_text='When marked as used')
+    warranty_expires = models.DateField(null=True, blank=True, help_text='Warranty expiry date')
+
+    class Meta:
+        ordering = ['-created_at']
+        unique_together = ('tenant', 'product', 'serial_number')
+        indexes = [
+            models.Index(fields=['tenant', 'product', 'status']),
+            models.Index(fields=['serial_number']),
+        ]
+
+    def __str__(self):
+        return f"{self.product.name} — {self.serial_number} ({self.status})"
 
 
 class StockMovement(TenantModel):

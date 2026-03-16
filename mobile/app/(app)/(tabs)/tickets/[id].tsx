@@ -22,6 +22,7 @@ import {
   useCloseTicket, useAddTicketProduct, useDeleteTicketProduct,
   useTicketAttachments, useAddTicketAttachment, useDeleteTicketAttachment,
   useVehicleList, useUpdateTicketVehicles, useInventoryProductSearch,
+  useAvailableSerialNumbers,
   STATUS_TRANSITIONS,
   type TicketComment, type TicketProduct, type TicketAttachment, type Vehicle,
 } from '@/features/tickets/useTickets'
@@ -237,19 +238,26 @@ function AddProductModal({ ticketId, visible, onClose }: { ticketId: number; vis
   const insets = useSafeAreaInsets()
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [selectedProduct, setSelectedProduct] = useState<{ id: number; has_warranty: boolean } | null>(null)
+  const [selectedSerial, setSelectedSerial] = useState<number | null>(null)
   const [qty, setQty] = useState(1)
   const { data: products } = useInventoryProductSearch(search)
+  const { data: availableSerials = [] } = useAvailableSerialNumbers(selectedProduct?.has_warranty ? selectedProduct.id : null)
   const addMutation = useAddTicketProduct(ticketId)
 
   function handleConfirm() {
     if (!selectedId) return
-    addMutation.mutate({ product: selectedId, quantity: qty }, {
-      onSuccess: () => {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-        onClose(); setSelectedId(null); setSearch(''); setQty(1)
+    if (selectedProduct?.has_warranty && !selectedSerial) return
+    addMutation.mutate(
+      { product: selectedId, quantity: qty, serial_number: selectedSerial ?? null },
+      {
+        onSuccess: () => {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+          onClose(); setSelectedId(null); setSelectedProduct(null); setSelectedSerial(null); setSearch(''); setQty(1)
+        },
+        onError: () => Alert.alert('Error', 'Failed to add product.'),
       },
-      onError: () => Alert.alert('Error', 'Failed to add product.'),
-    })
+    )
   }
 
   return (
@@ -259,7 +267,7 @@ function AddProductModal({ ticketId, visible, onClose }: { ticketId: number; vis
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <TouchableOpacity onPress={onClose}><Text style={{ color: theme.colors.textMuted, fontSize: 14 }}>Cancel</Text></TouchableOpacity>
             <Text style={{ fontSize: 16, fontWeight: '700', color: theme.colors.text }}>Add Product</Text>
-            <Button label="Add" size="sm" onPress={handleConfirm} disabled={!selectedId} loading={addMutation.isPending} />
+            <Button label="Add" size="sm" onPress={handleConfirm} disabled={!selectedId || (selectedProduct?.has_warranty === true && !selectedSerial)} loading={addMutation.isPending} />
           </View>
           <Input value={search} onChangeText={setSearch} placeholder="Search products…" />
         </View>
@@ -269,10 +277,18 @@ function AddProductModal({ ticketId, visible, onClose }: { ticketId: number; vis
           renderItem={({ item: p }) => {
             const selected = selectedId === p.id
             return (
-              <TouchableOpacity onPress={() => { setSelectedId(selected ? null : p.id); setQty(1) }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: theme.colors.border, backgroundColor: selected ? theme.primary[50] : undefined }}>
+              <TouchableOpacity onPress={() => { setSelectedId(selected ? null : p.id); setSelectedProduct(selected ? null : { id: p.id, has_warranty: p.has_warranty }); setSelectedSerial(null); setQty(1) }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: theme.colors.border, backgroundColor: selected ? theme.primary[50] : undefined }}>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 14, fontWeight: '600', color: theme.colors.text }}>{p.name}</Text>
-                  {p.sku ? <Text style={{ fontSize: 12, color: theme.colors.textMuted }}>SKU: {p.sku}</Text> : null}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    {p.sku ? <Text style={{ fontSize: 12, color: theme.colors.textMuted }}>SKU: {p.sku}</Text> : null}
+                    {p.has_warranty && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                        <Ionicons name="shield-checkmark-outline" size={11} color="#16a34a" />
+                        <Text style={{ fontSize: 11, color: '#16a34a', fontWeight: '600' }}>Warranty</Text>
+                      </View>
+                    )}
+                  </View>
                 </View>
                 <Text style={{ fontSize: 13, fontWeight: '700', color: theme.primary[600], marginRight: 10 }}>Rs {parseFloat(p.unit_price).toLocaleString()}</Text>
                 {selected && <Ionicons name="checkmark-circle" size={22} color={theme.primary[500]} />}
@@ -280,7 +296,45 @@ function AddProductModal({ ticketId, visible, onClose }: { ticketId: number; vis
             )
           }}
           ListFooterComponent={selectedId ? (
-            <View style={{ padding: 16, gap: 10 }}>
+            <View style={{ padding: 16, gap: 14 }}>
+              {/* Serial number picker — only for warranty products */}
+              {selectedProduct?.has_warranty && (
+                <View style={{ gap: 8 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.text }}>Serial Number *</Text>
+                  {availableSerials.length === 0 ? (
+                    <View style={{ padding: 12, borderRadius: 10, backgroundColor: '#fef9c3', borderWidth: 1, borderColor: '#fde68a' }}>
+                      <Text style={{ fontSize: 12, color: '#713f12' }}>No available serial numbers for this product.</Text>
+                    </View>
+                  ) : (
+                    availableSerials.map((s) => (
+                      <TouchableOpacity
+                        key={s.id}
+                        onPress={() => setSelectedSerial(selectedSerial === s.id ? null : s.id)}
+                        style={{
+                          flexDirection: 'row', alignItems: 'center', padding: 12,
+                          borderRadius: 10, borderWidth: 1.5,
+                          borderColor: selectedSerial === s.id ? theme.primary[500] : theme.colors.border,
+                          backgroundColor: selectedSerial === s.id ? theme.primary[50] : theme.colors.surface,
+                        }}
+                      >
+                        <Ionicons
+                          name={selectedSerial === s.id ? 'radio-button-on' : 'radio-button-off'}
+                          size={18}
+                          color={selectedSerial === s.id ? theme.primary[600] : theme.colors.textMuted}
+                          style={{ marginRight: 10 }}
+                        />
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.text }}>{s.serial_number}</Text>
+                          {s.warranty_expires ? (
+                            <Text style={{ fontSize: 11, color: theme.colors.textMuted }}>Expires {new Date(s.warranty_expires).toLocaleDateString()}</Text>
+                          ) : null}
+                        </View>
+                        {selectedSerial === s.id && <Ionicons name="checkmark-circle" size={20} color={theme.primary[500]} />}
+                      </TouchableOpacity>
+                    ))
+                  )}
+                </View>
+              )}
               <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.text }}>Quantity</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
                 <TouchableOpacity onPress={() => setQty(Math.max(1, qty - 1))} style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center' }}>
@@ -976,6 +1030,12 @@ export default function TicketDetailScreen() {
                       <View><Text style={{ fontSize: 11, color: theme.colors.textMuted, marginBottom: 2 }}>UNIT PRICE</Text><Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.text }}>Rs {parseFloat(p.unit_price).toLocaleString()}</Text></View>
                       {parseFloat(p.discount) > 0 ? <View><Text style={{ fontSize: 11, color: theme.colors.textMuted, marginBottom: 2 }}>DISCOUNT</Text><Text style={{ fontSize: 13, fontWeight: '600', color: '#16a34a' }}>-{parseFloat(p.discount)}%</Text></View> : null}
                     </View>
+                    {p.serial_number_display ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                        <Ionicons name="shield-checkmark-outline" size={11} color="#16a34a" />
+                        <Text style={{ fontSize: 11, color: '#16a34a', fontWeight: '600' }}>S/N: {p.serial_number_display}</Text>
+                      </View>
+                    ) : null}
                   </View>
                 ))}
                 <View style={{ backgroundColor: theme.primary[50], borderRadius: 12, padding: 14, borderWidth: 1, borderColor: theme.primary[100] }}>

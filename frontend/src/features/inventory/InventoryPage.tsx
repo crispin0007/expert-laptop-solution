@@ -12,7 +12,7 @@ import {
   ArrowUpCircle, RefreshCw, AlertTriangle, Layers, Clock, Trash2,
   TrendingDown, Truck, ShoppingCart, Send, Ban, Download,
   Building2, ReceiptText, Scale, RotateCcw, FileBarChart2, Upload,
-  FileDown, TrendingUp, Archive, ClipboardList,
+  FileDown, TrendingUp, Archive, ClipboardList, ShieldCheck, ShieldOff, ShieldAlert,
 } from 'lucide-react'
 import { usePermissions } from '../../hooks/usePermissions'
 import DateDisplay from '../../components/DateDisplay'
@@ -46,6 +46,25 @@ interface Product {
   reorder_level?: number
   is_published?: boolean
   stock_on_hand?: number
+  has_warranty?: boolean
+  warranty_months?: number | null
+  warranty_description?: string
+}
+
+interface SerialNumber {
+  id: number
+  product: number
+  product_name: string
+  product_sku: string
+  serial_number: string
+  status: 'available' | 'used' | 'damaged' | 'returned'
+  reference_type: string
+  reference_id: number | null
+  notes: string
+  used_at: string | null
+  warranty_expires: string | null
+  created_at: string
+  updated_at: string
 }
 
 interface StockLevel {
@@ -209,13 +228,17 @@ interface ProductFormData {
   is_service: boolean
   is_active: boolean
   track_stock: boolean
+  has_warranty: boolean
+  warranty_months: number | ''
+  warranty_description: string
   reorder_level: number | ''
   is_published: boolean
 }
 
 const DEFAULT_FORM: ProductFormData = {
   name: '', sku: '', barcode: '', brand: '', description: '', unit_price: '', cost_price: '',
-  weight: '', category: '', is_service: false, is_active: true, track_stock: true, reorder_level: '', is_published: false,
+  weight: '', category: '', is_service: false, is_active: true, track_stock: true, has_warranty: false,
+  warranty_months: '', warranty_description: '', reorder_level: '', is_published: false,
 }
 
 const DEFAULT_CATEGORY_FORM: CategoryFormData = { name: '', slug: '', description: '', parent: '' }
@@ -401,11 +424,46 @@ function ProductModal({
           category: initial.category ?? '',
           is_service: initial.is_service, is_active: initial.is_active,
           track_stock: initial.track_stock !== false,
+          has_warranty: (initial as any).has_warranty ?? false,
+          warranty_months: (initial as any).warranty_months ?? '',
+          warranty_description: (initial as any).warranty_description ?? '',
           reorder_level: initial.reorder_level ?? '', is_published: initial.is_published ?? false,
         }
       : DEFAULT_FORM
   )
   const [openingStock, setOpeningStock] = useState<number | ''>('')
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [newSerial, setNewSerial] = useState('')
+  const [newSerialExpiry, setNewSerialExpiry] = useState('')
+  const qcModal = useQueryClient()
+
+  // Fetch existing serial numbers when editing a warranty product
+  const { data: modalSerials = [], isLoading: serialsLoading } = useQuery<SerialNumber[]>({
+    queryKey: ['modal-serials', initial?.id],
+    queryFn: () =>
+      apiClient
+        .get(INVENTORY.SERIAL_NUMBERS, { params: { product: initial!.id } })
+        .then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
+    enabled: !!(initial?.id && (initial as any).has_warranty),
+    staleTime: 30_000,
+  })
+
+  const addSerialMutation = useMutation({
+    mutationFn: () =>
+      apiClient.post(INVENTORY.SERIAL_NUMBERS, {
+        product: initial!.id,
+        serial_number: newSerial.trim(),
+        warranty_expires: newSerialExpiry || null,
+      }),
+    onSuccess: () => {
+      toast.success('Serial number added')
+      setNewSerial('')
+      setNewSerialExpiry('')
+      qcModal.invalidateQueries({ queryKey: ['modal-serials', initial?.id] })
+      qcModal.invalidateQueries({ queryKey: ['serial-numbers'] })
+    },
+    onError: () => toast.error('Failed to add serial number'),
+  })
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -414,23 +472,36 @@ function ProductModal({
         category:      form.category      === '' ? null : form.category,
         reorder_level: form.reorder_level === '' ? 0    : form.reorder_level,
         cost_price:    form.cost_price    === '' ? '0'  : form.cost_price,
-        weight:        form.weight        === '' ? null : form.weight,
+        weight:               form.weight               === '' ? null : form.weight,
+        warranty_months:      form.warranty_months       === '' ? null : form.warranty_months,
+        warranty_description: form.has_warranty ? form.warranty_description : '',
       }
+      let productId = initial?.id
       if (initial) {
-        return apiClient.patch(INVENTORY.PRODUCT_DETAIL(initial.id), payload)
+        await apiClient.patch(INVENTORY.PRODUCT_DETAIL(initial.id), payload)
+      } else {
+        const res = await apiClient.post(INVENTORY.PRODUCTS, payload)
+        productId = res.data?.id
+        if (productId && !form.is_service && form.track_stock && openingStock && Number(openingStock) > 0) {
+          await apiClient.post(INVENTORY.MOVEMENTS, {
+            product: productId,
+            movement_type: 'in',
+            quantity: Number(openingStock),
+            notes: 'Opening stock',
+          })
+        }
       }
-      // Create product, then create opening stock movement if specified
-      const res = await apiClient.post(INVENTORY.PRODUCTS, payload)
-      const newId = res.data?.id
-      if (newId && !form.is_service && form.track_stock && openingStock && Number(openingStock) > 0) {
-        await apiClient.post(INVENTORY.MOVEMENTS, {
-          product: newId,
-          movement_type: 'in',
-          quantity: Number(openingStock),
-          notes: 'Opening stock',
+      // Upload image if provided
+      if (imageFile && productId) {
+        const formData = new FormData()
+        formData.append('product', String(productId))
+        formData.append('image', imageFile)
+        formData.append('is_primary', 'true')
+        await apiClient.post('/api/v1/inventory/product-images/', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
         })
       }
-      return res
+      return { success: true }
     },
     onSuccess: () => { toast.success(initial ? 'Product updated' : 'Product created'); onSaved() },
     onError: () => toast.error('Failed to save product'),
@@ -539,16 +610,143 @@ function ProductModal({
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500" />
         </div>
 
+        {/* Row 7: Image Upload */}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Product Image</label>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={e => setImageFile(e.target.files?.[0] || null)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm file:mr-3 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
+          />
+          {imageFile && (
+            <p className="mt-1 text-xs text-gray-500">Selected: {imageFile.name}</p>
+          )}
+        </div>
+
         <div className="flex flex-wrap gap-4">
           <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
             <input type="checkbox" checked={form.is_service} onChange={e => set('is_service', e.target.checked)} className="rounded text-indigo-600" />
             Service (no stock tracking)
           </label>
           {!form.is_service && (
-            <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-              <input type="checkbox" checked={form.track_stock} onChange={e => set('track_stock', e.target.checked)} className="rounded text-indigo-600" />
-              Track stock
-            </label>
+            <>
+              <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                <input type="checkbox" checked={form.track_stock} onChange={e => set('track_stock', e.target.checked)} className="rounded text-indigo-600" />
+                Track stock
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                <input type="checkbox" checked={form.has_warranty} onChange={e => set('has_warranty', e.target.checked)} className="rounded text-indigo-600" />
+                Has Warranty (requires serial number)
+              </label>
+            </>
+          )}
+          {/* Warranty detail fields — only when has_warranty is true */}
+          {form.has_warranty && !form.is_service && (
+            <div className="border border-indigo-100 bg-indigo-50 rounded-lg p-3 space-y-3">
+              <p className="text-xs font-semibold text-indigo-700 flex items-center gap-1.5">
+                <ShieldCheck size={13} /> Warranty Details
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Warranty Period (months)</label>
+                  <input
+                    type="number" min="1" max="999"
+                    value={form.warranty_months}
+                    onChange={e => set('warranty_months', e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+                    placeholder="e.g. 12"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <p className="text-xs text-gray-400 mt-0.5">Used to auto-calculate warranty expiry when sold</p>
+                </div>
+                <div className="flex flex-col justify-center text-sm text-indigo-600 font-medium">
+                  {form.warranty_months !== '' && Number(form.warranty_months) > 0
+                    ? `= ${Math.floor(Number(form.warranty_months) / 12) > 0 ? `${Math.floor(Number(form.warranty_months) / 12)}y ` : ''}${Number(form.warranty_months) % 12 > 0 ? `${Number(form.warranty_months) % 12}m` : ''}`
+                    : <span className="text-gray-400 text-xs">Enter months above</span>
+                  }
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Warranty Terms / Coverage</label>
+                <textarea
+                  value={form.warranty_description}
+                  onChange={e => set('warranty_description', e.target.value)}
+                  placeholder="e.g. Covers manufacturing defects. Does not cover physical damage or water damage."
+                  rows={2}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                />
+              </div>
+
+              {/* Serial Numbers — edit mode only */}
+              {initial?.id && (
+                <div className="border-t border-indigo-200 pt-3">
+                  <p className="text-xs font-semibold text-indigo-700 mb-2">Serial Numbers ({modalSerials.length})</p>
+                  {serialsLoading ? (
+                    <div className="flex items-center gap-1.5 text-xs text-gray-400"><Loader2 size={12} className="animate-spin" /> Loading…</div>
+                  ) : modalSerials.length === 0 ? (
+                    <p className="text-xs text-gray-400 italic">No serial numbers yet.</p>
+                  ) : (
+                    <div className="max-h-32 overflow-y-auto rounded border border-indigo-100 divide-y divide-indigo-100 mb-2">
+                      {modalSerials.map(s => (
+                        <div key={s.id} className="flex items-center justify-between px-2 py-1.5 text-xs">
+                          <span className="font-mono text-gray-800">{s.serial_number}</span>
+                          <div className="flex items-center gap-2 text-gray-400">
+                            {s.warranty_expires && <span>{new Date(s.warranty_expires).toLocaleDateString()}</span>}
+                            <span className={`px-1.5 py-0.5 rounded-full font-medium ${
+                              s.status === 'available'  ? 'bg-blue-100 text-blue-700' :
+                              s.status === 'used'       ? 'bg-purple-100 text-purple-700' :
+                              s.status === 'damaged'    ? 'bg-red-100 text-red-700' :
+                                                          'bg-gray-100 text-gray-600'
+                            }`}>{s.status}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Add new serial number inline */}
+                  <div className="flex gap-2 items-end">
+                    <div className="flex-1">
+                      <label className="block text-xs text-gray-500 mb-1">New Serial / IMEI</label>
+                      <input
+                        value={newSerial}
+                        onChange={e => setNewSerial(e.target.value)}
+                        placeholder="e.g. SN-2026001"
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div className="w-32">
+                      <label className="block text-xs text-gray-500 mb-1">Expiry Date</label>
+                      <input
+                        type="date"
+                        value={newSerialExpiry}
+                        onChange={e => setNewSerialExpiry(e.target.value)}
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <button
+                      onClick={() => addSerialMutation.mutate()}
+                      disabled={!newSerial.trim() || addSerialMutation.isPending}
+                      className="flex items-center gap-1 px-2 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {addSerialMutation.isPending ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
+                      Add
+                    </button>
+                  </div>
+                  {form.warranty_months && Number(form.warranty_months) > 0 && (
+                    <button
+                      onClick={() => {
+                        const d = new Date()
+                        d.setMonth(d.getMonth() + Number(form.warranty_months))
+                        setNewSerialExpiry(d.toISOString().split('T')[0])
+                      }}
+                      className="text-xs text-indigo-500 hover:underline mt-1"
+                    >
+                      Auto-fill expiry from warranty period ({form.warranty_months}m)
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           )}
           <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
             <input type="checkbox" checked={form.is_published} onChange={e => set('is_published', e.target.checked)} className="rounded text-indigo-600" />
@@ -3143,9 +3341,263 @@ function StockCountsTab({ categories, canManage }: { categories: Category[]; can
   )
 }
 
+// ── Warranty Tab ──────────────────────────────────────────────────────────────
+
+function WarrantyTab({ products, canManage }: { products: Product[]; canManage: boolean }) {
+  const [filterProduct, setFilterProduct] = useState<number | ''>('')
+  const [filterStatus, setFilterStatus] = useState<string>('')
+  const [addOpen, setAddOpen] = useState(false)
+  const [addForm, setAddForm] = useState({ product: '' as number | '', serial_number: '', warranty_expires: '', notes: '' })
+  const qc = useQueryClient()
+
+  const warrantyProducts = products.filter(p => !!(p as any).has_warranty)
+
+  const params: Record<string, unknown> = {}
+  if (filterProduct !== '') params.product = filterProduct
+  if (filterStatus) params.status = filterStatus
+
+  const { data: serials = [], isLoading, refetch } = useQuery<SerialNumber[]>({
+    queryKey: ['serial-numbers', params],
+    queryFn: () =>
+      apiClient
+        .get(INVENTORY.SERIAL_NUMBERS, { params })
+        .then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
+    staleTime: 30_000,
+  })
+
+  const addMutation = useMutation({
+    mutationFn: () =>
+      apiClient.post(INVENTORY.SERIAL_NUMBERS, {
+        product:         addForm.product,
+        serial_number:   addForm.serial_number.trim(),
+        warranty_expires: addForm.warranty_expires || null,
+        notes:            addForm.notes.trim(),
+      }),
+    onSuccess: () => {
+      toast.success('Serial number added')
+      qc.invalidateQueries({ queryKey: ['serial-numbers'] })
+      setAddOpen(false)
+      setAddForm({ product: '', serial_number: '', warranty_expires: '', notes: '' })
+    },
+    onError: () => toast.error('Failed to add serial number'),
+  })
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  function warrantyStatus(sn: SerialNumber): { label: string; color: string; bg: string; icon: React.ReactNode } {
+    if (!sn.warranty_expires) return { label: 'No Expiry Set', color: 'text-gray-500', bg: 'bg-gray-100', icon: <ShieldOff size={13} /> }
+    const exp = new Date(sn.warranty_expires)
+    const daysLeft = Math.ceil((exp.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+    if (daysLeft < 0)  return { label: `Expired ${Math.abs(daysLeft)}d ago`, color: 'text-red-700',    bg: 'bg-red-100',    icon: <ShieldOff   size={13} /> }
+    if (daysLeft <= 30) return { label: `Expiring in ${daysLeft}d`,           color: 'text-amber-700',  bg: 'bg-amber-100',  icon: <ShieldAlert size={13} /> }
+    return { label: `Valid · ${daysLeft}d left`,                               color: 'text-green-700', bg: 'bg-green-100',  icon: <ShieldCheck size={13} /> }
+  }
+
+  const STATUS_LABELS: Record<string, string> = { available: 'Available', used: 'Sold / Used', damaged: 'Damaged', returned: 'Returned' }
+  const STATUS_COLORS: Record<string, string> = { available: 'text-blue-700 bg-blue-100', used: 'text-purple-700 bg-purple-100', damaged: 'text-red-700 bg-red-100', returned: 'text-gray-700 bg-gray-100' }
+
+  return (
+    <div>
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex flex-wrap gap-2">
+          <select
+            value={filterProduct}
+            onChange={e => setFilterProduct(e.target.value === '' ? '' : Number(e.target.value))}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="">All warranty products</option>
+            {warrantyProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <select
+            value={filterStatus}
+            onChange={e => setFilterStatus(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="">All statuses</option>
+            <option value="available">Available</option>
+            <option value="used">Sold / Used</option>
+            <option value="damaged">Damaged</option>
+            <option value="returned">Returned</option>
+          </select>
+        </div>
+        {canManage && (
+          <button
+            onClick={() => setAddOpen(true)}
+            className="flex items-center gap-1.5 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700"
+          >
+            <Plus size={15} /> Add Serial Number
+          </button>
+        )}
+      </div>
+
+      {/* Summary bar */}
+      {serials.length > 0 && (() => {
+        const exp    = serials.filter(s => s.warranty_expires && new Date(s.warranty_expires) < today).length
+        const soon   = serials.filter(s => {
+          if (!s.warranty_expires) return false
+          const d = Math.ceil((new Date(s.warranty_expires).getTime() - today.getTime()) / 86400000)
+          return d >= 0 && d <= 30
+        }).length
+        const valid  = serials.filter(s => s.warranty_expires && new Date(s.warranty_expires) > today && Math.ceil((new Date(s.warranty_expires).getTime() - today.getTime()) / 86400000) > 30).length
+        return (
+          <div className="grid grid-cols-4 gap-3 mb-4">
+            {[
+              { label: 'Total',            value: serials.length, color: 'text-gray-800',   bg: 'bg-white border border-gray-200' },
+              { label: 'Under Warranty',   value: valid,          color: 'text-green-700',  bg: 'bg-green-50 border border-green-200' },
+              { label: 'Expiring Soon',    value: soon,           color: 'text-amber-700',  bg: 'bg-amber-50 border border-amber-200' },
+              { label: 'Expired',          value: exp,            color: 'text-red-700',    bg: 'bg-red-50 border border-red-200' },
+            ].map(s => (
+              <div key={s.label} className={`${s.bg} rounded-xl p-3 text-center`}>
+                <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
+                <p className="text-xs text-gray-500 mt-0.5">{s.label}</p>
+              </div>
+            ))}
+          </div>
+        )
+      })()}
+
+      {/* Table */}
+      {isLoading ? (
+        <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-indigo-400" /></div>
+      ) : serials.length === 0 ? (
+        <div className="text-center py-20 text-gray-400">
+          <ShieldCheck size={40} className="mx-auto mb-3 opacity-30" />
+          <p className="text-base font-semibold">No serial numbers found</p>
+          <p className="text-sm mt-1">Add serial numbers to warranty products to start tracking.</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-gray-200">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wider">
+              <tr>
+                <th className="px-4 py-3 text-left">Serial Number</th>
+                <th className="px-4 py-3 text-left">Product</th>
+                <th className="px-4 py-3 text-left">Stock Status</th>
+                <th className="px-4 py-3 text-left">Warranty Status</th>
+                <th className="px-4 py-3 text-left">Expires</th>
+                <th className="px-4 py-3 text-left">Sold / Used At</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {serials.map(sn => {
+                const ws = warrantyStatus(sn)
+                return (
+                  <tr key={sn.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 font-mono font-medium text-gray-800">{sn.serial_number}</td>
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-gray-800">{sn.product_name}</p>
+                      <p className="text-xs text-gray-400">{sn.product_sku}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_COLORS[sn.status] ?? 'text-gray-600 bg-gray-100'}`}>
+                        {STATUS_LABELS[sn.status] ?? sn.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${ws.color} ${ws.bg}`}>
+                        {ws.icon} {ws.label}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {sn.warranty_expires ? new Date(sn.warranty_expires).toLocaleDateString() : <span className="text-gray-300">—</span>}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">
+                      {sn.used_at ? new Date(sn.used_at).toLocaleDateString() : <span className="text-gray-300">—</span>}
+                      {sn.reference_type && sn.reference_id ? (
+                        <span className="ml-1 text-indigo-500">#{sn.reference_id}</span>
+                      ) : null}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Add Serial Number Modal */}
+      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Add Serial Number" width="max-w-md">
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Product *</label>
+            <select
+              value={addForm.product}
+              onChange={e => setAddForm(f => ({ ...f, product: e.target.value === '' ? '' : Number(e.target.value) }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">Select warranty product…</option>
+              {warrantyProducts.map(p => <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Serial / IMEI Number *</label>
+            <input
+              value={addForm.serial_number}
+              onChange={e => setAddForm(f => ({ ...f, serial_number: e.target.value }))}
+              placeholder="e.g. SN-20260001 or IMEI"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Warranty Expiry Date</label>
+            <input
+              type="date"
+              value={addForm.warranty_expires}
+              onChange={e => setAddForm(f => ({ ...f, warranty_expires: e.target.value }))}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            {/* Auto-suggest from product warranty_months */}
+            {addForm.product !== '' && (() => {
+              const prod = warrantyProducts.find(p => p.id === addForm.product)
+              const months = (prod as any)?.warranty_months
+              if (!months) return null
+              const suggested = new Date()
+              suggested.setMonth(suggested.getMonth() + months)
+              const iso = suggested.toISOString().split('T')[0]
+              return (
+                <button
+                  onClick={() => setAddForm(f => ({ ...f, warranty_expires: iso }))}
+                  className="text-xs text-indigo-600 hover:underline mt-1"
+                >
+                  Use product default: {months}m → {suggested.toLocaleDateString()}
+                </button>
+              )
+            })()}
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+            <textarea
+              value={addForm.notes}
+              onChange={e => setAddForm(f => ({ ...f, notes: e.target.value }))}
+              rows={2}
+              placeholder="Optional notes"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+            />
+          </div>
+          <div className="flex gap-3 pt-1">
+            <button
+              onClick={() => addMutation.mutate()}
+              disabled={!addForm.product || !addForm.serial_number.trim() || addMutation.isPending}
+              className="flex-1 flex items-center justify-center gap-1.5 bg-indigo-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-60"
+            >
+              {addMutation.isPending && <Loader2 size={13} className="animate-spin" />}
+              Add Serial Number
+            </button>
+            <button onClick={() => setAddOpen(false)} className="flex-1 border border-gray-300 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50">
+              Cancel
+            </button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-type Tab = 'products' | 'movements' | 'low-stock' | 'categories' | 'uom' | 'variants' | 'suppliers' | 'purchase-orders' | 'returns' | 'reports' | 'supplier-catalog' | 'stock-counts'
+type Tab = 'products' | 'movements' | 'low-stock' | 'categories' | 'uom' | 'variants' | 'suppliers' | 'purchase-orders' | 'returns' | 'reports' | 'supplier-catalog' | 'stock-counts' | 'warranty'
 
 export default function InventoryPage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -3186,6 +3638,7 @@ export default function InventoryPage() {
     { id: 'returns',          label: 'Returns',            icon: <RotateCcw     size={15} /> },
     { id: 'supplier-catalog', label: 'Supplier Catalog',   icon: <Truck         size={15} /> },
     { id: 'stock-counts',     label: 'Stock Counts',       icon: <ClipboardList size={15} /> },
+    { id: 'warranty',         label: 'Warranty',            icon: <ShieldCheck   size={15} /> },
     { id: 'reports',          label: 'Reports',            icon: <FileBarChart2 size={15} /> },
   ]
 
@@ -3227,6 +3680,7 @@ export default function InventoryPage() {
       {activeTab === 'returns'           && <ReturnsTab          products={products} canManage={canManage} />}
       {activeTab === 'supplier-catalog'  && <SupplierCatalogTab  products={products} canManage={canManage} />}
       {activeTab === 'stock-counts'      && <StockCountsTab      categories={categories} canManage={canManage} />}
+      {activeTab === 'warranty'          && <WarrantyTab         products={products}     canManage={canManage} />}
       {activeTab === 'reports'           && <ReportsTab />}
     </div>
   )

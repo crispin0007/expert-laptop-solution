@@ -143,6 +143,9 @@ export default function MoreScreen() {
           <RoleGuardAny permissions={['accounting.view']}>
             <MenuItem icon="cash-outline" label="Accounting" sublabel="Coins, payslips, invoices" onPress={() => router.push('/(app)/accounting' as never)} />
           </RoleGuardAny>
+          <RoleGuardAny permissions={['inventory.view']}>
+            <MenuItem icon="cube-outline" label="Inventory" sublabel="Products, stock, movements" onPress={() => router.push('/(app)/inventory' as never)} />
+          </RoleGuardAny>
           <RoleGuardAny permissions={['staff.view']}>
             <MenuItem icon="people-outline" label="Staff" sublabel="Manage team members" onPress={() => router.push('/(app)/staff' as never)} />
           </RoleGuardAny>

@@ -375,6 +375,7 @@ class TicketProduct(TenantModel):
 
     Saving triggers a StockMovement(type=out) via signal in inventory.signals.
     Cancelling the parent ticket reverses the movement via signal.
+    If product.has_warranty=True, serial_number is required.
     """
 
     ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='products')
@@ -388,6 +389,13 @@ class TicketProduct(TenantModel):
     discount   = models.DecimalField(
         max_digits=5, decimal_places=2, default=0,
         help_text="Discount percentage (0–100). e.g. 10 = 10% off unit_price.",
+    )
+    serial_number = models.ForeignKey(
+        'inventory.SerialNumber',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='ticket_usages',
+        help_text='Required if product has warranty',
     )
 
     class Meta:
