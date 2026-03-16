@@ -249,7 +249,7 @@ class SuperadminIPAllowlistTest(TestCase):
         self.assertNotEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
-@override_settings(ALLOWED_HOSTS=['*'])
+@override_settings(ALLOWED_HOSTS=['*'], ROOT_DOMAIN='bms.local')
 class AuditLogLoginTest(TransactionTestCase):
     """AuditLog row is written on each login attempt.
 
@@ -353,7 +353,7 @@ class AuditLogImmutabilityTest(TestCase):
                 c.execute("DELETE FROM core_auditlog WHERE id = %s", [row.id])
 
 
-@override_settings(ALLOWED_HOSTS=['*'])
+@override_settings(ALLOWED_HOSTS=['*'], ROOT_DOMAIN='bms.local')
 class TenantSigBindingTest(TestCase):
     """Phase 4 (Item #3): tenant_sig HMAC must be verified on every request."""
 
