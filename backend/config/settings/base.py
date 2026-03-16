@@ -198,6 +198,13 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
+# Trust the X-Forwarded-Host header set by Vite dev proxy / Caddy in prod.
+# Required so request.build_absolute_uri() returns the correct public URL
+# instead of the internal Docker service hostname (web:8000).
+USE_X_FORWARDED_HOST = True
+# Also trust X-Forwarded-Proto so HTTPS is detected correctly behind Caddy.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL  = '/media/'

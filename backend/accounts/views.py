@@ -718,6 +718,8 @@ class TwoFAVerifyView(APIView):
     against the pending partial token issued at login. On success returns the
     full JWT pair and invalidates the partial token (single-use).
     """
+    permission_classes = [permissions.AllowAny]   # pre-auth — no token yet
+    authentication_classes = []                    # skip JWT auth entirely — prevent AuthenticationFailed on stale tokens
     throttle_classes = [LoginRateThrottle]
 
     def post(self, request):

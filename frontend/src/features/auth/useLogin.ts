@@ -5,6 +5,15 @@ import { useAuthStore } from '../../store/authStore'
 import { useTenantStore } from '../../store/tenantStore'
 
 
+interface TenantMeta {
+  subdomain: string
+  name: string
+  logo?: string
+  favicon?: string
+  vat_enabled: boolean
+  vat_rate: number
+}
+
 interface LoginPayload {
   email: string
   password: string
@@ -41,31 +50,34 @@ export function useLogin() {
       if (isTwoFAPending(data)) return
 
       setTokens(data.access, data.refresh)
-      // Fetch the full user profile (includes is_superadmin, full_name, tenants list, etc.)
-      const me = await apiClient.get(AUTH.ME, {
-        headers: { Authorization: `Bearer ${data.access}` },
-      })
-      setUser(me.data)
+      // Fetch the full user profile. Wrap in try/catch so a transient /me
+      // failure never causes mutateAsync to reject and blocks navigation.
+      // ProtectedRoute re-fetches /me on every mount anyway, so this is safe.
+      try {
+        const me = await apiClient.get(AUTH.ME, {
+          headers: { Authorization: `Bearer ${data.access}` },
+        })
+        setUser(me.data)
 
-      if (me.data.is_superadmin) {
-        clearTenant()
-      } else {
-        const tenants: Array<{
-          subdomain: string
-          name: string
-          vat_enabled: boolean
-          vat_rate: number
-        }> = me.data.tenants ?? []
-        if (tenants.length > 0) {
-          setTenant({
-            subdomain: tenants[0].subdomain,
-            name: tenants[0].name,
-            vat_enabled: tenants[0].vat_enabled,
-            vat_rate: tenants[0].vat_rate,
-            active_modules: me.data.active_modules ?? null,
-            plan: me.data.plan ?? null,
-          })
+        if (me.data.is_superadmin) {
+          clearTenant()
+        } else {
+          const tenants: TenantMeta[] = me.data.tenants ?? []
+          if (tenants.length > 0) {
+            setTenant({
+              subdomain: tenants[0].subdomain,
+              name: tenants[0].name,
+              logo: tenants[0].logo ?? null,
+              favicon: tenants[0].favicon ?? null,
+              vat_enabled: tenants[0].vat_enabled,
+              vat_rate: tenants[0].vat_rate,
+              active_modules: me.data.active_modules ?? null,
+              plan: me.data.plan ?? null,
+            })
+          }
         }
+      } catch {
+        // /me failed — tokens are stored, ProtectedRoute will re-fetch on mount
       }
     },
   })
@@ -83,28 +95,32 @@ export function useTwoFAVerify() {
     },
     onSuccess: async (data) => {
       setTokens(data.access, data.refresh)
-      const me = await apiClient.get(AUTH.ME, {
-        headers: { Authorization: `Bearer ${data.access}` },
-      })
-      setUser(me.data)
+      // Wrap /me in try/catch — same reasoning as useLogin above.
+      // Tokens are persisted; ProtectedRoute's own /me call will hydrate the
+      // user and tenant when the dashboard mounts.
+      try {
+        const me = await apiClient.get(AUTH.ME, {
+          headers: { Authorization: `Bearer ${data.access}` },
+        })
+        setUser(me.data)
 
-      if (!me.data.is_superadmin) {
-        const tenants: Array<{
-          subdomain: string
-          name: string
-          vat_enabled: boolean
-          vat_rate: number
-        }> = me.data.tenants ?? []
-        if (tenants.length > 0) {
-          setTenant({
-            subdomain: tenants[0].subdomain,
-            name: tenants[0].name,
-            vat_enabled: tenants[0].vat_enabled,
-            vat_rate: tenants[0].vat_rate,
-            active_modules: me.data.active_modules ?? null,
-            plan: me.data.plan ?? null,
-          })
+        if (!me.data.is_superadmin) {
+          const tenants: TenantMeta[] = me.data.tenants ?? []
+          if (tenants.length > 0) {
+            setTenant({
+              subdomain: tenants[0].subdomain,
+              name: tenants[0].name,
+              logo: tenants[0].logo ?? null,
+              favicon: tenants[0].favicon ?? null,
+              vat_enabled: tenants[0].vat_enabled,
+              vat_rate: tenants[0].vat_rate,
+              active_modules: me.data.active_modules ?? null,
+              plan: me.data.plan ?? null,
+            })
+          }
         }
+      } catch {
+        // /me failed — tokens are stored, ProtectedRoute will re-fetch on mount
       }
     },
   })

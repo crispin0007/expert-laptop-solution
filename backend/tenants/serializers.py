@@ -149,11 +149,15 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
     Slug, plan, and lifecycle fields are read-only here.
     """
     plan = PlanInlineSerializer(read_only=True)
+    # Override logo/favicon as CharField so relative paths (/media/...) from
+    # our upload endpoint are accepted without URLField validation errors.
+    logo   = serializers.CharField(allow_blank=True, required=False, default='')
+    favicon = serializers.CharField(allow_blank=True, required=False, default='')
 
     class Meta:
         model = Tenant
         fields = (
-            'id', 'name', 'slug', 'logo', 'currency',
+            'id', 'name', 'slug', 'logo', 'favicon', 'currency',
             'vat_enabled', 'vat_rate',
             'coin_to_money_rate', 'custom_domain', 'plan',
         )

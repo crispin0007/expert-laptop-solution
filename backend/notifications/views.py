@@ -94,6 +94,32 @@ class NotificationPreferenceView(TenantMixin, APIView):
         return ApiResponse.success(data=serializer.data)
 
 
+class NotificationDismissView(TenantMixin, APIView):
+    """
+    DELETE /api/v1/notifications/<pk>/  — hard-delete a single notification.
+    DELETE /api/v1/notifications/clear-read/ — delete all read notifications.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk=None):
+        if pk:
+            try:
+                notif = Notification.objects.get(
+                    pk=pk, tenant=request.tenant, recipient=request.user
+                )
+                notif.delete()
+            except Notification.DoesNotExist:
+                return ApiResponse.not_found('Notification')
+        else:
+            # clear-read — delete all read notifications for this user
+            Notification.objects.filter(
+                tenant=request.tenant,
+                recipient=request.user,
+                is_read=True,
+            ).delete()
+        return ApiResponse.success()
+
+
 class FCMDeviceView(TenantMixin, APIView):
     """
     POST   /api/v1/notifications/devices/           — Register a push token

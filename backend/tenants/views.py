@@ -1,10 +1,16 @@
+import os
+import uuid
+
 from django.core.cache import cache
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 from django.db.models import Count
 from django.http import HttpResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action, api_view, permission_classes as drf_permission_classes
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -584,6 +590,97 @@ class TenantSettingsView(TenantMixin, APIView):
         serializer.save()
         cache.delete(f'tenant_slug_{self.tenant.slug}')
         return Response(serializer.data)
+
+
+class TenantBrandingUploadView(TenantMixin, APIView):
+    """
+    POST /api/v1/settings/upload/
+
+    Upload a branding image (logo or favicon) for the current tenant.
+    Accepts multipart/form-data with fields:
+      - file  — the image file
+      - type  — 'logo' or 'favicon'
+
+    Returns: { "url": "<absolute media URL>" }
+    Saves to: media/tenant_branding/{slug}/{type}_{random}.{ext}
+    Max size: 2 MB.  Allowed types: PNG, JPG, SVG, ICO.
+    Only tenant managers / admins may upload.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    _ALLOWED_MIME = {
+        'image/png',
+        'image/jpeg',
+        'image/jpg',
+        'image/svg+xml',
+        'image/x-icon',
+        'image/vnd.microsoft.icon',
+        'image/webp',
+    }
+    _MAX_BYTES = 2 * 1024 * 1024  # 2 MB
+
+    def post(self, request):
+        self.ensure_tenant()
+        if not self.is_manager_role():
+            return Response(
+                {'detail': 'Only managers or admins can upload branding assets.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        asset_type = request.data.get('type', '').strip()
+        if asset_type not in ('logo', 'favicon'):
+            return Response(
+                {'detail': 'type must be "logo" or "favicon".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        file_obj = request.FILES.get('file')
+        if not file_obj:
+            return Response(
+                {'detail': 'No file provided.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if file_obj.content_type not in self._ALLOWED_MIME:
+            return Response(
+                {'detail': f'Unsupported file type: {file_obj.content_type}. Allowed: PNG, JPG, SVG, ICO, WebP.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if file_obj.size > self._MAX_BYTES:
+            return Response(
+                {'detail': 'File too large. Maximum size is 2 MB.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Determine extension from original filename
+        _, ext = os.path.splitext(file_obj.name)
+        ext = ext.lower() or '.png'
+        unique_name = f'{asset_type}_{uuid.uuid4().hex[:10]}{ext}'
+        rel_path = f'tenant_branding/{self.tenant.slug}/{unique_name}'
+
+        # Remove old media file (only if it was previously uploaded here)
+        old_url: str = getattr(self.tenant, asset_type, '') or ''
+        if old_url and 'tenant_branding/' in old_url:
+            try:
+                old_rel = old_url.split('/media/', 1)[-1]
+                if default_storage.exists(old_rel):
+                    default_storage.delete(old_rel)
+            except Exception:
+                pass  # non-fatal — continue with new upload
+
+        saved_rel = default_storage.save(rel_path, ContentFile(file_obj.read()))
+        # Store a root-relative path so it works regardless of hostname / reverse proxy
+        url = f'/media/{saved_rel}'
+
+        # Persist URL on the tenant record
+        setattr(self.tenant, asset_type, url)
+        self.tenant.save(update_fields=[asset_type, 'updated_at'])
+        cache.delete(f'tenant_slug_{self.tenant.slug}')
+
+        return Response({'url': url}, status=status.HTTP_200_OK)
 
 
 @require_GET

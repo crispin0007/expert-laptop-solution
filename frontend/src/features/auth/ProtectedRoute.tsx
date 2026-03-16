@@ -32,6 +32,8 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
         const tenants: Array<{
           subdomain: string
           name: string
+          logo?: string
+          favicon?: string
           vat_enabled: boolean
           vat_rate: number
         }> = res.data.tenants ?? []
@@ -48,6 +50,8 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
             setTenant({
               subdomain: tenantMeta.subdomain,
               name: tenantMeta.name,
+              logo: tenantMeta.logo ?? null,
+              favicon: tenantMeta.favicon ?? null,
               vat_enabled: tenantMeta.vat_enabled,
               vat_rate: tenantMeta.vat_rate,
               active_modules: res.data.active_modules ?? null,

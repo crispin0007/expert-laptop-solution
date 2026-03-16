@@ -6,9 +6,21 @@ from core.throttles import _sanitize_slug
 
 _access_logger = logging.getLogger('nexus.access')
 _security_logger = logging.getLogger('nexus.security')
+_db_logger = logging.getLogger('nexus.db')
 
 # How long to cache a tenant DB lookup (seconds)
 _TENANT_CACHE_TTL = 300
+
+# Sentinel returned by _resolve_tenant/_resolve_by_domain to signal a DB-level
+# error (e.g. unapplied migration → missing column).  Distinct from False
+# ("looked up, not found") so the middleware can return a 503 instead of
+# silently setting request.tenant = None → which causes login 401s.
+class _DbErrorSentinel:
+    """Singleton sentinel: DB error during tenant lookup."""
+    pass
+
+_DB_ERROR = _DbErrorSentinel()
+
 
 # Paths that should return 404 (not 403, not login) when accessed from a tenant subdomain.
 # 404 is intentional — do not reveal that an admin interface exists.
@@ -37,6 +49,11 @@ def _resolve_by_domain(host: str):
     Uses a Redis mutex (cache.add) to prevent cache stampede: only one process
     does the DB query on a cache miss; concurrent processes wait 50 ms and read
     the result that the lock winner stores.
+
+    Returns:
+      Tenant      — found and active
+      None        — not found (host is not a custom domain)
+      _DB_ERROR   — database error (e.g. unapplied migration / missing column)
     """
     cache_key = f'tenant_domain_{host}'
 
@@ -59,8 +76,17 @@ def _resolve_by_domain(host: str):
                 tenant = Tenant.objects.get(
                     custom_domain=host, is_active=True, is_deleted=False
                 )
-            except Exception:
+            except Tenant.DoesNotExist:
                 tenant = False  # sentinel — avoids repeated DB hits
+            except Exception as exc:
+                # DB-level error (e.g. missing column from unapplied migration)
+                _db_logger.critical(
+                    'TENANT_DB_ERROR | host=%s | error=%s | '
+                    'HINT: You may have unapplied migrations — run: '
+                    'python manage.py migrate',
+                    host, exc,
+                )
+                return _DB_ERROR
             cache.set(cache_key, tenant, _TENANT_CACHE_TTL)
         finally:
             cache.delete(lock_key)
@@ -78,7 +104,11 @@ def _resolve_tenant(slug: str):
     """
     Look up a Tenant by slug. Result is cached for _TENANT_CACHE_TTL seconds
     so we avoid a DB hit on every request.
-    Returns a Tenant instance, or None if not found / inactive / deleted.
+
+    Returns:
+      Tenant      — found and active
+      None        — not found / inactive / deleted
+      _DB_ERROR   — database error (e.g. unapplied migration / missing column)
 
     The slug is sanitized before use in the Redis cache key to prevent cache
     poisoning via adversarially crafted subdomains containing special characters.
@@ -111,8 +141,23 @@ def _resolve_tenant(slug: str):
                 tenant = Tenant.objects.get(
                     slug=slug, is_active=True, is_deleted=False
                 )
-            except Exception:
+            except Tenant.DoesNotExist:
                 tenant = False  # sentinel: "looked up, not found"
+            except Exception as exc:
+                # ── DB-level failure (e.g. OperationalError: column does not exist)
+                # This almost always means a migration was added to the codebase
+                # but not yet applied to the database.  We MUST NOT silently
+                # return None here — that would set request.tenant = None which
+                # causes TenantTokenObtainPairView to reject non-superadmin logins
+                # with 401 (it treats tenant=None as the main/root domain).
+                _db_logger.critical(
+                    'TENANT_DB_ERROR | slug=%s | error=%s | '
+                    'HINT: You likely have unapplied migrations. '
+                    'Run: python manage.py migrate  (or restart Docker which '
+                    'auto-migrates via dev-entrypoint.sh)',
+                    slug, exc,
+                )
+                return _DB_ERROR
             cache.set(cache_key, tenant, _TENANT_CACHE_TTL)
         finally:
             cache.delete(lock_key)  # always release, even on exception
@@ -160,8 +205,26 @@ class TenantMiddleware(MiddlewareMixin):
         except Exception:
             pass  # ban check failure must NEVER block legitimate requests
 
+        def _db_error_response():
+            """Return a 503 when a DB-level error prevents tenant resolution.
+            This always means unapplied migrations — never silently fall through
+            to tenant=None (which would cause 401 on login)."""
+            import json as _jdb
+            from django.http import HttpResponse
+            body = _jdb.dumps({
+                'detail': (
+                    'Service temporarily unavailable: database schema is out of sync. '
+                    'An administrator needs to apply pending migrations. '
+                    'Run: python manage.py migrate'
+                )
+            })
+            return HttpResponse(body, status=503, content_type='application/json')
+
         # --- 1. Custom domain (e.g. crm.els.com) ---
-        tenant = _resolve_by_domain(host)
+        result = _resolve_by_domain(host)
+        if result is _DB_ERROR:
+            return _db_error_response()
+        tenant = result
 
         # --- 2. Subdomain (e.g. els.bms.techyatra.com.np) ---
         if tenant is None:
@@ -174,7 +237,10 @@ class TenantMiddleware(MiddlewareMixin):
             # treated as a probe (it IS the main / super-admin domain).
             if host != root_domain and host.endswith(f'.{root_domain}'):
                 slug = parts[0]
-                tenant = _resolve_tenant(slug)
+                result = _resolve_tenant(slug)
+                if result is _DB_ERROR:
+                    return _db_error_response()
+                tenant = result
                 if tenant is None:
                     # A subdomain was present but didn't map to any active tenant.
                     # Record the slug for enumeration probe logging below.
@@ -190,16 +256,24 @@ class TenantMiddleware(MiddlewareMixin):
             fwd_host = request.headers.get('X-Forwarded-Host', '').split(':')[0].strip().lower()
             if fwd_host and fwd_host != host:
                 # Custom domain?
-                tenant = _resolve_by_domain(fwd_host)
+                result = _resolve_by_domain(fwd_host)
+                if result is _DB_ERROR:
+                    return _db_error_response()
+                tenant = result
                 if tenant is None:
                     from django.conf import settings as _sfwd
                     _rd = _sfwd.ROOT_DOMAIN.lower()
                     fwd_parts = fwd_host.split('.')
                     if len(fwd_parts) >= 2:
                         if fwd_host.endswith(f'.{_rd}'):
-                            tenant = _resolve_tenant(fwd_parts[0])
+                            result = _resolve_tenant(fwd_parts[0])
                         elif fwd_host.endswith('.localhost'):  # local dev *.localhost
-                            tenant = _resolve_tenant(fwd_parts[0])
+                            result = _resolve_tenant(fwd_parts[0])
+                        else:
+                            result = None
+                        if result is _DB_ERROR:
+                            return _db_error_response()
+                        tenant = result
 
         # --- 4. Fallback: X-Tenant-Slug header (mobile apps + dev/localhost) ---
         # Intentional: mobile clients have no subdomain, so they send the tenant
@@ -226,7 +300,10 @@ class TenantMiddleware(MiddlewareMixin):
             if getattr(settings, 'ALLOW_TENANT_SLUG_HEADER', settings.DEBUG):
                 header_slug = request.headers.get('X-Tenant-Slug', '').strip()
                 if header_slug:
-                    tenant = _resolve_tenant(header_slug)
+                    result = _resolve_tenant(header_slug)
+                    if result is _DB_ERROR:
+                        return _db_error_response()
+                    tenant = result
 
         # ── Tenant enumeration defense ────────────────────────────────────────
         # If a subdomain was present but resolved to no tenant, someone is

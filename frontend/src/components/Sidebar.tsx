@@ -49,7 +49,6 @@ import { useAuthStore } from '../store/authStore'
 import { useTenantStore } from '../store/tenantStore'
 import { usePermissions } from '../hooks/usePermissions'
 import { useModules } from '../hooks/useModules'
-
 // ── Simple module nav registry ─────────────────────────────────────────────────
 // Add a new entry here and it automatically appears in the sidebar whenever the
 // module is active for the tenant — no other file needs to change.
@@ -282,6 +281,7 @@ function SidebarContent({
 }) {
   const logout      = useAuthStore((s) => s.logout)
   const tenantName  = useTenantStore((s) => s.tenantName)
+  const tenantLogo  = useTenantStore((s) => s.logo)
   const clearTenant = useTenantStore((s) => s.clearTenant)
   const user        = useAuthStore((s) => s.user)
   const subdomain   = useTenantStore((s) => s.subdomain)
@@ -308,13 +308,30 @@ function SidebarContent({
         }`}
       >
         {!collapsed && (
-          <div className="flex-1 min-w-0">
-            <p className="text-indigo-600 font-bold text-lg tracking-tight truncate">
-              {tenantName || 'NEXUS BMS'}
-            </p>
-            {tenantName && (
-              <p className="text-gray-400 text-xs mt-0.5">powered by NEXUS BMS</p>
+          <div className="flex-1 min-w-0 flex items-center gap-2.5">
+            {/* Logo image — shown when tenant has set a logo */}
+            {tenantLogo ? (
+              <img
+                src={tenantLogo}
+                alt={tenantName ?? 'Logo'}
+                className="h-8 max-w-[120px] object-contain shrink-0"
+                onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+              />
+            ) : (
+              <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center shrink-0">
+                <span className="text-white font-bold text-sm">
+                  {(tenantName ?? 'N').charAt(0).toUpperCase()}
+                </span>
+              </div>
             )}
+            <div className="min-w-0">
+              <p className="text-indigo-600 font-bold text-sm leading-tight tracking-tight truncate">
+                {tenantName || 'NEXUS BMS'}
+              </p>
+              {tenantName && (
+                <p className="text-gray-400 text-[10px] leading-tight">powered by Tech Yatra</p>
+              )}
+            </div>
           </div>
         )}
 

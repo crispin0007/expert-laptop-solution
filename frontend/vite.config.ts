@@ -36,6 +36,12 @@ export default defineConfig({
         target: API_TARGET,
         changeOrigin: true,
       },
+      // Serve uploaded media files from the Django backend during development.
+      // In production, Caddy serves /media/ directly from the shared volume.
+      '/media': {
+        target: API_TARGET,
+        changeOrigin: true,
+      },
     },
   },
 })

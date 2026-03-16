@@ -127,7 +127,8 @@ class Tenant(models.Model):
         related_name='tenants',
         help_text='Subscription plan. Null only during initial seed migration.',
     )
-    logo = models.URLField(blank=True)
+    logo = models.URLField(blank=True, help_text='URL of the tenant logo displayed in the sidebar and app header.')
+    favicon = models.URLField(blank=True, help_text='URL of the tenant favicon (16×16 or 32×32 .ico/.png).')
     # Brand colour for mobile app dynamic theming — expects CSS hex value
     primary_color = models.CharField(
         max_length=7,

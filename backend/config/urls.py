@@ -5,7 +5,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from core import views as core_views
 from core.views import DashboardStatsView
-from tenants.views import TenantSettingsView, verify_domain, tenant_resolve
+from tenants.views import TenantSettingsView, TenantBrandingUploadView, verify_domain, tenant_resolve
 
 
 class MainDomainOnlyAdminSite(AdminSite):
@@ -64,8 +64,9 @@ urlpatterns = [
     path('api/v1/inventory/', include('inventory.urls')),
     path('api/v1/accounting/', include('accounting.urls')),
 
-    # Tenant settings (coin rate, VAT, currency) — accessible by tenant admin/manager
+    # Tenant settings (coin rate, VAT, currency, branding) — accessible by tenant admin/manager
     path('api/v1/settings/', TenantSettingsView.as_view(), name='tenant-settings'),
+    path('api/v1/settings/upload/', TenantBrandingUploadView.as_view(), name='tenant-branding-upload'),
 
     # Subscription plans + modules (super admin only)
     path('api/v1/plans/', include('tenants.plan_urls')),

@@ -3,6 +3,61 @@ from django.db import transaction
 from .models import User, TenantMembership
 
 
+class TwoFAConfirmSerializer(serializers.Serializer):
+    """Validates the 6-digit TOTP code submitted to confirm 2FA setup."""
+    code = serializers.CharField(
+        min_length=6,
+        max_length=6,
+        trim_whitespace=True,
+        help_text='6-digit TOTP code from your authenticator app.',
+    )
+
+    def validate_code(self, value):
+        if not value.isdigit():
+            raise serializers.ValidationError('Code must be 6 digits.')
+        return value
+
+
+class TwoFAVerifySerializer(serializers.Serializer):
+    """
+    Validates the two_factor_token + TOTP code submitted at step-2 of the
+    2FA login flow (POST /api/v1/accounts/2fa/verify/).
+    """
+    two_factor_token = serializers.CharField(
+        trim_whitespace=True,
+        help_text='Partial token returned by the login endpoint when 2FA is required.',
+    )
+    code = serializers.CharField(
+        min_length=6,
+        max_length=8,  # 6-digit TOTP or 8-char backup code
+        trim_whitespace=True,
+        help_text='6-digit TOTP code or 8-character backup code.',
+    )
+
+
+class TwoFADisableSerializer(serializers.Serializer):
+    """
+    Validates the TOTP code + current password needed to disable 2FA
+    (POST /api/v1/accounts/2fa/disable/).
+    """
+    code = serializers.CharField(
+        min_length=6,
+        max_length=6,
+        trim_whitespace=True,
+        help_text='6-digit TOTP code from your authenticator app.',
+    )
+    password = serializers.CharField(
+        write_only=True,
+        style={'input_type': 'password'},
+        help_text='Current account password for confirmation.',
+    )
+
+    def validate_code(self, value):
+        if not value.isdigit():
+            raise serializers.ValidationError('Code must be 6 digits.')
+        return value
+
+
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
@@ -34,7 +89,7 @@ class MeSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             'id', 'email', 'username', 'full_name',
-            'phone', 'avatar', 'is_superadmin', 'membership', 'tenants',
+            'phone', 'avatar', 'is_superadmin', 'is_2fa_enabled', 'membership', 'tenants',
         )
 
     def get_is_superadmin(self, user):
@@ -131,6 +186,8 @@ class MeSerializer(serializers.ModelSerializer):
                 'id': m.tenant.id,
                 'name': m.tenant.name,
                 'subdomain': m.tenant.slug,
+                'logo': m.tenant.logo or '',
+                'favicon': getattr(m.tenant, 'favicon', '') or '',
                 'vat_enabled': getattr(m.tenant, 'vat_enabled', False),
                 'vat_rate': float(getattr(m.tenant, 'vat_rate', 0.13)),
                 'role': m.role,

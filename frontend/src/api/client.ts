@@ -54,7 +54,11 @@ function isRootDomain(): boolean {
 // during login when Vite's dev proxy rewrites the Host header to localhost:8000.
 // Stale localStorage slugs are never sent on token endpoints (only URL-derived).
 // (relative to baseURL — no /api/v1 prefix)
-const TOKEN_ENDPOINTS = new Set(['/accounts/token/', '/accounts/token/refresh/'])
+const TOKEN_ENDPOINTS = new Set([
+  '/accounts/token/',
+  '/accounts/token/refresh/',
+  '/accounts/2fa/verify/',   // pre-auth — no JWT yet
+])
 
 // Attach access token + tenant slug to every request
 apiClient.interceptors.request.use((config) => {
@@ -85,12 +89,16 @@ apiClient.interceptors.request.use((config) => {
 })
 
 // On 401 — try refresh token, else logout.
-// Never intercept the token or refresh endpoints themselves — those 401s must
-// propagate to the caller (e.g. LoginPage handleSubmit) so it can show a toast.
+// Never intercept auth/pre-login endpoints — those 401s must propagate to
+// the caller so it can show a toast (not trigger a hard page reload via logout).
 //
 // NOTE: originalRequest.url is the path RELATIVE to baseURL (/api/v1), so
 // these must NOT include the /api/v1 prefix.
-const AUTH_ENDPOINTS = ['/accounts/token/', '/accounts/token/refresh/']
+const AUTH_ENDPOINTS = [
+  '/accounts/token/',
+  '/accounts/token/refresh/',
+  '/accounts/2fa/verify/',   // pre-auth: 401 = wrong/expired token, not session expiry
+]
 
 apiClient.interceptors.response.use(
   (res) => res,

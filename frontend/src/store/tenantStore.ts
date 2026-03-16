@@ -10,6 +10,8 @@ interface PlanInfo {
 interface TenantState {
   subdomain: string | null
   tenantName: string | null
+  logo: string | null
+  favicon: string | null
   vatEnabled: boolean
   vatRate: number
   /** null = superadmin (unrestricted); string[] = active module keys for this tenant */
@@ -18,6 +20,8 @@ interface TenantState {
   setTenant: (data: {
     subdomain: string
     name: string
+    logo?: string | null
+    favicon?: string | null
     vat_enabled: boolean
     vat_rate: number
     active_modules?: string[] | null
@@ -33,6 +37,8 @@ export const useTenantStore = create<TenantState>()(
     (set) => ({
       subdomain: null,
       tenantName: null,
+      logo: null,
+      favicon: null,
       vatEnabled: false,
       vatRate: 0.13,
       activeModules: null,
@@ -42,6 +48,8 @@ export const useTenantStore = create<TenantState>()(
         set({
           subdomain: data.subdomain,
           tenantName: data.name,
+          logo: data.logo ?? null,
+          favicon: data.favicon ?? null,
           vatEnabled: data.vat_enabled,
           vatRate: data.vat_rate,
           activeModules: data.active_modules ?? null,
@@ -54,6 +62,8 @@ export const useTenantStore = create<TenantState>()(
         set({
           subdomain: null,
           tenantName: null,
+          logo: null,
+          favicon: null,
           vatEnabled: false,
           vatRate: 0.13,
           activeModules: null,
@@ -62,11 +72,29 @@ export const useTenantStore = create<TenantState>()(
     }),
     {
       name: 'nexus-tenant',
-      // Bump this version whenever the stored shape changes.
-      // Zustand calls migrate() when the stored version differs — returning {}
-      // falls back to the initial state, clearing any stale subdomain/tenant data.
-      version: 1,
-      migrate: () => ({}),
+      // Version strategy:
+      //   • Only bump when a stored field is REMOVED or RENAMED (breaking change).
+      //   • Adding new nullable fields does NOT require a version bump — the
+      //     migrate() merge function fills them in from defaults automatically.
+      // ⚠️  NEVER return {} from migrate() — that wipes the whole store (including
+      //     subdomain) and can cause timing issues in the login flow.
+      version: 2,
+      migrate: (persistedState: unknown, _version: number) => {
+        // Merge the stored state with explicit defaults for every field.
+        // New fields added to TenantState simply default to their zero-value here
+        // — no version bump needed for adding nullable fields.
+        const s = (persistedState ?? {}) as Record<string, unknown>
+        return {
+          subdomain:     (s.subdomain     as string | null)  ?? null,
+          tenantName:    (s.tenantName    as string | null)  ?? null,
+          logo:          (s.logo          as string | null)  ?? null,
+          favicon:       (s.favicon       as string | null)  ?? null,
+          vatEnabled:    (s.vatEnabled    as boolean)        ?? false,
+          vatRate:       (s.vatRate       as number)         ?? 0.13,
+          activeModules: (s.activeModules as string[] | null)?? null,
+          plan:          (s.plan          as object | null)  ?? null,
+        }
+      },
     }
   )
 )

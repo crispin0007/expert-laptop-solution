@@ -27,7 +27,12 @@ services:
 
   web:
     build: ./backend
-    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --reload
+    # dev-entrypoint.sh runs `migrate --noinput` BEFORE starting gunicorn.
+    # This prevents the recurring 401 on login that occurs when a new model
+    # field is added but the migration isn't applied — the ORM includes the
+    # new column in SQL queries, Postgres throws OperationalError, and the
+    # tenant middleware silently fails to resolve the tenant.
+    command: bash /usr/src/app/dev-entrypoint.sh
     volumes:
       - ./backend:/usr/src/app
     env_file:

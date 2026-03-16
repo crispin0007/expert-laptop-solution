@@ -2,6 +2,26 @@ import { useEffect } from 'react'
 import Router from './app/Router'
 import { useTenantStore } from './store/tenantStore'
 
+/** Dynamically update <title> and <link rel="icon"> based on tenant branding */
+function useTenantBranding() {
+  const tenantName = useTenantStore((s) => s.tenantName)
+  const favicon    = useTenantStore((s) => s.favicon)
+
+  useEffect(() => {
+    document.title = tenantName ? `${tenantName} — NEXUS BMS` : 'NEXUS BMS'
+  }, [tenantName])
+
+  useEffect(() => {
+    const link = document.getElementById('dynamic-favicon') as HTMLLinkElement | null
+    if (!link) return
+    if (favicon) {
+      link.href = favicon
+    } else {
+      link.href = '/favicon.ico'
+    }
+  }, [favicon])
+}
+
 /**
  * Detect the tenant slug from the current URL hostname.
  *   test.localhost             → 'test'  (dev tenant subdomain)
@@ -33,6 +53,7 @@ function getSlugFromHostname(): string | null {
 
 function App() {
   const { setSubdomain, clearTenant } = useTenantStore()
+  useTenantBranding()
 
   useEffect(() => {
     const slug = getSlugFromHostname()

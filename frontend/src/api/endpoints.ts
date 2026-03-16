@@ -85,6 +85,8 @@ export const NOTIFICATIONS = {
   UNREAD_COUNT: '/notifications/unread-count/',
   MARK_READ: (id: number) => `/notifications/${id}/read/`,
   MARK_ALL_READ: '/notifications/mark-all-read/',
+  DISMISS: (id: number) => `/notifications/${id}/`,
+  CLEAR_READ: '/notifications/clear-read/',
   PREFERENCES: '/notifications/preferences/',
 } as const
 
@@ -225,7 +227,10 @@ export const ACCOUNTING = {
   REPORT_DAY_BOOK: '/accounting/reports/day-book/',
 } as const
 
-export const SETTINGS = '/settings/' as const
+export const SETTINGS = {
+  LIST: '/settings/',
+  UPLOAD: '/settings/upload/',
+} as const
 
 export const TENANTS = {
   LIST: '/tenants/',
