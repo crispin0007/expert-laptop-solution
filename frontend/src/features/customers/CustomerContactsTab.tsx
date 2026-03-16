@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import { Plus, Pencil, Trash2, Star } from 'lucide-react'
 import apiClient from '../../api/client'
 import Modal from '../../components/Modal'
+import { usePermissions } from '../../hooks/usePermissions'
 
 interface Contact {
   id: number
@@ -22,6 +23,7 @@ const EMPTY = { name: '', email: '', phone: '', designation: '', is_primary: fal
 
 export default function CustomerContactsTab({ customerId }: Props) {
   const qc = useQueryClient()
+  const { can } = usePermissions()
   const [showForm, setShowForm] = useState(false)
   const [editTarget, setEditTarget] = useState<Contact | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Contact | null>(null)
@@ -71,10 +73,12 @@ export default function CustomerContactsTab({ customerId }: Props) {
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <p className="text-sm text-gray-500">{contacts.length} contact{contacts.length !== 1 ? 's' : ''}</p>
-        <button onClick={openCreate}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">
-          <Plus size={14} /> Add Contact
-        </button>
+        {can('can_update_customers') && (
+          <button onClick={openCreate}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">
+            <Plus size={14} /> Add Contact
+          </button>
+        )}
       </div>
 
       {contacts.length === 0 && (
@@ -95,12 +99,16 @@ export default function CustomerContactsTab({ customerId }: Props) {
               </div>
             </div>
             <div className="flex gap-1">
-              <button onClick={() => openEdit(c)} className="p-1.5 rounded hover:bg-white text-gray-400">
-                <Pencil size={13} />
-              </button>
-              <button onClick={() => setDeleteTarget(c)} className="p-1.5 rounded hover:bg-red-50 text-red-400">
-                <Trash2 size={13} />
-              </button>
+              {can('can_update_customers') && (
+                <>
+                  <button onClick={() => openEdit(c)} className="p-1.5 rounded hover:bg-white text-gray-400">
+                    <Pencil size={13} />
+                  </button>
+                  <button onClick={() => setDeleteTarget(c)} className="p-1.5 rounded hover:bg-red-50 text-red-400">
+                    <Trash2 size={13} />
+                  </button>
+                </>
+              )}
             </div>
           </div>
         ))}

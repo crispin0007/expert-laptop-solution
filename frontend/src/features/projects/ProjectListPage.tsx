@@ -9,6 +9,7 @@ import { useAuthStore } from '../../store/authStore'
 import NepaliDatePicker from '../../components/NepaliDatePicker'
 import DateDisplay from '../../components/DateDisplay'
 import { useFyStore } from '../../store/fyStore'
+import { usePermissions } from '../../hooks/usePermissions'
 
 interface Project { id: number; project_number: string; name: string; status: string; manager?: number | null; customer: number | null; customer_name: string; start_date: string | null; end_date: string | null }
 interface Customer { id: number; name: string }
@@ -36,6 +37,7 @@ export default function ProjectListPage() {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const currentUser = useAuthStore((s) => s.user)
+  const { can } = usePermissions()
   const [urlParams] = useSearchParams()
   const assignedToMe = urlParams.get('assigned') === 'me'
   const [showCreate, setShowCreate] = useState(false)
@@ -121,12 +123,14 @@ export default function ProjectListPage() {
             <p className="text-xs text-gray-400 mt-0.5">Showing projects where you are the manager</p>
           )}
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition"
-        >
-          <Plus size={16} /> New Project
-        </button>
+        {can('can_create_projects') && (
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition"
+          >
+            <Plus size={16} /> New Project
+          </button>
+        )}
       </div>
 
       {/* Create modal */}

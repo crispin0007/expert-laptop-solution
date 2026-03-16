@@ -8,6 +8,7 @@ import type { Customer } from './types'
 import CustomerContactsTab from './CustomerContactsTab'
 import NepalAddressFields, { type NepalAddressValue } from './NepalAddressFields'
 import DateDisplay from '../../components/DateDisplay'
+import { usePermissions } from '../../hooks/usePermissions'
 
 const TABS = ['Info', 'Tickets', 'Contacts'] as const
 type Tab = (typeof TABS)[number]
@@ -20,6 +21,7 @@ export default function CustomerDetailPage() {
   const [tab, setTab] = useState<Tab>('Info')
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState<Partial<Customer>>({})
+  const { can } = usePermissions()
 
   const { data: customer, isLoading } = useQuery<Customer>({
     queryKey: ['customers', customerId],
@@ -100,7 +102,7 @@ export default function CustomerDetailPage() {
           </div>
         </div>
         <div className="flex gap-2">
-          {editing ? (
+          {can('can_update_customers') && (editing ? (
             <>
               <button onClick={cancelEdit}
                 className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
@@ -116,7 +118,7 @@ export default function CustomerDetailPage() {
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
               <Pencil size={14} /> Edit
             </button>
-          )}
+          ))}
         </div>
       </div>
 
