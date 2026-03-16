@@ -490,7 +490,7 @@ export default function StaffDetailScreen() {
       }}>
         {/* Nav row */}
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
-          <TouchableOpacity onPress={() => router.back()} style={{ marginRight: 10, padding: 4 }}>
+          <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/(app)/staff')} style={{ marginRight: 10, padding: 4 }}>
             <Ionicons name="chevron-back" size={22} color={theme.colors.text} />
           </TouchableOpacity>
           <Text style={{ flex: 1, fontSize: 16, fontWeight: '700', color: theme.colors.text }}>Staff Profile</Text>

@@ -300,7 +300,7 @@ export default function TwoFAScreen() {
   const disableMutation = useDisable2FA()
 
   function goBack() {
-    if (screen === 'status') router.back()
+    if (screen === 'status') router.canGoBack() ? router.back() : router.replace('/(app)/profile')
     else { setScreen('status'); setOtpCode(''); setDisableOtp('') }
   }
 

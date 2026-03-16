@@ -18,6 +18,7 @@ export default function AppLayout() {
           <Stack.Screen name="departments/index" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="roles/index" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="accounting/index" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="cms/index" options={{ animation: 'slide_from_right' }} />
         </Stack>
       </AppDrawer>
     </TenantGuard>

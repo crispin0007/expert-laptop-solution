@@ -216,8 +216,8 @@ export default function CustomerDetailScreen() {
       {/* Header */}
       <View style={{ paddingTop: insets.top + 12, paddingHorizontal: 16, paddingBottom: 20, backgroundColor: theme.colors.surface, borderBottomWidth: 1, borderBottomColor: theme.colors.border }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-          <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} style={{ padding: 4 }}>
-            <Ionicons name="arrow-back" size={24} color={theme.colors.text} />
+          <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/(app)/(tabs)/customers')} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} style={{ padding: 4 }}>
+            <Ionicons name="chevron-back" size={24} color={theme.colors.text} />
           </TouchableOpacity>
           <RoleGuard permission="customers.manage">
             <TouchableOpacity onPress={() => setShowEdit(true)} style={{ backgroundColor: `${theme.primary[500]}12`, borderRadius: 20, padding: 8, marginLeft: 'auto' as any }}>

@@ -43,6 +43,7 @@ const MANAGE_ITEMS: NavItem[] = [
   { label: 'Roles', icon: 'shield-outline', iconActive: 'shield', route: '/(app)/roles', permission: 'settings.manage' },
   // Optional modules — subscription-gated
   { label: 'Accounting', icon: 'cash-outline', iconActive: 'cash', route: '/(app)/accounting', module: 'accounting', permission: 'accounting.view' },
+  { label: 'Website', icon: 'globe-outline', iconActive: 'globe', route: '/(app)/cms', module: 'cms', permission: 'cms.view' },
   // Core
   { label: 'Settings', icon: 'settings-outline', iconActive: 'settings', route: '/(app)/settings', permission: 'settings.manage' },
 ]

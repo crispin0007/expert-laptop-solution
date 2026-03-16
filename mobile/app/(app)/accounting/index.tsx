@@ -520,9 +520,6 @@ export default function AccountingScreen() {
       }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 }}>
           <DrawerToggle />
-          <TouchableOpacity onPress={() => router.back()} style={{ padding: 4 }}>
-            <Ionicons name="arrow-back" size={20} color="rgba(255,255,255,0.8)" />
-          </TouchableOpacity>
           <Text style={{ flex: 1, fontSize: 20, fontWeight: '800', color: '#fff', letterSpacing: -0.3 }}>
             Accounting
           </Text>

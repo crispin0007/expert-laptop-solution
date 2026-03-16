@@ -543,7 +543,7 @@ export default function TicketDetailScreen() {
         {/* Nav row */}
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <TouchableOpacity
-            onPress={() => router.back()}
+            onPress={() => router.canGoBack() ? router.back() : router.replace('/(app)/(tabs)/tickets')}
             style={{ flexDirection: 'row', alignItems: 'center', gap: 4, padding: 4, marginLeft: -4 }}
           >
             <Ionicons name="chevron-back" size={20} color={theme.primary[600]} />

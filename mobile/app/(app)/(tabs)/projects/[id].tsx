@@ -1116,7 +1116,7 @@ export default function ProjectDetailScreen() {
           }}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-            <TouchableOpacity onPress={() => router.back()} style={{ marginRight: 10, padding: 4 }}>
+            <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/(app)/(tabs)/projects')} style={{ marginRight: 10, padding: 4 }}>
               <Ionicons name="chevron-back" size={22} color={theme.colors.text} />
             </TouchableOpacity>
             <View style={{ flex: 1 }}>

@@ -224,9 +224,6 @@ export default function StaffScreen() {
       <View style={{ paddingTop: insets.top + 14, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: theme.primary[600] }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 }}>
           <DrawerToggle />
-          <TouchableOpacity onPress={() => router.back()} style={{ padding: 4 }}>
-            <Ionicons name="arrow-back" size={20} color="rgba(255,255,255,0.8)" />
-          </TouchableOpacity>
           <Text style={{ flex: 1, fontSize: 20, fontWeight: '800', color: '#fff', letterSpacing: -0.3 }}>Staff</Text>
           <View style={{ backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 }}>
             <Text style={{ fontSize: 12, color: '#fff', fontWeight: '600' }}>{allStaff.length} members</Text>

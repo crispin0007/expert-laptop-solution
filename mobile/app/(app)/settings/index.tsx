@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { View, Text, TouchableOpacity, ScrollView, Switch, Alert, ActivityIndicator } from 'react-native'
+import { Ionicons } from '@expo/vector-icons'
 import { useRouter } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTheme } from '@/theme/ThemeContext'
@@ -67,8 +68,8 @@ export default function SettingsScreen() {
       {/* Header */}
       <View style={{ paddingTop: insets.top + 12, paddingHorizontal: 16, paddingBottom: 14, backgroundColor: theme.colors.surface, borderBottomWidth: 1, borderBottomColor: theme.colors.border, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Text style={{ color: theme.primary[600], fontSize: theme.fontSize.sm }}>←</Text>
+          <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/(app)/(tabs)/dashboard')} style={{ padding: 4, marginLeft: -4 }}>
+            <Ionicons name="chevron-back" size={22} color={theme.colors.text} />
           </TouchableOpacity>
           <Text style={{ fontSize: theme.fontSize.lg, fontWeight: theme.fontWeight.bold, color: theme.colors.text }}>Workspace Settings</Text>
         </View>

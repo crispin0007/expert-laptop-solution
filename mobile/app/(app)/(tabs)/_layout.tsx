@@ -104,10 +104,10 @@ export default function TabLayout() {
           ),
         }}
       />
-      {/* Hide detail screens from tab bar */}
-      <Tabs.Screen name="tickets/[id]" options={{ href: null }} />
-      <Tabs.Screen name="projects/[id]" options={{ href: null }} />
-      <Tabs.Screen name="customers/[id]" options={{ href: null }} />
+      {/* Hide detail screens from tab bar AND suppress tab bar on those screens */}
+      <Tabs.Screen name="tickets/[id]" options={{ href: null, tabBarStyle: { display: 'none' } }} />
+      <Tabs.Screen name="projects/[id]" options={{ href: null, tabBarStyle: { display: 'none' } }} />
+      <Tabs.Screen name="customers/[id]" options={{ href: null, tabBarStyle: { display: 'none' } }} />
     </Tabs>
   )
 }

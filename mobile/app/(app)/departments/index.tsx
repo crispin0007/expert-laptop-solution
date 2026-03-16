@@ -159,9 +159,6 @@ export default function DepartmentsScreen() {
       <View style={{ paddingTop: insets.top + 14, paddingHorizontal: 16, paddingBottom: 18, backgroundColor: theme.primary[600] }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <DrawerToggle />
-          <TouchableOpacity onPress={() => router.back()} style={{ padding: 4 }}>
-            <Ionicons name="arrow-back" size={20} color="rgba(255,255,255,0.8)" />
-          </TouchableOpacity>
           <Text style={{ flex: 1, fontSize: 20, fontWeight: '800', color: '#fff', letterSpacing: -0.3 }}>Departments</Text>
           {departments.length > 0 && (
             <View style={{ backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 }}>
