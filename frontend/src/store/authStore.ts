@@ -19,6 +19,7 @@ export interface UserPermissions {
   // Projects
   can_view_projects: boolean
   can_create_projects: boolean
+  can_update_projects: boolean
   can_delete_projects: boolean
   // Departments
   can_view_departments: boolean

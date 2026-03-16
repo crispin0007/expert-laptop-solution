@@ -18,10 +18,10 @@ class DepartmentViewSet(TenantMixin, viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='staff.view')()]
         if self.action == 'destroy':
-            return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='staff.manage')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='staff.manage')()]
 
     def get_queryset(self):
         self.ensure_tenant()

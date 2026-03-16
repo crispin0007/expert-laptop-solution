@@ -32,10 +32,10 @@ class CustomerViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='customers.view')()]
         if self.action == 'destroy':
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='customers.delete')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='customers.create')()]
 
     def get_serializer_class(self):
         # Lean serializer for dropdown / search-as-you-type use
@@ -172,10 +172,10 @@ class CustomerContactViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='customers.view')()]
         if self.action == 'destroy':
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='customers.delete')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='customers.create')()]
 
     def get_queryset(self):
         self.ensure_tenant()

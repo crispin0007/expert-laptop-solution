@@ -55,8 +55,8 @@ class AccountViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve', 'trial_balance'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -111,8 +111,8 @@ class BankAccountViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -138,8 +138,8 @@ class JournalEntryViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
 
     def get_serializer_class(self):
         if self.action in ('create', 'update', 'partial_update'):
@@ -231,10 +231,10 @@ class BillViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
         if self.action in ('update', 'partial_update'):
-            return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='accounting.manage_invoices')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -308,8 +308,8 @@ class PaymentViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -397,10 +397,10 @@ class CreditNoteViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
         if self.action in ('update', 'partial_update'):
-            return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='accounting.manage_invoices')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -458,7 +458,7 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
     required_module = 'accounting'
 
     def get_permissions(self):
-        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
 
     def _parse_dates(self, request, *names):
         """
@@ -655,12 +655,12 @@ class CoinTransactionViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='accounting.view_coins')()]
         if self.action in ('approve', 'reject', 'pending', 'award', 'staff_history'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.manage_coins')()]
         if self.action == 'destroy':
-            return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_coins')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='accounting.view_coins')()]
 
     def get_queryset(self):
         params   = self.request.query_params
@@ -752,8 +752,8 @@ class StaffSalaryProfileViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_payslips')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_payslips')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -779,8 +779,8 @@ class PayslipViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_payslips')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_payslips')()]
 
     def get_queryset(self):
         params   = self.request.query_params
@@ -892,15 +892,15 @@ class InvoiceViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve', 'pdf'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
         # Staff can collect payment, generate from ticket, and edit DRAFT invoices
         if self.action in ('collect_payment', 'generate_from_ticket', 'update', 'partial_update'):
-            return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='accounting.manage_invoices')()]
         # Finance managers (role='manager') approve/reject submitted invoices
         if self.action in ('finance_review',):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.manage_invoices')()]
         # destroy and all other write actions (issue, void…) require admin
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
 
     def get_queryset(self):
         params = self.request.query_params
@@ -1046,8 +1046,8 @@ class QuotationViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='accounting.view_invoices')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.manage_invoices')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -1173,8 +1173,8 @@ class DebitNoteViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -1244,11 +1244,11 @@ class TDSEntryViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve', 'summary'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
         if self.action in ('update', 'partial_update'):
             # Allow admins to correct TDS entries (supplier name, PAN, rate, period)
-            return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
 
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -1308,8 +1308,8 @@ class BankReconciliationViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -1387,8 +1387,8 @@ class RecurringJournalViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -1435,7 +1435,7 @@ class VATRemittanceView(TenantMixin, viewsets.ViewSet):
     required_module = 'accounting'
 
     def get_permissions(self):
-        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.manage_invoices')()]
 
     def create(self, request):
         self.ensure_tenant()
@@ -1471,7 +1471,7 @@ class TDSRemittanceView(TenantMixin, viewsets.ViewSet):
     required_module = 'accounting'
 
     def get_permissions(self):
-        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.manage_invoices')()]
 
     def create(self, request):
         self.ensure_tenant()

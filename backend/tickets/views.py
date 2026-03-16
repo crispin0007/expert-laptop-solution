@@ -57,8 +57,8 @@ class TicketTypeViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='tickets.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='tickets.update')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -100,8 +100,8 @@ class TicketCategoryViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve', 'subcategories'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='tickets.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='tickets.update')()]
 
     def get_serializer_class(self):
         if self.request.method in ('POST', 'PUT', 'PATCH'):
@@ -137,8 +137,8 @@ class TicketSubCategoryViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='tickets.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='tickets.update')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -176,10 +176,10 @@ class TicketViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve', 'timeline', 'sla_breached', 'sla_warning', 'suggest_title'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='tickets.view')()]
         if self.action in ('destroy', 'assign', 'transfer', 'close_ticket'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='tickets.assign')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='tickets.create')()]
 
     def get_serializer_class(self):
         if self.action in ('create', 'update', 'partial_update'):
@@ -362,8 +362,8 @@ class TicketCommentViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='tickets.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='tickets.comment')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -432,7 +432,7 @@ class TicketTransferViewSet(NexusViewSet):
     required_module = 'tickets'
     serializer_class = TicketTransferSerializer
     http_method_names = ['get', 'head', 'options']
-    permission_classes = [permissions.IsAuthenticated, make_role_permission(*ALL_ROLES)]
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*ALL_ROLES, permission_key='tickets.view')]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -459,10 +459,10 @@ class TicketProductViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='tickets.view')()]
         if self.action == 'destroy':
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='tickets.update')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='tickets.create')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -608,7 +608,7 @@ class TicketSLAViewSet(NexusViewSet):
     required_module = 'tickets'
     serializer_class = TicketSLASerializer
     http_method_names = ['get', 'head', 'options']
-    permission_classes = [permissions.IsAuthenticated, make_role_permission(*ALL_ROLES)]
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*ALL_ROLES, permission_key='tickets.view')]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -631,10 +631,10 @@ class TicketAttachmentViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='tickets.view')()]
         if self.action == 'destroy':
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='tickets.update')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='tickets.create')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -671,8 +671,8 @@ class VehicleViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='tickets.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='tickets.update')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -693,8 +693,8 @@ class VehicleLogViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='tickets.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='tickets.create')()]
 
     def get_queryset(self):
         self.ensure_tenant()

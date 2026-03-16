@@ -17,9 +17,9 @@ from .serializers import (
 )
 
 # Shared helper to avoid repeating the same three-liner
-_READ_PERMS = lambda: [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-_STAFF_PERMS = lambda: [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES)()]
-_MANAGER_PERMS = lambda: [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
+_READ_PERMS = lambda: [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='projects.view')()]
+_STAFF_PERMS = lambda: [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='projects.update')()]
+_MANAGER_PERMS = lambda: [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='projects.delete')()]
 
 
 class ProjectViewSet(NexusViewSet):

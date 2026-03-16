@@ -11,7 +11,8 @@ import {
   UploadCloud, X, Image, Link2, Palette,
   Bell, Mail, Smartphone, ChevronDown, ChevronUp,
 } from 'lucide-react'
-import { useAuthStore, isManager, type User } from '../../store/authStore'
+import { useAuthStore, type User } from '../../store/authStore'
+import { usePermissions } from '../../hooks/usePermissions'
 import { usePreferenceStore, type DateMode } from '../../store/preferenceStore'
 import { useTenantStore } from '../../store/tenantStore'
 import { adStringToBsDisplay, currentFiscalYear, fiscalYearAdParams } from '../../utils/nepaliDate'
@@ -407,7 +408,8 @@ function SaveBar({ onSave, isPending }: { onSave: () => void; isPending: boolean
 export default function SettingsPage() {
   const user = useAuthStore((s) => s.user)
   const setUser = useAuthStore((s) => s.setUser)
-  const managerView = isManager(user)
+  const { can } = usePermissions()
+  const managerView = can('can_manage_settings')
   const queryClient = useQueryClient()
   const setTenant = useTenantStore((s) => s.setTenant)
   const tenantSubdomain = useTenantStore((s) => s.subdomain)

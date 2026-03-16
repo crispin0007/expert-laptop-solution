@@ -609,7 +609,7 @@ const FINANCE_STATUS_CFG: Record<string, { label: string; cls: string }> = {
 
 function TicketInvoicePanel({ ticketId, ticketStatus }: { ticketId: number; ticketStatus: string }) {
   const qc = useQueryClient()
-  const { isManager } = usePermissions()
+  const { can } = usePermissions()
 
   // Payment modal state
   const [showPayModal, setShowPayModal] = useState(false)
@@ -768,7 +768,7 @@ function TicketInvoicePanel({ ticketId, ticketStatus }: { ticketId: number; tick
 
   const fsCfg = FINANCE_STATUS_CFG[inv.finance_status] ?? { label: inv.finance_status, cls: 'bg-gray-100 text-gray-600' }
   const canCollectPayment = inv.status === 'issued' && inv.finance_status === 'draft' && parseFloat(inv.amount_due ?? '0') > 0
-  const canFinanceReview  = isManager && inv.finance_status === 'submitted'
+  const canFinanceReview  = can('can_manage_accounting') && inv.finance_status === 'submitted'
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm space-y-4">
@@ -1535,9 +1535,9 @@ export default function TicketDetailPage() {
   const ticketId = Number(id)
   const qc = useQueryClient()
 
-  const { isManager } = usePermissions()
+  const { can } = usePermissions()
   const user = useAuthStore((s) => s.user)
-  const managerView = isManager
+  const managerView = can('can_update_tickets')
 
   const [commentBody, setCommentBody] = useState('')
   const [isInternal, setIsInternal] = useState(false)
@@ -1731,7 +1731,7 @@ export default function TicketDetailPage() {
                   Update
                 </button>
               </div>
-              {ticket.status === 'resolved' && (
+              {ticket.status === 'resolved' && can('can_close_tickets') && (
                 <button
                   onClick={() => setShowCloseModal(true)}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition"
@@ -1753,18 +1753,22 @@ export default function TicketDetailPage() {
               </button>
             ) : null
           )}
+          {can('can_assign_tickets') && (
           <button
             onClick={() => setShowAssign(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-green-300 text-green-700 rounded-lg hover:bg-green-50 transition"
           >
             <UserCheck size={13} /> Assign
           </button>
+          )}
+          {can('can_transfer_tickets') && (
           <button
             onClick={() => setShowTransfer(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-purple-300 text-purple-700 rounded-lg hover:bg-purple-50 transition"
           >
             <ArrowRightLeft size={13} /> Transfer
           </button>
+          )}
         </div>
       </div>
 
@@ -1826,6 +1830,7 @@ export default function TicketDetailPage() {
           <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
             <h2 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
               <Paperclip size={15} className="text-gray-400" /> Attachments
+              {can('can_update_tickets') && (
               <button
                 onClick={() => attachFileRef.current?.click()}
                 disabled={uploadingAttach}
@@ -1834,6 +1839,7 @@ export default function TicketDetailPage() {
                 {uploadingAttach ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
                 {uploadingAttach ? 'Uploading…' : 'Upload'}
               </button>
+              )}
             </h2>
             <input ref={attachFileRef} type="file" multiple className="hidden" onChange={e => handleAttachmentUpload(e.target.files)} />
             {attachments.length === 0 && <p className="text-sm text-gray-400">No attachments yet.</p>}
@@ -1859,9 +1865,11 @@ export default function TicketDetailPage() {
                   <a href={a.url} target="_blank" rel="noreferrer" className="text-indigo-500 hover:text-indigo-700 p-1" title="Download">
                     <Download size={14} />
                   </a>
+                  {can('can_update_tickets') && (
                   <button onClick={() => deleteAttachment(a.id)} className="text-red-400 hover:text-red-600 p-1" title="Remove">
                     <X size={14} />
                   </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -2036,6 +2044,7 @@ export default function TicketDetailPage() {
             )}
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
+                {can('can_update_tickets') && (
                 <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
                   <input
                     type="checkbox"
@@ -2045,6 +2054,7 @@ export default function TicketDetailPage() {
                   />
                   <Lock size={10} /> Internal
                 </label>
+                )}
                 <button
                   onClick={() => commentFileRef.current?.click()}
                   className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"

@@ -340,7 +340,7 @@ class UserViewSet(TenantMixin, viewsets.ReadOnlyModelViewSet):
 
     queryset = User.objects.all()
     serializer_class = UserSerializer
-    permission_classes = [permissions.IsAuthenticated, make_role_permission(*MANAGER_ROLES)]
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*MANAGER_ROLES, permission_key='staff.view')]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -355,7 +355,7 @@ class TenantMembershipViewSet(TenantMixin, viewsets.ModelViewSet):
 
     queryset = TenantMembership.objects.all()
     serializer_class = TenantMembershipSerializer
-    permission_classes = [permissions.IsAuthenticated, make_role_permission(*ADMIN_ROLES)]
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*ADMIN_ROLES, permission_key='staff.manage')]
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -383,8 +383,8 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
         """Read actions: manager+. Write/admin actions: admin+."""
         read_actions = ('list', 'retrieve', 'generate_employee_id')
         if self.action in read_actions:
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='staff.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='staff.manage')()]
 
     def _get_tenant_staff(self, tenant):
         """Return User queryset for ALL members of this tenant (active + inactive)."""

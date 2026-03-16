@@ -143,6 +143,7 @@ class MeSerializer(serializers.ModelSerializer):
             # Projects
             'can_view_projects': _perm(True, 'projects.view'),
             'can_create_projects': _perm(is_staff, 'projects.create'),
+            'can_update_projects': _perm(is_staff, 'projects.update'),
             'can_delete_projects': _perm(is_manager, 'projects.delete'),
             # Departments
             'can_view_departments': _perm(True, 'departments.view'),

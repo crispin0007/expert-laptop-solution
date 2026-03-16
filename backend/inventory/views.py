@@ -53,8 +53,8 @@ class CategoryViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve', 'tree'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='inventory.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='inventory.manage')()]
 
     @action(detail=False, methods=['get'], url_path='tree')
     def tree(self, request):
@@ -69,8 +69,8 @@ class ProductImageViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='inventory.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='inventory.manage')()]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -104,8 +104,8 @@ class ProductViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='inventory.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='inventory.manage')()]
 
     def list(self, request, *args, **kwargs):
         """Override list to support ?all=true for lightweight autocomplete lists."""
@@ -223,7 +223,7 @@ class StockLevelViewSet(NexusViewSet):
     queryset = StockLevel.objects.select_related('product')
     serializer_class = StockLevelSerializer
     http_method_names = ['get', 'head', 'options']
-    permission_classes = [permissions.IsAuthenticated, make_role_permission(*ALL_ROLES)]
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*ALL_ROLES, permission_key='inventory.view')]
 
 
 class StockMovementViewSet(NexusViewSet):
@@ -251,8 +251,8 @@ class StockMovementViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='inventory.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='inventory.manage')()]
 
 
 
@@ -275,8 +275,8 @@ class SupplierViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='inventory.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='inventory.manage')()]
 
 
 
@@ -317,8 +317,8 @@ class PurchaseOrderViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='inventory.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='inventory.manage')()]
 
     def create(self, request, *args, **kwargs):
         """Return the full read serializer (with id) after creating a PO."""
@@ -432,8 +432,8 @@ class UnitOfMeasureViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='inventory.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='inventory.manage')()]
 
 
 
@@ -460,8 +460,8 @@ class ProductVariantViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='inventory.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='inventory.manage')()]
 
 
 
@@ -503,8 +503,8 @@ class ReturnOrderViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='inventory.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='inventory.manage')()]
 
     @action(detail=True, methods=['post'], url_path='send')
     def send(self, request, pk=None):
@@ -577,7 +577,7 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
     GET /inventory/reports/export-csv/   — download all products as CSV
     """
     required_module = 'inventory'
-    permission_classes = [permissions.IsAuthenticated, make_role_permission(*ALL_ROLES)]
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*ALL_ROLES, permission_key='inventory.view')]
 
     # ── Valuation ─────────────────────────────────────────────────────────────
     @action(detail=False, methods=['get'], url_path='valuation')
@@ -873,8 +873,8 @@ class SupplierProductViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='inventory.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='inventory.manage')()]
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -932,8 +932,8 @@ class StockCountViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='inventory.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='inventory.manage')()]
 
     @action(detail=True, methods=['post'], url_path='start')
     def start(self, request, pk=None):

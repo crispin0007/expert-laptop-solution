@@ -12,7 +12,8 @@ import apiClient from '../../api/client'
 import { ACCOUNTING, STAFF } from '../../api/endpoints'
 import toast from 'react-hot-toast'
 import { useConfirm } from '../../components/ConfirmDialog'
-import { useAuthStore, isAdmin, isManager, isStaff } from '../../store/authStore'
+import { useAuthStore } from '../../store/authStore'
+import { usePermissions } from '../../hooks/usePermissions'
 import {
   LayoutDashboard, Receipt, FileText, CreditCard, RotateCcw,
   BookOpen, Layers, Building2, Coins, BarChart2, ArrowLeftRight,
@@ -856,6 +857,7 @@ function InvoicesTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const user = useAuthStore(s => s.user)
+  const { can } = usePermissions()
   const { fyYear } = useFY()
   const [statusFilter, setStatusFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
@@ -989,13 +991,13 @@ function InvoicesTab() {
                       <button onClick={() => downloadPdf(inv)} title="Download PDF" className="p-1.5 rounded hover:bg-indigo-50 text-indigo-500 transition-colors">
                         <Download size={14} />
                       </button>
-                      {(isAdmin(user) || (inv.status === 'draft' && isStaff(user))) && (
+                      {can('can_manage_accounting') && (
                         <button onClick={() => setEditInvoice(inv)} title="Edit Invoice"
                           className="p-1.5 rounded hover:bg-indigo-50 text-indigo-400 transition-colors">
                           <Pencil size={14} />
                         </button>
                       )}
-                      {isAdmin(user) && (
+                      {can('can_manage_accounting') && (
                         <button onClick={() => { confirm({ title: 'Delete Invoice', message: `Delete ${inv.invoice_number}? This cannot be undone.`, variant: 'danger', confirmLabel: 'Delete' }).then(ok => { if (ok) mutateDelete.mutate(inv.id) }) }}
                           title="Delete Invoice" className="p-1.5 rounded hover:bg-red-50 text-red-400 transition-colors">
                           <Trash2 size={14} />
@@ -1273,6 +1275,7 @@ function BillsTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const user = useAuthStore(s => s.user)
+  const { can } = usePermissions()
   const { fyYear } = useFY()
   const [statusFilter, setStatusFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
@@ -1383,13 +1386,13 @@ function BillsTab() {
                   <td className="px-4 py-3"><Badge status={bill.status} /></td>
                   <td className="px-4 py-3">
                     <div className="flex gap-1 items-center">
-                      {(isAdmin(user) || (bill.status === 'draft' && isStaff(user))) && (
+                      {can('can_manage_accounting') && (
                         <button onClick={() => setEditBill(bill)} title="Edit Bill"
                           className="p-1.5 rounded hover:bg-indigo-50 text-indigo-400 transition-colors">
                           <Pencil size={14} />
                         </button>
                       )}
-                      {isAdmin(user) && (
+                      {can('can_manage_accounting') && (
                         <button onClick={() => { confirm({ title: 'Delete Bill', message: `Delete ${bill.bill_number}? This cannot be undone.`, variant: 'danger', confirmLabel: 'Delete' }).then(ok => { if (ok) mutateDelete.mutate(bill.id) }) }}
                           title="Delete Bill" className="p-1.5 rounded hover:bg-red-50 text-red-400 transition-colors">
                           <Trash2 size={14} />
@@ -1424,6 +1427,7 @@ function PaymentsTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const user = useAuthStore(s => s.user)
+  const { can } = usePermissions()
   const { fyYear } = useFY()
   const { data, isLoading } = useQuery<ApiPage<Payment>>({
     queryKey: ['payments', fyYear],
@@ -1463,7 +1467,7 @@ function PaymentsTab() {
                   <td className="px-4 py-3 text-gray-500 text-xs">{p.invoice ?? '—'}</td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{p.bill ?? '—'}</td>
                   <td className="px-4 py-3">
-                    {isAdmin(user) && (
+                    {can('can_manage_accounting') && (
                       <button onClick={() => confirm({ title: 'Delete Payment', message: `Delete payment ${p.payment_number}? The linked journal entry will NOT be auto-reversed — post a manual reversing entry if needed.`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDeletePayment.mutate(p.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
                     )}
                   </td>
@@ -1485,6 +1489,7 @@ function CreditNotesTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const user = useAuthStore(s => s.user)
+  const { can } = usePermissions()
   const { fyYear } = useFY()
   const [editCn, setEditCn] = useState<CreditNote | null>(null)
   const { data, isLoading } = useQuery<ApiPage<CreditNote>>({
@@ -1532,13 +1537,13 @@ function CreditNotesTab() {
                   <td className="px-4 py-3 text-gray-500 text-xs">{fmt(cn.issued_at)}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-1 items-center">
-                      {cn.status === 'draft' && isStaff(user) && (
+                      {cn.status === 'draft' && can('can_manage_accounting') && (
                         <button onClick={() => setEditCn(cn)} title="Edit Credit Note"
                           className="p-1.5 rounded hover:bg-indigo-50 text-indigo-400 transition-colors">
                           <Pencil size={14} />
                         </button>
                       )}
-                      {cn.status === 'draft' && isAdmin(user) && (
+                      {cn.status === 'draft' && can('can_manage_accounting') && (
                         <button onClick={() => { confirm({ title: 'Delete Credit Note', message: `Delete ${cn.credit_note_number}? This cannot be undone.`, variant: 'danger', confirmLabel: 'Delete' }).then(ok => { if (ok) mutateDelete.mutate(cn.id) }) }}
                           title="Delete" className="p-1.5 rounded hover:bg-red-50 text-red-400 transition-colors">
                           <Trash2 size={14} />
@@ -1999,6 +2004,7 @@ function JournalCreateModal({ onClose }: { onClose: () => void }) {
 function JournalsTab() {
   const qc = useQueryClient()
   const { user } = useAuthStore()
+  const { can } = usePermissions()
   const confirm = useConfirm()
   const [expanded, setExpanded] = useState<number | null>(null)
   const [showCreate, setShowCreate] = useState(false)
@@ -2062,7 +2068,7 @@ function JournalsTab() {
                       }
                     </td>
                     <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                      {!je.is_posted && isAdmin(user) && (
+                      {!je.is_posted && can('can_manage_accounting') && (
                         <div className="flex items-center gap-1.5">
                           <button onClick={() => setEditJournal(je)}
                             className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors" title="Edit entry">
@@ -2708,6 +2714,7 @@ function BanksTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const user = useAuthStore(s => s.user)
+  const { can } = usePermissions()
   const [subTab, setSubTab] = useState<'banks' | 'statement' | 'cash'>('banks')
   const [showCreateBank, setShowCreateBank] = useState(false)
   const [showCreateCash, setShowCreateCash] = useState(false)
@@ -2838,7 +2845,7 @@ function BanksTab() {
                       <div className="flex gap-1">
                         <button onClick={() => { setSelectedBankId(String(b.id)); setSubTab('statement') }}
                           title="View Statement" className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"><BookOpen size={13} /></button>
-                        {isAdmin(user) && (
+                        {can('can_manage_accounting') && (
                           <>
                             <button onClick={() => setEditBank(b)} title="Edit" className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"><Pencil size={13} /></button>
                             <button onClick={() => confirm({ title: 'Delete Bank Account', message: `Delete "${b.name}"? Linked payments and reconciliations may be affected.`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDeleteBank.mutate(b.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
@@ -3058,6 +3065,7 @@ function PayslipsTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const user = useAuthStore(s => s.user)
+  const { can } = usePermissions()
   const [subTab, setSubTab] = useState<'payslips' | 'coins' | 'salaries'>('payslips')
   const [showGenerate, setShowGenerate] = useState(false)
   const [editPayslip, setEditPayslip] = useState<Payslip | null>(null)
@@ -3225,7 +3233,7 @@ function PayslipsTab() {
             <Plus size={13} /> Generate Payslip
           </button>
         )}
-        {subTab === 'salaries' && isAdmin(user) && (
+        {subTab === 'salaries' && can('can_manage_accounting') && (
           <button
             onClick={() => { setSalaryForm({ staff: '', base_salary: '0', tds_rate: '10', bonus_default: '0', effective_from: new Date().toISOString().slice(0, 10), notes: '' }); setShowSalaryForm(true) }}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition mb-1"
@@ -3335,7 +3343,7 @@ function PayslipsTab() {
                   <td className="px-4 py-3"><Badge status={p.status} /></td>
                   <td className="px-4 py-3">
                     <div className="flex gap-1 flex-wrap items-center">
-                      {p.status === 'draft' && isAdmin(user) && (
+                      {p.status === 'draft' && can('can_manage_accounting') && (
                         <button onClick={() => setEditPayslip(p)} title="Edit Payslip" className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"><Pencil size={13} /></button>
                       )}
                       {p.status === 'draft' && (
@@ -3344,7 +3352,7 @@ function PayslipsTab() {
                       {p.status === 'issued' && (
                         <button onClick={() => setMarkPaidPayslip(p)} className="px-2 py-1 text-xs bg-green-50 text-green-700 rounded hover:bg-green-100">Mark Paid</button>
                       )}
-                      {p.status === 'draft' && isAdmin(user) && (
+                      {p.status === 'draft' && can('can_manage_accounting') && (
                         <button onClick={() => confirm({ title: 'Delete Payslip', message: `Delete payslip for ${p.staff_name}? This cannot be undone.`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDeletePayslip.mutate(p.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
                       )}
                     </div>
@@ -3481,7 +3489,7 @@ function PayslipsTab() {
                       <td className="px-4 py-3 text-gray-500 text-xs">{fmt(sp.effective_from)}</td>
                       <td className="px-4 py-3 text-gray-400 text-xs max-w-xs truncate">{sp.notes || '—'}</td>
                       <td className="px-4 py-3">
-                        {isAdmin(user) && (
+                        {can('can_manage_accounting') && (
                           <div className="flex gap-1">
                             <button
                               onClick={() => { setSalaryForm({ staff: String(sp.staff), base_salary: sp.base_salary, tds_rate: (parseFloat(sp.tds_rate) * 100).toFixed(2), bonus_default: sp.bonus_default, effective_from: sp.effective_from, notes: sp.notes }); setEditSalary(sp) }}
@@ -4598,6 +4606,7 @@ function QuotationsTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const user = useAuthStore(s => s.user)
+  const { can } = usePermissions()
   const [statusFilter, setStatusFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [editQuotation, setEditQuotation] = useState<Quotation | null>(null)
@@ -4629,7 +4638,7 @@ function QuotationsTab() {
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-gray-400">{data?.count ?? 0} quotations</span>
-          {isManager(user) && (
+          {can('can_manage_accounting') && (
             <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors">
               <Plus size={14} /> New Quotation
             </button>
@@ -4672,7 +4681,7 @@ function QuotationsTab() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1 flex-wrap">
-                          {q.status === 'draft' && isManager(user) && (
+                          {q.status === 'draft' && can('can_manage_accounting') && (
                             <button onClick={() => setEditQuotation(q)} title="Edit" className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"><Pencil size={13} /></button>
                           )}
                           {q.status === 'draft' && (
@@ -4689,7 +4698,7 @@ function QuotationsTab() {
                               {mutateConvert.isPending ? 'Converting…' : 'Convert → Invoice'}
                             </button>
                           )}
-                          {(q.status === 'draft' || q.status === 'declined' || q.status === 'expired') && isAdmin(user) && (
+                          {(q.status === 'draft' || q.status === 'declined' || q.status === 'expired') && can('can_manage_accounting') && (
                             <button onClick={() => confirm({ title: 'Delete Quotation', message: `Delete ${q.quotation_number}?`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDelete.mutate(q.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
                           )}
                         </div>
@@ -5078,6 +5087,7 @@ function TDSTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const user = useAuthStore(s => s.user)
+  const { can } = usePermissions()
   const [statusFilter, setStatusFilter] = useState('')
   const [yearFilter, setYearFilter] = useState('')
   const [editTds, setEditTds] = useState<TDSEntry | null>(null)
@@ -5180,7 +5190,7 @@ function TDSTab() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-1 items-center">
-                          {t.status === 'pending' && isAdmin(user) && (
+                          {t.status === 'pending' && can('can_manage_accounting') && (
                             <button onClick={() => setEditTds(t)} title="Edit" className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"><Pencil size={12} /></button>
                           )}
                           {t.status === 'pending' && (
@@ -5189,7 +5199,7 @@ function TDSTab() {
                               Mark Deposited
                             </button>
                           )}
-                          {t.status === 'pending' && isAdmin(user) && (
+                          {t.status === 'pending' && can('can_manage_accounting') && (
                             <button onClick={() => confirm({ title: 'Delete TDS Entry', message: `Delete TDS entry for ${t.supplier_name}?`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDeleteTds.mutate(t.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={12} /></button>
                           )}
                         </div>
@@ -5212,6 +5222,7 @@ function BankReconciliationTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const user = useAuthStore(s => s.user)
+  const { can } = usePermissions()
   const [selected, setSelected] = useState<BankReconciliation | null>(null)
   const [newLine, setNewLine] = useState({ date: '', description: '', amount: '' })
   const [showNew, setShowNew] = useState(false)
@@ -5339,7 +5350,7 @@ function BankReconciliationTab() {
                     <span>Close: {npr(rec.closing_balance)}</span>
                   </div>
                 </button>
-                {isAdmin(user) && rec.status !== 'reconciled' && (
+                {can('can_manage_accounting') && rec.status !== 'reconciled' && (
                   <div className="px-4 pb-3 flex justify-end border-t border-gray-100 pt-2">
                     <button onClick={() => confirm({ title: 'Delete Reconciliation', message: `Delete reconciliation for ${rec.bank_account_name} (${fmt(rec.statement_date)})? All statement lines will be removed.`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDeleteRec.mutate(rec.id) })} className="flex items-center gap-1 text-xs text-red-400 hover:text-red-600 transition-colors"><Trash2 size={11} /> Delete</button>
                   </div>

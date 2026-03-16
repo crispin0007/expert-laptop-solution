@@ -174,19 +174,25 @@ class TenantRolePermission(permissions.BasePermission):
         return False
 
 
-def make_role_permission(*roles):
+def make_role_permission(*roles, permission_key=None):
     """
     Factory that returns a TenantRolePermission subclass locked to *roles*.
 
     Preferred way to express per-action role requirements inside
-    ``get_permissions()``::
+    ``get_permissions()``:::
 
         def get_permissions(self):
             if self.action in ('list', 'retrieve'):
                 return [IsAuthenticated(), make_role_permission(*ALL_ROLES)()]
             return [IsAuthenticated(), make_role_permission(*ADMIN_ROLES)()]
+
+    Pass ``permission_key`` (e.g. ``'accounting.view_invoices'``) to grant
+    access to custom-role users who have that key set to True in their role
+    permissions JSON — without needing a view-level ``required_permission``
+    attribute.
     """
     required = list(roles)
+    _perm_key = permission_key
 
     class _ConfiguredRolePermission(permissions.BasePermission):
         def has_permission(self, request, view):
@@ -203,11 +209,11 @@ def make_role_permission(*roles):
                 return False
             if membership.role in required:
                 return True
-            # Custom role JSON check
-            required_permission = getattr(view, 'required_permission', None)
-            if required_permission and membership.role == 'custom' and membership.custom_role:
+            # Custom role JSON check — inline key takes precedence over view attribute
+            perm_key = _perm_key or getattr(view, 'required_permission', None)
+            if perm_key and membership.role == 'custom' and membership.custom_role:
                 role_perms = membership.custom_role.permissions or {}
-                return bool(role_perms.get(required_permission, False))
+                return bool(role_perms.get(perm_key, False))
             return False
 
     _ConfiguredRolePermission.__name__ = f"RolePermission({'|'.join(required)})"

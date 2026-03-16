@@ -11,7 +11,8 @@ import {
 } from 'lucide-react'
 import apiClient from '../../api/client'
 import { PROJECTS, STAFF, INVENTORY } from '../../api/endpoints'
-import { useAuthStore, isManager } from '../../store/authStore'
+import { useAuthStore } from '../../store/authStore'
+import { usePermissions } from '../../hooks/usePermissions'
 import Modal from '../../components/Modal'
 import { useConfirm } from '../../components/ConfirmDialog'
 import DateDisplay from '../../components/DateDisplay'
@@ -534,8 +535,8 @@ export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>()
   const projectId = Number(id)
   const qc = useQueryClient()
-  const user = useAuthStore(s => s.user)
-  const canManage = isManager(user)
+  const { can } = usePermissions()
+  const canManage = can('can_update_projects')
   const confirm = useConfirm()
 
   const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban')

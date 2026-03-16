@@ -174,7 +174,7 @@ class DashboardStatsView(TenantMixin, APIView):
     Permissions — any authenticated staff member of the tenant.
     """
 
-    permission_classes = [permissions.IsAuthenticated, make_role_permission(*ALL_ROLES)]
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*ALL_ROLES, permission_key='reports.view')]
 
     def get(self, request):
         # self.tenant is guaranteed non-None by TenantMixin.initial()
