@@ -129,19 +129,35 @@ ok "Static files collected"
 log "Restarting services …"
 
 # Beat first (lowest traffic, safe to kill)
-$COMPOSE up -d --no-deps celery-beat
+if $REBUILD_BACKEND; then
+  $COMPOSE up -d --no-deps --force-recreate celery-beat
+else
+  $COMPOSE up -d --no-deps celery-beat
+fi
 ok "celery-beat restarted"
 
 # Workers
-$COMPOSE up -d --no-deps celery
+if $REBUILD_BACKEND; then
+  $COMPOSE up -d --no-deps --force-recreate celery
+else
+  $COMPOSE up -d --no-deps celery
+fi
 ok "celery restarted"
 
 # Web (API)
-$COMPOSE up -d --no-deps web
+if $REBUILD_BACKEND; then
+  $COMPOSE up -d --no-deps --force-recreate web
+else
+  $COMPOSE up -d --no-deps web
+fi
 ok "web restarted"
 
 # Frontend (static SPA container)
-$COMPOSE up -d --no-deps frontend
+if $REBUILD_FRONTEND; then
+  $COMPOSE up -d --no-deps --force-recreate frontend
+else
+  $COMPOSE up -d --no-deps frontend
+fi
 ok "frontend restarted"
 
 # Caddy (reverse proxy — reload config without dropping connections)
