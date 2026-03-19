@@ -182,8 +182,9 @@ class DashboardStatsView(TenantMixin, APIView):
 
         # ── Lazy imports to keep core dependency-free ─────────────────────
         from tickets.models import Ticket, TicketSLA
-        from projects.models import Project
+        from projects.models import Project, ProjectTask
         from accounting.models import CoinTransaction, Invoice
+        from django.db.models import Sum, Q
 
         now = timezone.now()
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -199,7 +200,7 @@ class DashboardStatsView(TenantMixin, APIView):
             except (ValueError, KeyError):
                 pass
 
-        # ── Tickets ───────────────────────────────────────────────────────
+        # ── Tickets (tenant-wide) ─────────────────────────────────────────
         ticket_qs = Ticket.objects.filter(tenant=tenant)
         if fy_start_ad:
             ticket_qs = ticket_qs.filter(created_at__date__gte=fy_start_ad, created_at__date__lte=fy_end_ad)
@@ -215,21 +216,19 @@ class DashboardStatsView(TenantMixin, APIView):
             breach_at__gt=now,
         ).count()
 
-        # ── Projects ──────────────────────────────────────────────────────
+        # ── Projects (tenant-wide) ────────────────────────────────────────
         project_qs = Project.objects.filter(tenant=tenant, status="active", is_deleted=False)
         if fy_start_ad:
             project_qs = project_qs.filter(created_at__date__gte=fy_start_ad, created_at__date__lte=fy_end_ad)
         active_projects_count = project_qs.count()
 
-        # ── Coins ─────────────────────────────────────────────────────────
+        # ── Coins (tenant-wide) ───────────────────────────────────────────
         coin_qs = CoinTransaction.objects.filter(tenant=tenant, status="pending")
         if fy_start_ad:
             coin_qs = coin_qs.filter(created_at__date__gte=fy_start_ad, created_at__date__lte=fy_end_ad)
         pending_coins_count = coin_qs.count()
 
         # ── Revenue this month (sum of paid invoices) ─────────────────────
-        from django.db.models import Sum
-
         revenue_filter = dict(tenant=tenant, status=Invoice.STATUS_PAID)
         if fy_start_ad:
             revenue_filter['paid_at__date__gte'] = fy_start_ad
@@ -239,7 +238,83 @@ class DashboardStatsView(TenantMixin, APIView):
         revenue_result = Invoice.objects.filter(**revenue_filter).aggregate(total=Sum("total"))
         revenue_this_month = str(revenue_result["total"] or Decimal("0.00"))
 
+        # ── Unpaid invoices (issued but not yet paid) ─────────────────────
+        unpaid_qs = Invoice.objects.filter(tenant=tenant, status=Invoice.STATUS_ISSUED)
+        unpaid_invoices_count = unpaid_qs.count()
+        unpaid_invoices_total = str(unpaid_qs.aggregate(total=Sum("total"))["total"] or Decimal("0.00"))
+
+        # ── New customers this month ──────────────────────────────────────
+        new_customers_count = 0
+        try:
+            from customers.models import Customer
+            new_customers_count = Customer.objects.filter(
+                tenant=tenant,
+                created_at__gte=month_start,
+                is_deleted=False,
+            ).count()
+        except Exception:
+            pass
+
+        # ── Department-scoped stats (for manager dashboard) ───────────────
+        dept_open_tickets = 0
+        dept_sla_breached = 0
+        dept_unassigned_tickets = 0
+        dept_team_size = 0
+        dept_id = None
+        try:
+            from accounts.models import TenantMembership
+            membership = TenantMembership.objects.filter(
+                tenant=tenant, user=request.user
+            ).select_related('department').first()
+            if membership and membership.department_id:
+                dept_id = membership.department_id
+                dept_tq = Ticket.objects.filter(tenant=tenant, department_id=dept_id)
+                dept_open_tickets = dept_tq.filter(status="open").count()
+                dept_unassigned_tickets = dept_tq.filter(
+                    status="open", assigned_to__isnull=True
+                ).count()
+                dept_sla_breached = TicketSLA.objects.filter(
+                    ticket__tenant=tenant,
+                    ticket__department_id=dept_id,
+                    breached=True,
+                ).count()
+                dept_team_size = TenantMembership.objects.filter(
+                    tenant=tenant,
+                    department_id=dept_id,
+                    is_active=True,
+                ).count()
+        except Exception:
+            pass
+
+        # ── User-scoped stats (for staff dashboard) ───────────────────────
+        my_open_tickets = Ticket.objects.filter(
+            tenant=tenant, assigned_to=request.user, status="open"
+        ).count()
+        my_in_progress_tickets = Ticket.objects.filter(
+            tenant=tenant, assigned_to=request.user, status="in_progress"
+        ).count()
+
+        my_coins_pending = str(
+            CoinTransaction.objects.filter(
+                tenant=tenant, staff=request.user, status="pending"
+            ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        )
+        my_coins_approved = str(
+            CoinTransaction.objects.filter(
+                tenant=tenant, staff=request.user, status="approved",
+                created_at__gte=month_start,
+            ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        )
+
+        my_overdue_tasks = ProjectTask.objects.filter(
+            tenant=tenant,
+            assigned_to=request.user,
+            status__in=["todo", "in_progress"],
+            due_date__lt=now.date(),
+        ).count()
+
         return ApiResponse.success(data={
+            # Tenant-wide
             "open_tickets": open_tickets_count,
             "in_progress_tickets": in_progress_count,
             "sla_breached": sla_breached_count,
@@ -247,4 +322,19 @@ class DashboardStatsView(TenantMixin, APIView):
             "active_projects": active_projects_count,
             "pending_coins": pending_coins_count,
             "revenue_this_month": revenue_this_month,
+            "unpaid_invoices_count": unpaid_invoices_count,
+            "unpaid_invoices_total": unpaid_invoices_total,
+            "new_customers_this_month": new_customers_count,
+            # Department-scoped
+            "dept_id": dept_id,
+            "dept_open_tickets": dept_open_tickets,
+            "dept_sla_breached": dept_sla_breached,
+            "dept_unassigned_tickets": dept_unassigned_tickets,
+            "dept_team_size": dept_team_size,
+            # User-scoped
+            "my_open_tickets": my_open_tickets,
+            "my_in_progress_tickets": my_in_progress_tickets,
+            "my_coins_pending": my_coins_pending,
+            "my_coins_approved": my_coins_approved,
+            "my_overdue_tasks": my_overdue_tasks,
         })
