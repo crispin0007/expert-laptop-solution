@@ -15,6 +15,7 @@ export interface UserPermissions {
   // Customers
   can_view_customers: boolean
   can_create_customers: boolean
+  can_update_customers: boolean
   can_delete_customers: boolean
   // Projects
   can_view_projects: boolean

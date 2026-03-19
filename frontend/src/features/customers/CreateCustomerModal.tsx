@@ -57,17 +57,33 @@ export default function CreateCustomerModal({ open, onClose }: Props) {
     },
     onError: (err: any) => {
       const data = err.response?.data
-      if (data && typeof data === 'object') {
-        const fieldErrors: Record<string, string> = {}
-        for (const [k, v] of Object.entries(data)) {
-          // backend returns pan_number errors — map back to tax_number for display
-          const displayKey = k === 'pan_number' ? 'tax_number' : k
-          fieldErrors[displayKey] = Array.isArray(v) ? (v as string[]).join(' ') : String(v)
+      // Backend wraps errors as: { success: false, errors: ["field: message", ...] }
+      const errorList: string[] = Array.isArray(data?.errors) ? data.errors : []
+
+      const fieldErrors: Record<string, string> = {}
+      const toastMessages: string[] = []
+
+      for (const msg of errorList) {
+        const colonIdx = msg.indexOf(':')
+        if (colonIdx > 0) {
+          const field = msg.slice(0, colonIdx).trim()
+          const message = msg.slice(colonIdx + 1).trim()
+          // map backend field names to form field names
+          const displayKey = field === 'pan_number' ? 'tax_number' : field
+          fieldErrors[displayKey] = message
+          // human-readable toast: convert "phone: A customer with this..." → "Phone: ..."
+          const fieldLabel = displayKey.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+          toastMessages.push(`${fieldLabel}: ${message}`)
+        } else {
+          toastMessages.push(msg)
         }
+      }
+
+      if (Object.keys(fieldErrors).length > 0) {
         setErrors(fieldErrors)
-        toast.error('Please fix the errors below')
+        toast.error(toastMessages[0] ?? 'Please check the form and try again', { duration: 5000 })
       } else {
-        toast.error('Failed to create customer')
+        toast.error('Could not save customer. Please try again.', { duration: 5000 })
       }
     },
   })

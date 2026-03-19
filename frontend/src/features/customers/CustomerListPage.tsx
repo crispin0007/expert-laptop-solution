@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import {
-  Users, Plus, Search, Building2, User, Trash2, ChevronRight,
+  Users, Plus, Search, Building2, User, Trash2, ChevronRight, Pencil,
   ChevronDown, ChevronUp, MapPin, Globe, Loader2, X, AlertTriangle, TrendingUp,
 } from 'lucide-react'
 import apiClient from '../../api/client'
@@ -453,6 +453,13 @@ export default function CustomerListPage() {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex justify-end items-center gap-1" onClick={e => e.stopPropagation()}>
+                    {can('can_update_customers') && (
+                      <button onClick={() => navigate(`/customers/${c.id}`)}
+                        className="p-1.5 rounded hover:bg-indigo-50 text-indigo-400"
+                        title="Edit customer">
+                        <Pencil size={14} />
+                      </button>
+                    )}
                     {can('can_delete_customers') && (
                       <button onClick={() => setDeleteTarget(c)}
                         className="p-1.5 rounded hover:bg-red-50 text-red-400">

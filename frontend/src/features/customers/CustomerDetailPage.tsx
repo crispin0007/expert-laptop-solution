@@ -19,9 +19,7 @@ export default function CustomerDetailPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('Info')
-  const [editing, setEditing] = useState(false)
-  const [form, setForm] = useState<Partial<Customer>>({})
-  const { can } = usePermissions()
+  const [saveErrors, setSaveErrors] = useState<Record<string, string>>({})
 
   const { data: customer, isLoading } = useQuery<Customer>({
     queryKey: ['customers', customerId],
@@ -48,19 +46,45 @@ export default function CustomerDetailPage() {
     onSuccess: () => {
       toast.success('Customer updated')
       setEditing(false)
+      setSaveErrors({})
       qc.invalidateQueries({ queryKey: ['customers', customerId] })
       qc.invalidateQueries({ queryKey: ['customers'] })
     },
-    onError: () => toast.error('Failed to update customer'),
+    onError: (err: any) => {
+      const data = err.response?.data
+      const errorList: string[] = Array.isArray(data?.errors) ? data.errors : []
+      const fieldErrors: Record<string, string> = {}
+      const toastMessages: string[] = []
+      for (const msg of errorList) {
+        const colonIdx = msg.indexOf(':')
+        if (colonIdx > 0) {
+          const field = msg.slice(0, colonIdx).trim()
+          const message = msg.slice(colonIdx + 1).trim()
+          fieldErrors[field] = message
+          const fieldLabel = field.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+          toastMessages.push(`${fieldLabel}: ${message}`)
+        } else {
+          toastMessages.push(msg)
+        }
+      }
+      if (Object.keys(fieldErrors).length > 0) {
+        setSaveErrors(fieldErrors)
+        toast.error(toastMessages[0] ?? 'Please fix the errors and try again', { duration: 5000 })
+      } else {
+        toast.error('Could not save changes. Please try again.', { duration: 5000 })
+      }
+    },
   })
 
   function startEdit() {
     if (customer) setForm({ ...customer })
+    setSaveErrors({})
     setEditing(true)
   }
 
   function cancelEdit() {
     setEditing(false)
+    setSaveErrors({})
   }
 
   if (isLoading) {
@@ -151,9 +175,16 @@ export default function CustomerDetailPage() {
                   {optional && <span className="ml-1 font-normal text-gray-400">(optional)</span>}
                 </label>
                 {editing ? (
-                  <input type={type} value={(form[key] as string) ?? ''}
-                    onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <>
+                    <input type={type} value={(form[key] as string) ?? ''}
+                      onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                      className={`w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 ${
+                        saveErrors[key as string] ? 'border-red-400 focus:ring-red-400' : 'border-gray-300 focus:ring-indigo-500'
+                      }`} />
+                    {saveErrors[key as string] && (
+                      <p className="mt-1 text-xs text-red-500">{saveErrors[key as string]}</p>
+                    )}
+                  </>
                 ) : (
                   <p className="text-sm text-gray-900">{(displayForm[key] as string) || '—'}</p>
                 )}

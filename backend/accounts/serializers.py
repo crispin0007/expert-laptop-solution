@@ -139,6 +139,7 @@ class MeSerializer(serializers.ModelSerializer):
             # Customers
             'can_view_customers': _perm(True, 'customers.view'),
             'can_create_customers': _perm(is_staff, 'customers.create'),
+            'can_update_customers': _perm(is_staff, 'customers.update'),
             'can_delete_customers': _perm(is_manager, 'customers.delete'),
             # Projects
             'can_view_projects': _perm(True, 'projects.view'),
