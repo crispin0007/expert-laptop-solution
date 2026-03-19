@@ -28,7 +28,8 @@ const EMPTY_FORM = {
   name:       '',
   email:      '',
   phone:      '',
-  tax_number: '',   // maps to pan_number on submit
+  pan_number: '',
+  vat_number: '',
   notes:      '',
 }
 
@@ -69,7 +70,7 @@ export default function CreateCustomerModal({ open, onClose }: Props) {
           const field = msg.slice(0, colonIdx).trim()
           const message = msg.slice(colonIdx + 1).trim()
           // map backend field names to form field names
-          const displayKey = field === 'pan_number' ? 'tax_number' : field
+          const displayKey = field === 'pan_number' ? 'pan_number' : field
           fieldErrors[displayKey] = message
           // human-readable toast: convert "phone: A customer with this..." → "Phone: ..."
           const fieldLabel = displayKey.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
@@ -92,7 +93,6 @@ export default function CreateCustomerModal({ open, onClose }: Props) {
     const errs: Record<string, string> = {}
     if (!form.name.trim())  errs.name  = 'Name is required'
     if (!form.phone.trim()) errs.phone = 'Phone is required'
-    if (isOrg && !form.tax_number.trim()) errs.tax_number = 'PAN / VAT number is required for organizations'
     return errs
   }
 
@@ -113,7 +113,8 @@ export default function CreateCustomerModal({ open, onClose }: Props) {
     if (address.municipality.trim()) payload.municipality = address.municipality.trim()
     if (address.ward_no.trim())      payload.ward_no      = address.ward_no.trim()
     if (address.street.trim())       payload.street       = address.street.trim()
-    if (form.tax_number.trim())      payload.pan_number   = form.tax_number.trim()
+    if (form.pan_number.trim())      payload.pan_number   = form.pan_number.trim()
+    if (form.vat_number.trim())      payload.vat_number   = form.vat_number.trim()
     if (form.notes.trim())           payload.notes        = form.notes.trim()
 
     mutation.mutate(payload)
@@ -197,18 +198,29 @@ export default function CreateCustomerModal({ open, onClose }: Props) {
           />
         </div>
 
-        {/* PAN / VAT — organization only */}
-        {isOrg && (
+        {/* PAN / VAT — optional for all types */}
+        <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              PAN / VAT Number <span className="text-red-500">*</span>
+              PAN Number
+              <span className="ml-1 text-xs font-normal text-gray-400">(optional)</span>
             </label>
-            <input type="text" value={form.tax_number} onChange={field('tax_number')}
-              placeholder="e.g. 123456789 or PAN123"
-              className={inputCls(errors.tax_number)} />
-            {errors.tax_number && <p className="text-xs text-red-500 mt-1">{errors.tax_number}</p>}
+            <input type="text" value={form.pan_number} onChange={field('pan_number')}
+              placeholder="e.g. 123456789"
+              className={inputCls(errors.pan_number)} />
+            {errors.pan_number && <p className="text-xs text-red-500 mt-1">{errors.pan_number}</p>}
           </div>
-        )}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              VAT Number
+              <span className="ml-1 text-xs font-normal text-gray-400">(optional)</span>
+            </label>
+            <input type="text" value={form.vat_number} onChange={field('vat_number')}
+              placeholder="e.g. 600123456"
+              className={inputCls(errors.vat_number)} />
+            {errors.vat_number && <p className="text-xs text-red-500 mt-1">{errors.vat_number}</p>}
+          </div>
+        </div>
 
         {/* Notes */}
         <div>
