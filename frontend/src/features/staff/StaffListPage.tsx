@@ -65,6 +65,7 @@ export default function StaffListPage() {
   const qc = useQueryClient()
   const { can } = usePermissions()
   const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'active' | 'inactive' | 'all'>('active')
   const [showInvite, setShowInvite] = useState(false)
   const [editTarget, setEditTarget] = useState<StaffMember | null>(null)
   const [resetTarget, setResetTarget] = useState<StaffMember | null>(null)
@@ -130,12 +131,19 @@ export default function StaffListPage() {
     onError: () => toast.error('Failed to reactivate staff member'),
   })
 
-  const filtered = search.trim()
-    ? staff.filter(s =>
-        s.full_name.toLowerCase().includes(search.toLowerCase()) ||
-        s.email.toLowerCase().includes(search.toLowerCase()),
+  const filtered = (() => {
+    let list = staff
+    if (statusFilter === 'active') list = list.filter(s => s.membership?.is_active !== false)
+    else if (statusFilter === 'inactive') list = list.filter(s => s.membership?.is_active === false)
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      list = list.filter(s =>
+        s.full_name.toLowerCase().includes(q) ||
+        s.email.toLowerCase().includes(q),
       )
-    : staff
+    }
+    return list
+  })()
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -145,7 +153,7 @@ export default function StaffListPage() {
           <Users className="text-indigo-500" size={24} />
           <div>
             <h1 className="text-xl font-semibold text-gray-900">Staff</h1>
-            <p className="text-xs text-gray-400">{staff.length} members in this workspace</p>
+            <p className="text-xs text-gray-400">{staff.filter(s => s.membership?.is_active !== false).length} active · {staff.filter(s => s.membership?.is_active === false).length} inactive</p>
           </div>
         </div>
         <div className="flex gap-2">
@@ -162,12 +170,40 @@ export default function StaffListPage() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative max-w-sm">
-        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-        <input type="text" placeholder="Search name or email…" value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="pl-9 pr-4 py-2 w-full text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+      {/* Search + Filter row */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative max-w-sm flex-1">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input type="text" placeholder="Search name or email…" value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="pl-9 pr-4 py-2 w-full text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+
+        {/* Status filter tabs */}
+        <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-sm">
+          {(['active', 'inactive', 'all'] as const).map(tab => {
+            const count =
+              tab === 'active' ? staff.filter(s => s.membership?.is_active !== false).length
+              : tab === 'inactive' ? staff.filter(s => s.membership?.is_active === false).length
+              : staff.length
+            return (
+              <button
+                key={tab}
+                onClick={() => setStatusFilter(tab)}
+                className={`px-3 py-1.5 rounded-md font-medium transition-colors capitalize ${
+                  statusFilter === tab
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {tab}
+                <span className={`ml-1.5 text-xs px-1.5 py-0.5 rounded-full ${
+                  statusFilter === tab ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-200 text-gray-500'
+                }`}>{count}</span>
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       {/* Table */}
@@ -191,7 +227,13 @@ export default function StaffListPage() {
             )}
             {!isLoading && filtered.length === 0 && (
               <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">
-                {search ? 'No staff match your search.' : 'No staff yet. Invite the first member.'}
+                {search
+                  ? 'No staff match your search.'
+                  : statusFilter === 'inactive'
+                    ? 'No inactive staff members.'
+                    : statusFilter === 'active'
+                      ? 'No active staff members.'
+                      : 'No staff yet. Invite the first member.'}
               </td></tr>
             )}
             {filtered.map(s => {
