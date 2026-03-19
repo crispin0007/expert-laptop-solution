@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 from core.mixins import TenantMixin
+from core.permissions import make_role_permission, ALL_ROLES
 from core.response import ApiResponse
 from .models import Notification, NotificationPreference, FCMDevice
 from .serializers import NotificationSerializer, NotificationPreferenceSerializer, FCMDeviceSerializer
@@ -16,7 +17,7 @@ class NotificationListView(TenantMixin, APIView):
     Returns unread (or all) notifications for the authenticated user.
     Query params: ?unread=true
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, make_role_permission(*ALL_ROLES)]
 
     def get(self, request):
         qs = Notification.objects.filter(
@@ -31,7 +32,7 @@ class NotificationListView(TenantMixin, APIView):
 
 class NotificationUnreadCountView(TenantMixin, APIView):
     """GET /api/v1/notifications/unread-count/ → {count: N}"""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, make_role_permission(*ALL_ROLES)]
 
     def get(self, request):
         count = Notification.objects.filter(
@@ -49,7 +50,7 @@ class NotificationMarkReadView(TenantMixin, APIView):
     POST /api/v1/notifications/mark-all-read/
     Marks all unread notifications as read.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, make_role_permission(*ALL_ROLES)]
 
     def post(self, request, pk=None):
         if pk:
@@ -72,7 +73,7 @@ class NotificationPreferenceView(TenantMixin, APIView):
     GET/PUT /api/v1/notifications/preferences/
     Retrieve or update notification preferences for the current user.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, make_role_permission(*ALL_ROLES)]
 
     def get(self, request):
         prefs, _ = NotificationPreference.objects.get_or_create(
@@ -99,7 +100,7 @@ class NotificationDismissView(TenantMixin, APIView):
     DELETE /api/v1/notifications/<pk>/  — hard-delete a single notification.
     DELETE /api/v1/notifications/clear-read/ — delete all read notifications.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, make_role_permission(*ALL_ROLES)]
 
     def delete(self, request, pk=None):
         if pk:
@@ -129,7 +130,7 @@ class FCMDeviceView(TenantMixin, APIView):
     Tokens are scoped to the authenticated user + tenant so they are never
     delivered across tenant boundaries.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, make_role_permission(*ALL_ROLES)]
 
     def post(self, request):
         """Register (or re-activate) a device push token."""

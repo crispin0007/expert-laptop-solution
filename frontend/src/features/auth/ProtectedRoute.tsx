@@ -13,20 +13,22 @@ import { type ReactNode } from 'react'
  *  2. Re-populate tenantStore.subdomain so X-Tenant-Slug is sent on every
  *     subsequent request — even when the user navigates directly to a URL
  *     (e.g. 192.168.100.100:5173/staff) without going through the login flow.
+ *
+ * Also runs a silent background refresh every PERMISSIONS_REFRESH_MS so that
+ * role/permission changes made by a tenant admin take effect without a page reload.
  */
+
+/** How often to silently re-fetch /accounts/me/ to pick up role/permission changes (ms). */
+const PERMISSIONS_REFRESH_MS = 5 * 60 * 1000
+
 export default function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { isAuthenticated, accessToken, setUser, logout } = useAuthStore()
+  const { isAuthenticated, accessToken, logout } = useAuthStore()
   const { subdomain, setTenant, clearTenant } = useTenantStore()
   const [ready, setReady] = useState(false)
 
-  useEffect(() => {
-    if (!isAuthenticated || !accessToken) {
-      setReady(true)
-      return
-    }
-
-    // Always re-fetch /me/ on mount so tenant context is fresh after a refresh
-    apiClient
+  /** Fetches /me/ and updates the auth + tenant stores. Logs out on 401. */
+  function refreshMe() {
+    return apiClient
       .get('/accounts/me/')
       .then((res) => {
         const tenants: Array<{
@@ -64,7 +66,21 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
         // Access token is expired / invalid — log out and redirect
         logout()
       })
-      .finally(() => setReady(true))
+  }
+
+  useEffect(() => {
+    if (!isAuthenticated || !accessToken) {
+      setReady(true)
+      return
+    }
+
+    // Initial fetch on mount — shows spinner until resolved
+    refreshMe().finally(() => setReady(true))
+
+    // Periodic silent refresh so role/permission changes take effect within
+    // PERMISSIONS_REFRESH_MS without requiring the user to reload the page.
+    const interval = setInterval(refreshMe, PERMISSIONS_REFRESH_MS)
+    return () => clearInterval(interval)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // run once on mount
 

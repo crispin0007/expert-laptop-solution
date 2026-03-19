@@ -17,7 +17,7 @@ from rest_framework.views import APIView
 
 from core.mixins import TenantMixin
 from core.pagination import NexusCursorPagination
-from core.permissions import IsSuperAdmin
+from core.permissions import IsSuperAdmin, make_role_permission, MANAGER_ROLES
 from core.audit import log_event, AuditEvent
 from .models import Tenant, Plan, Module, TenantModuleOverride
 from .serializers import (
@@ -567,24 +567,14 @@ class TenantSettingsView(TenantMixin, APIView):
     Super admins can also access this endpoint.
     """
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*MANAGER_ROLES, permission_key='can_manage_settings')]
 
     def get(self, request):
         self.ensure_tenant()
-        if not self.is_manager_role():
-            return Response(
-                {'detail': 'Only managers or admins can view tenant settings.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
         return Response(TenantSettingsSerializer(self.tenant).data)
 
     def patch(self, request):
         self.ensure_tenant()
-        if not self.is_manager_role():
-            return Response(
-                {'detail': 'Only managers or admins can update tenant settings.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
         serializer = TenantSettingsSerializer(self.tenant, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
@@ -607,7 +597,7 @@ class TenantBrandingUploadView(TenantMixin, APIView):
     Only tenant managers / admins may upload.
     """
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*MANAGER_ROLES, permission_key='can_manage_settings')]
     parser_classes = [MultiPartParser, FormParser]
 
     _ALLOWED_MIME = {
@@ -623,12 +613,6 @@ class TenantBrandingUploadView(TenantMixin, APIView):
 
     def post(self, request):
         self.ensure_tenant()
-        if not self.is_manager_role():
-            return Response(
-                {'detail': 'Only managers or admins can upload branding assets.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
         asset_type = request.data.get('type', '').strip()
         if asset_type not in ('logo', 'favicon'):
             return Response(

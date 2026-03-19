@@ -65,7 +65,9 @@ export default function Router() {
             path="tickets"
             element={
               <ModuleGuard module="tickets">
-                <TicketListPage />
+                <RoleGuard require="can_view_tickets">
+                  <TicketListPage />
+                </RoleGuard>
               </ModuleGuard>
             }
           />
@@ -73,7 +75,9 @@ export default function Router() {
             path="tickets/:id"
             element={
               <ModuleGuard module="tickets">
-                <KeyedTicketDetail />
+                <RoleGuard require="can_view_tickets">
+                  <KeyedTicketDetail />
+                </RoleGuard>
               </ModuleGuard>
             }
           />
@@ -83,7 +87,9 @@ export default function Router() {
             path="projects"
             element={
               <ModuleGuard module="projects">
-                <ProjectListPage />
+                <RoleGuard require="can_view_projects">
+                  <ProjectListPage />
+                </RoleGuard>
               </ModuleGuard>
             }
           />
@@ -91,7 +97,9 @@ export default function Router() {
             path="projects/:id"
             element={
               <ModuleGuard module="projects">
-                <ProjectDetailPage />
+                <RoleGuard require="can_view_projects">
+                  <ProjectDetailPage />
+                </RoleGuard>
               </ModuleGuard>
             }
           />
@@ -101,7 +109,9 @@ export default function Router() {
             path="customers"
             element={
               <ModuleGuard module="customers">
-                <CustomerListPage />
+                <RoleGuard require="can_view_customers">
+                  <CustomerListPage />
+                </RoleGuard>
               </ModuleGuard>
             }
           />
@@ -109,7 +119,9 @@ export default function Router() {
             path="customers/:id"
             element={
               <ModuleGuard module="customers">
-                <CustomerDetailPage />
+                <RoleGuard require="can_view_customers">
+                  <CustomerDetailPage />
+                </RoleGuard>
               </ModuleGuard>
             }
           />
@@ -119,7 +131,9 @@ export default function Router() {
             path="inventory"
             element={
               <ModuleGuard module="inventory">
-                <InventoryPage />
+                <RoleGuard require="can_view_inventory">
+                  <InventoryPage />
+                </RoleGuard>
               </ModuleGuard>
             }
           />
@@ -129,7 +143,9 @@ export default function Router() {
             path="departments"
             element={
               <ModuleGuard module="departments">
-                <DepartmentListPage />
+                <RoleGuard require="can_view_departments">
+                  <DepartmentListPage />
+                </RoleGuard>
               </ModuleGuard>
             }
           />
