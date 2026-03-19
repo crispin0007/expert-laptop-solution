@@ -13,6 +13,7 @@ interface StaffMembership {
   custom_role_name: string | null
   department: number | null
   employee_id: string
+  staff_number: string
   join_date: string | null
   is_admin: boolean
   is_active: boolean
@@ -23,6 +24,7 @@ interface StaffMember {
   email: string
   full_name: string
   phone: string
+  office_phone: string
   membership: StaffMembership | null
 }
 
@@ -178,6 +180,19 @@ export default function EditStaffModal({ open, onClose, staff, departments }: Pr
               className={inp()} />
           </div>
 
+          {/* Staff Number (auto-generated, read-only) */}
+          {staff?.membership?.staff_number && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Staff ID
+                <span className="ml-1 text-xs font-normal text-gray-400">(auto-generated)</span>
+              </label>
+              <div className="px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg font-mono text-indigo-600 font-semibold">
+                {staff.membership.staff_number}
+              </div>
+            </div>
+          )}
+
           {/* Employee ID */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Employee ID</label>
@@ -261,31 +276,4 @@ export default function EditStaffModal({ open, onClose, staff, departments }: Pr
     </Modal>
   )
 }
-
-
-interface StaffMembership {
-  id: number
-  role: string
-  department: number | null
-  employee_id: string
-  join_date: string | null
-  is_admin: boolean
-  is_active: boolean
-}
-
-interface StaffMember {
-  id: number
-  email: string
-  full_name: string
-  phone: string
-  membership: StaffMembership | null
-}
-
-interface Props {
-  open: boolean
-  onClose: () => void
-  staff: StaffMember | null
-  departments: { id: number; name: string }[]
-}
-
 
