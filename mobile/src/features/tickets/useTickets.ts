@@ -354,8 +354,14 @@ export function useInventoryProductSearch(search: string) {
 
 // ── Available serial numbers for a product ───────────────────────────────────
 
+export type SerialNumberItem = {
+  id: number
+  serial_number: string
+  warranty_expires: string | null
+}
+
 export function useAvailableSerialNumbers(productId: number | null) {
-  return useQuery<Array<{ id: number; serial_number: string; warranty_expires: string | null }}>({
+  return useQuery<SerialNumberItem[]>({
     queryKey: ['serial-numbers-available', productId],
     queryFn: () =>
       apiClient
