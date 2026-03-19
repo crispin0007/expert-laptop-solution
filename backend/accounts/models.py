@@ -11,7 +11,8 @@ class User(AbstractUser):
     # Override email to be unique and required
     email = models.EmailField(unique=True)
     full_name = models.CharField(max_length=255, blank=True)
-    phone = models.CharField(max_length=32, blank=True)
+    phone = models.CharField(max_length=32, blank=True, verbose_name='Personal Phone')
+    office_phone = models.CharField(max_length=32, blank=True, verbose_name='Office Phone')
     avatar = models.URLField(blank=True)
     is_superadmin = models.BooleanField(default=False, help_text='Platform-level super admin')
 

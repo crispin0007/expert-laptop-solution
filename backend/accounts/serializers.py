@@ -63,7 +63,7 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             'id', 'username', 'email', 'full_name',
-            'phone', 'avatar', 'is_superadmin', 'is_staff', 'is_active',
+            'phone', 'office_phone', 'avatar', 'is_superadmin', 'is_staff', 'is_active',
         )
         read_only_fields = ('id', 'is_superadmin', 'is_staff')
 
@@ -254,7 +254,7 @@ class StaffSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ('id', 'email', 'full_name', 'display_name', 'phone', 'avatar', 'is_active', 'date_joined', 'membership')
+        fields = ('id', 'email', 'full_name', 'display_name', 'phone', 'office_phone', 'avatar', 'is_active', 'date_joined', 'membership')
 
     def get_display_name(self, user):
         return _user_display_name(user)
@@ -277,6 +277,7 @@ class InviteStaffSerializer(serializers.Serializer):
     email = serializers.EmailField()
     full_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
     phone = serializers.CharField(max_length=32, required=False, allow_blank=True)
+    office_phone = serializers.CharField(max_length=32, required=False, allow_blank=True)
     password = serializers.CharField(write_only=True, min_length=8, required=False)
     role = serializers.ChoiceField(choices=TenantMembership.ROLE_CHOICES, default='staff')
     department = serializers.PrimaryKeyRelatedField(
@@ -329,6 +330,7 @@ class InviteStaffSerializer(serializers.Serializer):
                 'username': email,
                 'full_name': validated_data.get('full_name', ''),
                 'phone': validated_data.get('phone', ''),
+                'office_phone': validated_data.get('office_phone', ''),
             },
         )
         if created:
@@ -400,7 +402,7 @@ class UpdateStaffSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = (
-            'full_name', 'phone', 'avatar',
+            'full_name', 'phone', 'office_phone', 'avatar',
             # membership fields
             'role', 'department', 'employee_id', 'join_date', 'is_admin', 'membership_active',
         )

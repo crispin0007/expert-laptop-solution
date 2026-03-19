@@ -44,6 +44,7 @@ export default function EditStaffModal({ open, onClose, staff, departments }: Pr
   const [form, setForm] = useState({
     full_name: '',
     phone: '',
+    office_phone: '',
     roleType: 'staff',   // 'owner'|'admin'|'manager'|'staff'|'viewer'|'custom'
     customRoleId: '',
     department: '',
@@ -75,6 +76,7 @@ export default function EditStaffModal({ open, onClose, staff, departments }: Pr
       setForm({
         full_name: staff.full_name ?? '',
         phone: staff.phone ?? '',
+        office_phone: staff.office_phone ?? '',
         roleType: hasCustomRole ? 'custom' : (m?.role ?? 'staff'),
         customRoleId: m?.custom_role_id ? String(m.custom_role_id) : '',
         department: m?.department ? String(m.department) : '',
@@ -106,6 +108,7 @@ export default function EditStaffModal({ open, onClose, staff, departments }: Pr
     const patchPayload: Record<string, unknown> = {
       full_name: form.full_name.trim(),
       phone: form.phone.trim(),
+      office_phone: form.office_phone.trim(),
       employee_id: form.employee_id.trim(),
       is_admin: form.is_admin,
       department: form.department ? parseInt(form.department) : null,
@@ -159,11 +162,19 @@ export default function EditStaffModal({ open, onClose, staff, departments }: Pr
             {errors.full_name && <p className="text-xs text-red-500 mt-1">{errors.full_name}</p>}
           </div>
 
-          {/* Phone */}
+          {/* Personal Phone */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Personal Phone</label>
             <input type="text" value={form.phone}
               onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
+              className={inp()} />
+          </div>
+
+          {/* Office Phone */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Office Phone</label>
+            <input type="text" value={form.office_phone}
+              onChange={e => setForm(f => ({ ...f, office_phone: e.target.value }))}
               className={inp()} />
           </div>
 

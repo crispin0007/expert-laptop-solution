@@ -15,6 +15,7 @@ interface FormData {
   email: string
   full_name: string
   phone: string
+  office_phone: string
   password: string
   role: string
   department: string
@@ -24,7 +25,7 @@ interface FormData {
 }
 
 const empty: FormData = {
-  email: '', full_name: '', phone: '', password: '',
+  email: '', full_name: '', phone: '', office_phone: '', password: '',
   role: 'staff', department: '', employee_id: '', join_date: '', is_admin: false,
 }
 
@@ -68,6 +69,7 @@ export default function InviteStaffModal({ open, onClose, departments }: Props) 
       email: form.email,
       full_name: form.full_name,
       phone: form.phone,
+      office_phone: form.office_phone,
       role: form.role,
       employee_id: form.employee_id,
       is_admin: form.is_admin,
@@ -100,9 +102,16 @@ export default function InviteStaffModal({ open, onClose, departments }: Props) 
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Personal Phone</label>
             <input type="text" value={form.phone} onChange={e => set('phone', e.target.value)}
               placeholder="+977 98..."
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Office Phone</label>
+            <input type="text" value={form.office_phone} onChange={e => set('office_phone', e.target.value)}
+              placeholder="+977 1-..."
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
 
