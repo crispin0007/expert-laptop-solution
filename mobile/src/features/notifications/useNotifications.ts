@@ -37,7 +37,13 @@ export function useNotificationList() {
     queryFn: ({ pageParam }) =>
       apiClient
         .get(NOTIFICATIONS.LIST, { params: { cursor: pageParam } })
-        .then((r) => r.data.data ?? r.data),
+        .then((r) => {
+          const raw = r.data.data ?? r.data
+          // Backend may return a flat array (no pagination) — normalise to {results, next}
+          if (Array.isArray(raw)) return { results: raw as Notification[], next: null }
+          // Already a paginated envelope
+          return raw as PaginatedResponse<Notification>
+        }),
     initialPageParam: undefined,
     getNextPageParam: (lastPage) => extractCursor(lastPage?.next),
     staleTime: 30_000,

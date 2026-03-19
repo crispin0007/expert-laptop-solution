@@ -27,6 +27,7 @@ function TabIcon({
 
 export default function TabLayout() {
   const theme = useTheme()
+  const user = useAuthStore((s) => s.user)
   const hasPermission = useAuthStore((s) => s.hasPermission)
 
   return (
@@ -69,7 +70,7 @@ export default function TabLayout() {
         name="tickets/index"
         options={{
           title: 'Tickets',
-          href: hasPermission('tickets.view') ? undefined : null,
+          href: (!user || hasPermission('tickets.view')) ? undefined : null,
           tabBarIcon: ({ focused, color }) => (
             <TabIcon name="document-text-outline" nameActive="document-text" focused={focused} color={color} />
           ),
@@ -79,7 +80,7 @@ export default function TabLayout() {
         name="projects/index"
         options={{
           title: 'Projects',
-          href: hasPermission('projects.view') ? undefined : null,
+          href: (!user || hasPermission('projects.view')) ? undefined : null,
           tabBarIcon: ({ focused, color }) => (
             <TabIcon name="briefcase-outline" nameActive="briefcase" focused={focused} color={color} />
           ),
@@ -89,7 +90,7 @@ export default function TabLayout() {
         name="customers/index"
         options={{
           title: 'Customers',
-          href: hasPermission('customers.view') ? undefined : null,
+          href: (!user || hasPermission('customers.view')) ? undefined : null,
           tabBarIcon: ({ focused, color }) => (
             <TabIcon name="people-outline" nameActive="people" focused={focused} color={color} />
           ),

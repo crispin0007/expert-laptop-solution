@@ -1,6 +1,7 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { View, Text, TouchableOpacity, ScrollView, FlatList, TextInput, Alert, KeyboardAvoidingView, Platform } from 'react-native'
 import { useRouter } from 'expo-router'
+import { useNavigation } from '@react-navigation/native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useForm, Controller } from 'react-hook-form'
 import { z } from 'zod'
@@ -36,6 +37,7 @@ const PRIORITIES = ['low', 'medium', 'high', 'critical'] as const
 export default function NewTicketModal() {
   const theme = useTheme()
   const router = useRouter()
+  const navigation = useNavigation()
   const insets = useSafeAreaInsets()
   const [step, setStep] = useState(0)
   const [customerSearch, setCustomerSearch] = useState('')
@@ -46,6 +48,24 @@ export default function NewTicketModal() {
     defaultValues: { priority: 'medium', description: '' },
     mode: 'onChange',
   })
+
+  // ── Prevent accidental dismiss once the user has started filling in any step ─
+  useEffect(() => {
+    const unsubscribe = (navigation as any).addListener('beforeRemove', (e: any) => {
+      // step 0 means nothing has been selected yet — allow free dismiss
+      if (step === 0) return
+      e.preventDefault()
+      Alert.alert(
+        'Discard ticket?',
+        'You have unsaved changes. Are you sure you want to discard this new ticket?',
+        [
+          { text: 'Keep editing', style: 'cancel' },
+          { text: 'Discard', style: 'destructive', onPress: () => (navigation as any).dispatch(e.data.action) },
+        ],
+      )
+    })
+    return unsubscribe
+  }, [navigation, step])
 
   const selectedType = watch('ticket_type')
   const selectedCustomer = watch('customer')

@@ -147,7 +147,7 @@ export function useCustomerPicker(search?: string) {
     queryKey: ['customers', 'picker', search],
     queryFn: () =>
       apiClient
-        .get(CUSTOMERS.LIST, { params: { search, page_size: 30 } })
+        .get(CUSTOMERS.LIST, { params: { search, page_size: 30, is_active: true } })
         .then((r) => r.data.results ?? r.data.data?.results ?? r.data.data ?? r.data),
     staleTime: 60_000,
   })
