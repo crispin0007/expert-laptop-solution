@@ -875,7 +875,7 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
   const { data: allCustomers = [] } = useQuery<Customer[]>({
     queryKey: ['customers-all'],
     queryFn: () =>
-      apiClient.get(CUSTOMERS.LIST + '?page_size=500').then(r =>
+      apiClient.get(CUSTOMERS.LIST + '?minimal=true').then(r =>
         Array.isArray(r.data) ? r.data : (r.data.results ?? r.data.data ?? [])
       ),
     enabled: open && step === 2,

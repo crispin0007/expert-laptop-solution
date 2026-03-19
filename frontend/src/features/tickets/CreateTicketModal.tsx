@@ -78,7 +78,7 @@ export default function CreateTicketModal({ open, onClose, onCreated }: Props) {
 
   const { data: customers = [] } = useQuery<Customer[]>({
     queryKey: ['customers-minimal'],
-    queryFn: () => apiClient.get(CUSTOMERS.LIST).then(r =>
+    queryFn: () => apiClient.get(CUSTOMERS.LIST + '?minimal=true').then(r =>
       Array.isArray(r.data) ? r.data : (r.data.results ?? r.data.data ?? [])
     ),
     enabled: open,
