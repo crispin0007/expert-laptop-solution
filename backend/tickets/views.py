@@ -9,6 +9,7 @@ import logging
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -179,6 +180,9 @@ class TicketViewSet(NexusViewSet):
             return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='tickets.view')()]
         if self.action in ('destroy', 'assign', 'transfer', 'close_ticket'):
             return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='tickets.assign')()]
+        if self.action in ('update', 'partial_update', 'change_status'):
+            # Object-level check (staff+ OR assigned) is enforced inside the action method.
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='tickets.view')()]
         return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='tickets.create')()]
 
     def get_serializer_class(self):
@@ -215,9 +219,20 @@ class TicketViewSet(NexusViewSet):
     # ── CRUD overrides ────────────────────────────────────────────────────────
 
     def update(self, request, *args, **kwargs):
-        """Pass is_manager flag so service can enforce lock rules."""
+        """Pass is_manager flag so service can enforce lock rules.
+
+        Object-level rule: staff+ can edit any ticket; viewer/custom users
+        can only edit tickets where they are the assigned_to or a team_member.
+        """
         partial  = kwargs.pop('partial', False)
         instance = self.get_object()
+        if self.user_role not in STAFF_ROLES:
+            is_assigned = (
+                instance.assigned_to_id == request.user.id or
+                instance.team_members.filter(id=request.user.id).exists()
+            )
+            if not is_assigned:
+                return ApiResponse.forbidden('You can only edit tickets that are assigned to you.')
         serializer = self.get_input_serializer(
             instance, data=request.data, partial=partial
         )
@@ -291,8 +306,24 @@ class TicketViewSet(NexusViewSet):
         """
         POST /tickets/{id}/status/
         Body: { status: str, reason: str (optional) }
+
+        Object-level rule: staff+ can set any status; viewer/custom users
+        can only change status if they are assigned AND the new status is a
+        safe self-service transition (in_progress, pending_customer, resolved).
         """
         ticket = self.get_object()
+        if self.user_role not in STAFF_ROLES:
+            is_assigned = (
+                ticket.assigned_to_id == request.user.id or
+                ticket.team_members.filter(id=request.user.id).exists()
+            )
+            if not is_assigned:
+                return ApiResponse.forbidden('You can only update status of tickets assigned to you.')
+            _SAFE = {'in_progress', 'pending_customer', 'resolved'}
+            if request.data.get('status') not in _SAFE:
+                return ApiResponse.forbidden(
+                    'You can only set status to in_progress, pending_customer, or resolved.'
+                )
         ticket = self.get_service().change_status(
             ticket,
             new_status=request.data.get('status'),
@@ -462,6 +493,9 @@ class TicketProductViewSet(NexusViewSet):
             return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='tickets.view')()]
         if self.action == 'destroy':
             return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='tickets.update')()]
+        # create: staff+ always; viewer/custom only if assigned to the ticket (checked in create())
+        if self.action == 'create':
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='tickets.view')()]
         return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='tickets.create')()]
 
     def get_queryset(self):
@@ -485,6 +519,16 @@ class TicketProductViewSet(NexusViewSet):
         """
         self.ensure_tenant()
         ticket_pk = self.kwargs.get('ticket_pk')
+
+        # Object-level check: viewer/custom users may only add products to tickets assigned to them.
+        if self.user_role not in STAFF_ROLES and ticket_pk:
+            ticket_obj = get_object_or_404(Ticket, pk=ticket_pk, tenant=self.tenant)
+            is_assigned = (
+                ticket_obj.assigned_to_id == request.user.id or
+                ticket_obj.team_members.filter(id=request.user.id).exists()
+            )
+            if not is_assigned:
+                return ApiResponse.forbidden('You can only add products to tickets assigned to you.')
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)

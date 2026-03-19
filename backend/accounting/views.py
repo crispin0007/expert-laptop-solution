@@ -892,7 +892,9 @@ class InvoiceViewSet(NexusViewSet):
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve', 'pdf'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
+            # Managers see all invoices; viewer/staff see only their ticket-scoped invoices
+            # (get_queryset enforces the restriction for non-manager roles).
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='accounting.view_invoices')()]
         # Staff can collect payment, generate from ticket, and edit DRAFT invoices
         if self.action in ('collect_payment', 'generate_from_ticket', 'update', 'partial_update'):
             return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='accounting.manage_invoices')()]
@@ -912,11 +914,35 @@ class InvoiceViewSet(NexusViewSet):
                 fy_start, fy_end = fiscal_year_date_range(fy)
             except (ValueError, KeyError):
                 pass
+
+        # Viewer/custom roles may only read invoices for tickets assigned to them.
+        # They must supply ?ticket=<id> and be assigned to that ticket.
+        ticket_id = params.get('ticket')
+        if not self.is_manager_role() and self.user_role not in STAFF_ROLES:
+            if not ticket_id:
+                return self.get_service().list(  # return empty queryset safely
+                    ticket_id=-1,
+                    fiscal_year_start=fy_start,
+                    fiscal_year_end=fy_end,
+                )
+            from tickets.models import Ticket
+            try:
+                ticket_obj = Ticket.objects.for_tenant(self.tenant).get(pk=ticket_id)
+            except Ticket.DoesNotExist:
+                from django.http import Http404
+                raise Http404
+            is_assigned = (
+                ticket_obj.assigned_to_id == self.request.user.id or
+                ticket_obj.team_members.filter(id=self.request.user.id).exists()
+            )
+            if not is_assigned:
+                return self.get_service().list(ticket_id=-1)  # empty
+
         return self.get_service().list(
             status=params.get('status'),
             finance_status=params.get('finance_status'),
             customer_id=params.get('customer'),
-            ticket_id=params.get('ticket'),
+            ticket_id=ticket_id,
             fiscal_year_start=fy_start,
             fiscal_year_end=fy_end,
         )
