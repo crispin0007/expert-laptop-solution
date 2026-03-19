@@ -211,12 +211,14 @@ function Step2Category({
   categories,
   selectedCat,
   selectedSub,
+  categoryError,
   onCat,
   onSub,
 }: {
   categories: TicketCategory[]
   selectedCat: number | null
   selectedSub: number | null
+  categoryError?: string
   onCat: (id: number | null) => void
   onSub: (id: number | null) => void
 }) {
@@ -225,7 +227,13 @@ function Step2Category({
   return (
     <div>
       <h2 className="text-lg font-semibold text-slate-800 mb-1">Select a category</h2>
-      <p className="text-sm text-slate-500 mb-6">Helps classify and route the ticket correctly.</p>
+      <p className="text-sm text-slate-500 mb-4">Helps classify and route the ticket correctly.</p>
+
+      {categoryError && (
+        <p className="mb-3 text-xs text-red-500 flex items-center gap-1">
+          <AlertTriangle size={11} className="flex-shrink-0" /> {categoryError}
+        </p>
+      )}
 
       {categories.length === 0 ? (
         <div className="text-center py-10 text-slate-400 text-sm">
@@ -277,12 +285,6 @@ function Step2Category({
             </div>
           )}
 
-          <button
-            onClick={() => { onCat(null); onSub(null) }}
-            className="mt-4 text-xs text-slate-400 hover:text-slate-600 underline"
-          >
-            Skip — no category
-          </button>
         </>
       )}
     </div>
@@ -521,6 +523,9 @@ function Step4Details({
   staff,
   vehicles,
   autoTitle,
+  titleError,
+  descriptionError,
+  staffError,
   onChange,
 }: {
   state: WizardState
@@ -528,6 +533,9 @@ function Step4Details({
   staff: StaffUser[]
   vehicles: Vehicle[]
   autoTitle: string
+  titleError?: string
+  descriptionError?: string
+  staffError?: string
   onChange: (partial: Partial<WizardState>) => void
 }) {
   const toggleStaff = (id: number) => {
@@ -547,6 +555,14 @@ function Step4Details({
         : [...current, id],
     })
   }
+
+  const [staffSearch, setStaffSearch] = useState('')
+  const filteredStaff = staffSearch.trim()
+    ? staff.filter(s =>
+        (s.full_name || '').toLowerCase().includes(staffSearch.toLowerCase()) ||
+        s.email.toLowerCase().includes(staffSearch.toLowerCase())
+      )
+    : staff
 
   return (
     <div>
@@ -578,20 +594,36 @@ function Step4Details({
             value={state.title}
             onChange={e => onChange({ title: e.target.value })}
             placeholder={autoTitle || 'Brief description of the issue…'}
-            className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className={`w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 ${
+              titleError ? 'border-red-400 focus:ring-red-400' : 'border-slate-300 focus:ring-indigo-500'
+            }`}
           />
+          {titleError && (
+            <p className="mt-1 text-xs text-red-500 flex items-center gap-1">
+              <AlertTriangle size={11} className="flex-shrink-0" /> {titleError}
+            </p>
+          )}
         </div>
 
         {/* Description */}
         <div>
-          <label className="text-xs font-medium text-slate-600 block mb-1">Description</label>
+          <label className={`text-xs font-medium block mb-1 ${descriptionError ? 'text-red-500' : 'text-slate-600'}`}>
+            Description <span className="text-red-500">*</span>
+          </label>
           <textarea
             rows={3}
             value={state.description}
             onChange={e => onChange({ description: e.target.value })}
             placeholder="Steps to reproduce, expected behavior, error messages…"
-            className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+            className={`w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 resize-none ${
+              descriptionError ? 'border-red-400 focus:ring-red-400' : 'border-slate-300 focus:ring-indigo-500'
+            }`}
           />
+          {descriptionError && (
+            <p className="mt-1 text-xs text-red-500 flex items-center gap-1">
+              <AlertTriangle size={11} className="flex-shrink-0" /> {descriptionError}
+            </p>
+          )}
         </div>
 
         {/* Priority */}
@@ -635,8 +667,8 @@ function Step4Details({
 
         {/* Assign Staff — multi-select */}
         <div>
-          <label className="text-xs font-medium text-slate-600 block mb-1">
-            Assign Staff
+          <label className={`text-xs font-medium block mb-1 ${staffError ? 'text-red-500' : 'text-slate-600'}`}>
+            Assign Staff <span className="text-red-500">*</span>
             {state.department && <span className="ml-1 text-indigo-500 font-normal">(filtered by department)</span>}
             {state.team_members.length > 0 && (
               <span className="ml-2 bg-indigo-100 text-indigo-700 text-[10px] font-semibold px-1.5 py-0.5 rounded-full">
@@ -645,13 +677,29 @@ function Step4Details({
             )}
           </label>
 
+          {staffError && (
+            <p className="text-xs text-red-500 mb-1.5 flex items-center gap-1">
+              <AlertTriangle size={12} className="shrink-0" />{staffError}
+            </p>
+          )}
+          {staff.length > 0 && (
+            <div className="relative mb-2">
+              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                value={staffSearch}
+                onChange={e => setStaffSearch(e.target.value)}
+                placeholder="Search staff…"
+                className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              />
+            </div>
+          )}
           {staff.length === 0 ? (
             <p className="text-xs text-slate-400 italic py-2">
               {state.department ? 'No staff in this department.' : 'No staff available.'}
             </p>
           ) : (
-            <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100 max-h-44 overflow-y-auto">
-              {staff.map(s => {
+            <div className={`border rounded-xl overflow-hidden divide-y divide-slate-100 max-h-44 overflow-y-auto ${staffError ? 'border-red-300' : 'border-slate-200'}`}>
+              {filteredStaff.map(s => {
                 const selected = state.team_members.includes(s.id)
                 const isLead = state.team_members[0] === s.id
                 return (
@@ -846,11 +894,22 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
   const [step, setStep] = useState(0)
   const [state, setState] = useState<WizardState>(INIT)
   const [customerCache, setCustomerCache] = useState<Customer[]>([])
+  const [fieldErrors, setFieldErrors] = useState<{ title?: string; description?: string; team_members?: string; category?: string }>({})
+  const [apiErrors, setApiErrors] = useState<string[]>([])
+  const [stepHint, setStepHint] = useState('')
   const qc = useQueryClient()
   // Tracks the last auto-generated title so manual edits aren't overwritten
   const autoTitleRef = useRef('')
 
-  const update = (partial: Partial<WizardState>) => setState(prev => ({ ...prev, ...partial }))
+  const update = (partial: Partial<WizardState>) => {
+    setState(prev => ({ ...prev, ...partial }))
+    // Clear validation feedback when the user corrects a field
+    if ('title' in partial) setFieldErrors(e => ({ ...e, title: undefined }))
+    if ('description' in partial) setFieldErrors(e => ({ ...e, description: undefined }))
+    if ('team_members' in partial) setFieldErrors(e => ({ ...e, team_members: undefined }))
+    if ('category' in partial) setFieldErrors(e => ({ ...e, category: undefined }))
+    if ('title' in partial || 'ticket_type' in partial || 'customer' in partial || 'team_members' in partial || 'category' in partial || 'description' in partial) setStepHint('')
+  }
 
   // ── Data queries ───────────────────────────────────────────────────────────
 
@@ -975,19 +1034,50 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
       onCreated()
       onClose()
     },
-    onError: () => toast.error('Failed to create ticket'),
+    onError: (error: unknown) => {
+      const data = (error as any)?.response?.data
+      const msgs: string[] = []
+      if (Array.isArray(data?.errors)) msgs.push(...data.errors)
+      else if (typeof data?.message === 'string') msgs.push(data.message)
+      else msgs.push('Failed to create ticket. Please check your details and try again.')
+      setApiErrors(msgs)
+    },
   })
 
   // ── Navigation ─────────────────────────────────────────────────────────────
 
   const canNext = (): boolean => {
     if (step === 0) return state.ticket_type !== null
+    if (step === 1) return categories.length === 0 || state.category !== null
     if (step === 2) return state.customer !== null
-    if (step === 3) return state.title.trim().length > 0
+    if (step === 3) return state.title.trim().length > 0 && state.description.trim().length > 0 && state.team_members.length > 0
     return true
   }
 
+  // All required fields — gates the final Create Ticket button
+  const canSubmit = state.ticket_type !== null && state.customer !== null && state.title.trim().length > 0 && state.description.trim().length > 0 && (categories.length === 0 || state.category !== null)
+
   const handleNext = () => {
+    setStepHint('')
+    if (!canNext()) {
+      if (step === 0) setStepHint('Select a ticket type to continue.')
+      else if (step === 1) {
+        setFieldErrors({ category: 'Select a category to continue.' })
+        setStepHint('Select a category to continue.')
+      }
+      else if (step === 2) setStepHint('Select a customer to continue.')
+      else if (step === 3) {
+        const errs: { title?: string; description?: string; team_members?: string } = {}
+        if (!state.title.trim()) errs.title = 'Title is required.'
+        if (!state.description.trim()) errs.description = 'Description is required.'
+        if (state.team_members.length === 0) errs.team_members = 'Assign at least one staff member.'
+        setFieldErrors(errs)
+        setStepHint('Please fix the highlighted fields to continue.')
+      }
+      return
+    }
+    setFieldErrors({})
+    setApiErrors([])
     if (step < STEPS.length - 1) setStep(s => s + 1)
     else submitMutation.mutate()
   }
@@ -995,6 +1085,9 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
   const handleClose = () => {
     setState(INIT)
     setStep(0)
+    setFieldErrors({})
+    setApiErrors([])
+    setStepHint('')
     onClose()
   }
 
@@ -1028,7 +1121,10 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
             <Step1TicketKind
               types={types}
               selected={state.ticket_type}
-              onSelect={id => update({ ticket_type: id })}
+              onSelect={id => {
+                update({ ticket_type: id })
+                setTimeout(() => setStep(s => s === 0 ? 1 : s), 220)
+              }}
             />
           )}
           {step === 1 && (
@@ -1036,6 +1132,7 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
               categories={categories}
               selectedCat={state.category}
               selectedSub={state.subcategory}
+              categoryError={fieldErrors.category}
               onCat={id => update({ category: id, subcategory: null })}
               onSub={id => update({ subcategory: id })}
             />
@@ -1045,10 +1142,12 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
               customers={customers}
               selected={state.customer}
               onSelect={(id, c) => {
-                update({ customer: id || null })
+                const customerId = id || null
+                update({ customer: customerId })
                 if (c && !allCustomers.find(x => x.id === c.id)) {
                   setCustomerCache(prev => [...prev.filter(x => x.id !== c.id), c])
                 }
+                if (customerId) setTimeout(() => setStep(s => s === 2 ? 3 : s), 220)
               }}
             />
           )}
@@ -1059,56 +1158,82 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
               staff={staff}
               vehicles={vehiclesList}
               autoTitle={autoTitleRef.current}
+              titleError={fieldErrors.title}
+              descriptionError={fieldErrors.description}
+              staffError={fieldErrors.team_members}
               onChange={update}
             />
           )}
           {step === 4 && (
-            <Step5Review
-              state={state}
-              types={types}
-              categories={categories}
-              customers={customers}
-              departments={departments}
-              staff={staff}
-              vehicles={vehiclesList}
-            />
+            <>
+              <Step5Review
+                state={state}
+                types={types}
+                categories={categories}
+                customers={customers}
+                departments={departments}
+                staff={staff}
+                vehicles={vehiclesList}
+              />
+              {apiErrors.length > 0 && (
+                <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-xl">
+                  <p className="text-xs font-semibold text-red-700 mb-1.5 flex items-center gap-1.5">
+                    <AlertTriangle size={13} /> Submission failed — please fix the following:
+                  </p>
+                  <ul className="space-y-0.5">
+                    {apiErrors.map((e, i) => (
+                      <li key={i} className="text-xs text-red-600">• {e}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
           )}
         </div>
 
         {/* Footer nav */}
-        <div className="flex items-center justify-between px-8 py-5 border-t border-slate-100 bg-slate-50/50">
-          <button
-            onClick={() => setStep(s => s - 1)}
-            disabled={step === 0}
-            className="flex items-center gap-1.5 text-sm text-slate-600 px-4 py-2.5 rounded-xl border border-slate-300 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <ChevronLeft size={16} /> Back
-          </button>
+        <div className="px-8 py-5 border-t border-slate-100 bg-slate-50/50">
+          {/* Validation hint — shown when the user tries to advance without required fields */}
+          {stepHint && (
+            <div className="flex items-center justify-center gap-1.5 mb-3 py-2 px-3 bg-amber-50 border border-amber-200 rounded-xl">
+              <AlertTriangle size={13} className="text-amber-500 flex-shrink-0" />
+              <p className="text-xs text-amber-700 font-medium">{stepHint}</p>
+            </div>
+          )}
+          <div className="flex items-center justify-between">
+            <button
+              onClick={() => { setStep(s => s - 1); setStepHint(''); setApiErrors([]) }}
+              disabled={step === 0}
+              className="flex items-center gap-1.5 text-sm text-slate-600 px-4 py-2.5 rounded-xl border border-slate-300 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <ChevronLeft size={16} /> Back
+            </button>
 
-          <div className="flex items-center gap-1.5">
-            {STEPS.map((_, idx) => (
-              <div
-                key={idx}
-                className={`h-1.5 rounded-full transition-all ${
-                  idx === step ? 'w-6 bg-indigo-600' : idx < step ? 'w-3 bg-indigo-300' : 'w-3 bg-slate-200'
-                }`}
-              />
-            ))}
+            <div className="flex items-center gap-1.5">
+              {STEPS.map((_, idx) => (
+                <div
+                  key={idx}
+                  className={`h-1.5 rounded-full transition-all ${
+                    idx === step ? 'w-6 bg-indigo-600' : idx < step ? 'w-3 bg-indigo-300' : 'w-3 bg-slate-200'
+                  }`}
+                />
+              ))}
+            </div>
+
+            <button
+              onClick={handleNext}
+              disabled={step === STEPS.length - 1 ? (!canSubmit || submitMutation.isPending) : submitMutation.isPending}
+              className="flex items-center gap-1.5 text-sm bg-indigo-600 text-white px-5 py-2.5 rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
+            >
+              {submitMutation.isPending ? (
+                <><Loader2 size={15} className="animate-spin" /> Creating…</>
+              ) : step === STEPS.length - 1 ? (
+                <><Check size={15} /> Create Ticket</>
+              ) : (
+                <>Next <ChevronRight size={16} /></>
+              )}
+            </button>
           </div>
-
-          <button
-            onClick={handleNext}
-            disabled={!canNext() || submitMutation.isPending}
-            className="flex items-center gap-1.5 text-sm bg-indigo-600 text-white px-5 py-2.5 rounded-xl hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed font-medium"
-          >
-            {submitMutation.isPending ? (
-              <><Loader2 size={15} className="animate-spin" /> Creating…</>
-            ) : step === STEPS.length - 1 ? (
-              <><Check size={15} /> Create Ticket</>
-            ) : (
-              <>Next <ChevronRight size={16} /></>
-            )}
-          </button>
         </div>
       </div>
     </div>

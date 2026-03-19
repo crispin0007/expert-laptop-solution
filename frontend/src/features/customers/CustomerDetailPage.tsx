@@ -18,7 +18,10 @@ export default function CustomerDetailPage() {
   const customerId = Number(id)
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const { can } = usePermissions()
   const [tab, setTab] = useState<Tab>('Info')
+  const [editing, setEditing] = useState(false)
+  const [form, setForm] = useState<Partial<Customer>>({})
   const [saveErrors, setSaveErrors] = useState<Record<string, string>>({})
 
   const { data: customer, isLoading } = useQuery<Customer>({
