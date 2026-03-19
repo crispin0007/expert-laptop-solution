@@ -16,6 +16,7 @@ import { RoleGuard } from '@/guards/RoleGuard'
 import { ModuleGuard, ModuleLockedScreen } from '@/guards/ModuleGuard'
 import { DrawerToggle } from '@/components/ui/AppDrawer'
 import { useTicketList, type Ticket, type TicketFilters } from '@/features/tickets/useTickets'
+import { usePermissions } from '@/hooks/usePermissions'
 
 // ── Priority colours ──────────────────────────────────────────────────────────
 
@@ -199,10 +200,12 @@ export default function TicketsScreen() {
   const theme = useTheme()
   const router = useRouter()
   const insets = useSafeAreaInsets()
+  const { isStaff } = usePermissions()
+  // Viewers (field workers) only see their assigned tickets — enforce at mount
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [priority, setPriority] = useState('')
-  const [myTickets, setMyTickets] = useState(false)
+  const [myTickets, setMyTickets] = useState(!isStaff)
 
   const filters: TicketFilters = {
     ...(search ? { search } : {}),

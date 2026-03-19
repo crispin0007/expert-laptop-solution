@@ -16,6 +16,8 @@ import { StatusBadge, PriorityBadge, SlaBadge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { RoleGuard } from '@/guards/RoleGuard'
+import { usePermissions } from '@/hooks/usePermissions'
+import { useAuthStore } from '@/store/authStore'
 import {
   useTicket, useTicketComments, useTicketTimeline, useTicketProducts,
   useUpdateTicketStatus, useAddComment, useAssignTicket, useTransferTicket,
@@ -443,11 +445,25 @@ export default function TicketDetailScreen() {
   const [showAddProduct, setShowAddProduct] = useState(false)
   const [showAddVehicle, setShowAddVehicle] = useState(false)
 
+  const { isStaff, isManager } = usePermissions()
+  const currentUserId = useAuthStore((s) => s.user?.id)
+
   const { data: ticket, isLoading, refetch, isRefetching } = useTicket(ticketId)
   const { data: comments } = useTicketComments(ticketId, validId && activeTab === 'comments')
   const { data: products, isLoading: productsLoading } = useTicketProducts(ticketId, validId && activeTab === 'products')
   const { data: attachments, isLoading: attachmentsLoading } = useTicketAttachments(ticketId, validId && activeTab === 'attachments')
   const { data: timeline } = useTicketTimeline(ticketId, validId && activeTab === 'timeline')
+
+  // Viewer/custom users can edit only tickets assigned to them
+  const isAssigned = !!currentUserId && !!ticket && (
+    ticket.assigned_to === currentUserId ||
+    (ticket.team_members ?? []).includes(currentUserId)
+  )
+  // canEdit mirrors web: staff+ always, viewer only if assigned
+  const canEdit = isStaff || isAssigned
+
+  // Viewer gets a limited safe-status set (backend enforces the same restriction)
+  const VIEWER_SAFE_STATUSES = new Set(['in_progress', 'pending_customer', 'resolved'])
 
   const updateStatusMutation = useUpdateTicketStatus(ticketId)
   const addCommentMutation = useAddComment(ticketId)
@@ -563,7 +579,12 @@ export default function TicketDetailScreen() {
     )
   }
 
-  const nextStatuses = STATUS_TRANSITIONS[ticket.status] ?? []
+  // For viewer (non-staff): filter to only the safe status transitions
+  const allNextStatuses = STATUS_TRANSITIONS[ticket.status] ?? []
+  const nextStatuses = isStaff
+    ? allNextStatuses
+    : allNextStatuses.filter((s) => VIEWER_SAFE_STATUSES.has(s))
+
   const tabs: { key: TabKey; label: string; icon: string }[] = [
     { key: 'details', label: 'Details', icon: 'document-text-outline' },
     { key: 'comments', label: 'Comments', icon: 'chatbubbles-outline' },
@@ -859,18 +880,16 @@ export default function TicketDetailScreen() {
               </>
             )}
 
-            {/* ── Status quick-actions (Assign/Transfer live in sticky bar — only status here) ── */}
-            {isTicketActive && nextStatuses.length > 0 && (
-              <RoleGuard permission="tickets.edit">
-                <View style={{ backgroundColor: theme.colors.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: theme.colors.border, gap: 10 }}>
-                  <Text style={{ fontSize: 10, fontWeight: '700', color: theme.colors.textMuted, letterSpacing: 0.8, textTransform: 'uppercase' }}>Update Status</Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                    {nextStatuses.map((s) => (
-                      <Button key={s} label={STATUS_LABELS[s] ?? s} variant={STATUS_VARIANT_MAP[s] ?? 'outline'} size="sm" loading={updateStatusMutation.isPending} onPress={() => handleStatusChange(s)} />
-                    ))}
-                  </View>
+            {/* ── Status quick-actions ── */}
+            {isTicketActive && canEdit && nextStatuses.length > 0 && (
+              <View style={{ backgroundColor: theme.colors.surface, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: theme.colors.border, gap: 10 }}>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: theme.colors.textMuted, letterSpacing: 0.8, textTransform: 'uppercase' }}>Update Status</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {nextStatuses.map((s) => (
+                    <Button key={s} label={STATUS_LABELS[s] ?? s} variant={STATUS_VARIANT_MAP[s] ?? 'outline'} size="sm" loading={updateStatusMutation.isPending} onPress={() => handleStatusChange(s)} />
+                  ))}
                 </View>
-              </RoleGuard>
+              </View>
             )}
           </>
         )}
@@ -925,7 +944,7 @@ export default function TicketDetailScreen() {
             ))}
 
             {/* ── Composer ── */}
-            <RoleGuard permission="tickets.edit">
+            {canEdit && (
               <View style={{
                 backgroundColor: theme.colors.surface,
                 borderRadius: 14,
@@ -949,14 +968,16 @@ export default function TicketDetailScreen() {
                   style={{ fontSize: 14, color: theme.colors.text, minHeight: 80, lineHeight: 21, padding: 14, paddingTop: 12 }}
                 />
                 <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 8, borderTopWidth: 1, borderTopColor: theme.colors.border, gap: 4 }}>
-                  {/* Internal toggle */}
-                  <TouchableOpacity
-                    onPress={() => setIsInternal(!isInternal)}
-                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, backgroundColor: isInternal ? theme.primary[100] : 'transparent' }}
-                  >
-                    <Ionicons name={isInternal ? 'eye-off' : 'eye-outline'} size={16} color={isInternal ? theme.primary[600] : theme.colors.textMuted} />
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: isInternal ? theme.primary[600] : theme.colors.textMuted }}>Internal</Text>
-                  </TouchableOpacity>
+                  {/* Internal toggle — staff only; viewers don't have internal notes */}
+                  {isStaff && (
+                    <TouchableOpacity
+                      onPress={() => setIsInternal(!isInternal)}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, backgroundColor: isInternal ? theme.primary[100] : 'transparent' }}
+                    >
+                      <Ionicons name={isInternal ? 'eye-off' : 'eye-outline'} size={16} color={isInternal ? theme.primary[600] : theme.colors.textMuted} />
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: isInternal ? theme.primary[600] : theme.colors.textMuted }}>Internal</Text>
+                    </TouchableOpacity>
+                  )}
                   <View style={{ flex: 1 }} />
                   {/* Image attach */}
                   <TouchableOpacity onPress={handlePickCommentImage} disabled={addAttachmentMutation.isPending} style={{ width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' }}>
@@ -989,19 +1010,19 @@ export default function TicketDetailScreen() {
                   </TouchableOpacity>
                 </View>
               </View>
-            </RoleGuard>
+            )}
           </>
         )}
 
         {/* ════ PRODUCTS TAB ════ */}
         {activeTab === 'products' && (
           <>
-            <RoleGuard permission="tickets.edit">
+            {canEdit && (
               <TouchableOpacity onPress={() => setShowAddProduct(true)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderRadius: 10, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderStyle: 'dashed' }}>
                 <Ionicons name="add-circle-outline" size={18} color={theme.primary[600]} />
                 <Text style={{ fontSize: 13, fontWeight: '600', color: theme.primary[600] }}>Add Product / Service</Text>
               </TouchableOpacity>
-            </RoleGuard>
+            )}
 
             {productsLoading ? (
               <ActivityIndicator color={theme.primary[500]} style={{ marginTop: 40 }} />
@@ -1018,11 +1039,11 @@ export default function TicketDetailScreen() {
                       <Text style={{ fontSize: 14, fontWeight: '700', color: theme.colors.text, flex: 1, marginRight: 8 }}>{p.product_name}</Text>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                         <Text style={{ fontSize: 14, fontWeight: '800', color: theme.primary[600] }}>Rs {parseFloat(p.line_total).toLocaleString()}</Text>
-                        <RoleGuard permission="tickets.edit">
+                        {canEdit && (
                           <TouchableOpacity onPress={() => handleDeleteProduct(p.id)} disabled={deleteProductMutation.isPending}>
                             <Ionicons name="trash-outline" size={16} color="#dc2626" />
                           </TouchableOpacity>
-                        </RoleGuard>
+                        )}
                       </View>
                     </View>
                     <View style={{ flexDirection: 'row', gap: 16 }}>
@@ -1052,14 +1073,14 @@ export default function TicketDetailScreen() {
         {/* ════ ATTACHMENTS TAB ════ */}
         {activeTab === 'attachments' && (
           <>
-            <RoleGuard permission="tickets.edit">
+            {canEdit && (
               <TouchableOpacity onPress={handleAttachmentUpload} disabled={addAttachmentMutation.isPending} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 13, borderRadius: 12, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.primary[200], borderStyle: 'dashed' }}>
                 {addAttachmentMutation.isPending
                   ? <ActivityIndicator size="small" color={theme.primary[600]} />
                   : <Ionicons name="cloud-upload-outline" size={18} color={theme.primary[600]} />}
                 <Text style={{ fontSize: 13, fontWeight: '700', color: theme.primary[600] }}>Upload File or Photo</Text>
               </TouchableOpacity>
-            </RoleGuard>
+            )}
 
             {attachmentsLoading ? (
               <ActivityIndicator color={theme.primary[500]} style={{ marginTop: 40 }} />
@@ -1099,14 +1120,14 @@ export default function TicketDetailScreen() {
                             <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.45)', padding: 6 }}>
                               <Text style={{ fontSize: 10, color: '#fff', fontWeight: '600' }} numberOfLines={1}>{a.file_name}</Text>
                             </View>
-                            <RoleGuard permission="tickets.edit">
+                            {canEdit && (
                               <TouchableOpacity
                                 onPress={() => handleDeleteAttachment(a.id)}
                                 style={{ position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: 13, backgroundColor: 'rgba(220,38,38,0.85)', alignItems: 'center', justifyContent: 'center' }}
                               >
                                 <Ionicons name="trash-outline" size={13} color="#fff" />
                               </TouchableOpacity>
-                            </RoleGuard>
+                            )}
                           </TouchableOpacity>
                         ))}
                       </View>
@@ -1136,11 +1157,11 @@ export default function TicketDetailScreen() {
                                   <TouchableOpacity onPress={() => Linking.openURL(a.url).catch(() => Alert.alert('Error', 'Cannot open file.'))} style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: theme.primary[50], alignItems: 'center', justifyContent: 'center' }}>
                                     <Ionicons name="open-outline" size={16} color={theme.primary[600]} />
                                   </TouchableOpacity>
-                                  <RoleGuard permission="tickets.edit">
+                                  {canEdit && (
                                     <TouchableOpacity onPress={() => handleDeleteAttachment(a.id)} style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: '#fef2f2', alignItems: 'center', justifyContent: 'center' }}>
                                       <Ionicons name="trash-outline" size={16} color="#dc2626" />
                                     </TouchableOpacity>
-                                  </RoleGuard>
+                                  )}
                                 </View>
                               </View>
                             </View>
@@ -1213,7 +1234,7 @@ export default function TicketDetailScreen() {
       </ScrollView>
 
       {/* ── Sticky Quick-Action Bar ── */}
-      {isTicketActive && (
+      {isTicketActive && canEdit && (
         <View style={{
           flexDirection: 'row',
           gap: 8,
@@ -1229,45 +1250,49 @@ export default function TicketDetailScreen() {
           shadowRadius: 8,
           elevation: 6,
         }}>
-          {/* Assign */}
-          <TouchableOpacity
-            onPress={() => setShowAssign(true)}
-            style={{
-              flex: 1,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              paddingVertical: 11,
-              borderRadius: 12,
-              backgroundColor: theme.primary[50],
-              borderWidth: 1,
-              borderColor: theme.primary[200],
-            }}
-          >
-            <Ionicons name="person-add-outline" size={15} color={theme.primary[700]} />
-            <Text style={{ fontSize: 13, fontWeight: '700', color: theme.primary[700] }}>Assign</Text>
-          </TouchableOpacity>
+          {/* Assign — manager+ only */}
+          {isManager && (
+            <TouchableOpacity
+              onPress={() => setShowAssign(true)}
+              style={{
+                flex: 1,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                paddingVertical: 11,
+                borderRadius: 12,
+                backgroundColor: theme.primary[50],
+                borderWidth: 1,
+                borderColor: theme.primary[200],
+              }}
+            >
+              <Ionicons name="person-add-outline" size={15} color={theme.primary[700]} />
+              <Text style={{ fontSize: 13, fontWeight: '700', color: theme.primary[700] }}>Assign</Text>
+            </TouchableOpacity>
+          )}
 
-          {/* Transfer */}
-          <TouchableOpacity
-            onPress={() => setShowTransfer(true)}
-            style={{
-              flex: 1,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              paddingVertical: 11,
-              borderRadius: 12,
-              backgroundColor: '#eff6ff',
-              borderWidth: 1,
-              borderColor: '#bfdbfe',
-            }}
-          >
-            <Ionicons name="swap-horizontal-outline" size={15} color="#1d4ed8" />
-            <Text style={{ fontSize: 13, fontWeight: '700', color: '#1d4ed8' }}>Transfer</Text>
-          </TouchableOpacity>
+          {/* Transfer — manager+ only */}
+          {isManager && (
+            <TouchableOpacity
+              onPress={() => setShowTransfer(true)}
+              style={{
+                flex: 1,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                paddingVertical: 11,
+                borderRadius: 12,
+                backgroundColor: '#eff6ff',
+                borderWidth: 1,
+                borderColor: '#bfdbfe',
+              }}
+            >
+              <Ionicons name="swap-horizontal-outline" size={15} color="#1d4ed8" />
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#1d4ed8' }}>Transfer</Text>
+            </TouchableOpacity>
+          )}
 
           {/* Next status or Close CTA */}
           {nextStatuses.length > 0 && (
