@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import {
   Ticket as TicketIcon, Plus, Search, Filter, AlertCircle,
@@ -96,7 +96,7 @@ export default function TicketListPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
 
-  const { can } = usePermissions()
+  const { can, isManager } = usePermissions()
   const currentUser = useAuthStore((s) => s.user)
   const { fyYear } = useFyStore()
   const [urlParams] = useSearchParams()
@@ -105,7 +105,9 @@ export default function TicketListPage() {
     (urlParams.get('status') as StatusFilter) ?? 'all'
   )
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all')
-  const assignedToMe = urlParams.get('assigned') === 'me'
+  const assignedToMe  = urlParams.get('assigned') === 'me'
+  const slaBreached   = urlParams.get('sla_breached') === 'true'
+  const deptFilter    = urlParams.get('department') ?? null
   const [showCreate, setShowCreate] = useState(false)
   const [page, setPage] = useState(1)
 
@@ -118,13 +120,15 @@ export default function TicketListPage() {
       page_size: PAGE_SIZE,
       ordering: '-created_at',
     }
-    if (fyYear)                           p.fiscal_year  = fyYear
-    if (statusFilter !== 'all')           p.status       = statusFilter
-    if (priorityFilter !== 'all')         p.priority     = priorityFilter
-    if (search.trim())                    p.search       = search.trim()
-    if (assignedToMe && currentUser?.id)  p.assigned_to  = currentUser.id
+    if (fyYear)                           p.fiscal_year   = fyYear
+    if (statusFilter !== 'all')           p.status        = statusFilter
+    if (priorityFilter !== 'all')         p.priority      = priorityFilter
+    if (search.trim())                    p.search        = search.trim()
+    if (assignedToMe && currentUser?.id)  p.assigned_to   = currentUser.id
+    if (slaBreached)                      p.sla_breached  = 'true'
+    if (deptFilter)                       p.department    = deptFilter
     return p
-  }, [page, fyYear, statusFilter, priorityFilter, search, assignedToMe, currentUser])
+  }, [page, fyYear, statusFilter, priorityFilter, search, assignedToMe, currentUser, slaBreached, deptFilter])
 
   const { data: response, isLoading } = useQuery({
     queryKey: ['tickets', queryParams],
@@ -153,6 +157,12 @@ export default function TicketListPage() {
     resolved: tickets.filter(t => t.status === 'resolved').length,
     breached: tickets.filter(t => t.sla_breached).length,
   }), [tickets, totalCount])
+
+  // Staff / viewer see only their own tickets — redirect if no ?assigned=me
+  // Must be after all hooks to respect React's rules of hooks.
+  if (!isManager && !assignedToMe) {
+    return <Navigate to="/tickets?assigned=me" replace />
+  }
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">

@@ -1599,6 +1599,13 @@ export default function TicketDetailPage() {
     enabled: !!id,
   })
 
+  // Assigned users (viewer/custom roles) can edit their own ticket
+  const isAssigned = !!user && !!ticket && (
+    ticket.assigned_to === user.id ||
+    (ticket.team_members ?? []).includes(user.id)
+  )
+  const canEdit = managerView || isAssigned
+
   const { data: comments = [], isLoading: commentsLoading } = useQuery<Comment[]>({
     queryKey: ['ticket-comments', id],
     queryFn: () =>
@@ -1782,16 +1789,26 @@ export default function TicketDetailPage() {
               )}
             </>
           ) : (
-            ticket.assigned_to === user?.id &&
-              ['in_progress', 'pending_customer'].includes(ticket.status) ? (
-              <button
-                onClick={() => statusMutation.mutate('resolved')}
-                disabled={statusMutation.isPending}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition"
-              >
-                {statusMutation.isPending ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={13} />}
-                Mark Resolved
-              </button>
+            isAssigned && !['closed', 'cancelled'].includes(ticket.status) ? (
+              <div className="flex items-center gap-1">
+                <select
+                  value={newStatus || ticket.status}
+                  onChange={e => setNewStatus(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  {Object.entries(STATUS_LABELS)
+                    .filter(([v]) => ['in_progress', 'pending_customer', 'resolved'].includes(v))
+                    .map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+                <button
+                  onClick={() => statusMutation.mutate(newStatus || ticket.status)}
+                  disabled={statusMutation.isPending || !newStatus || newStatus === ticket.status}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition"
+                >
+                  {statusMutation.isPending && <Loader2 size={11} className="animate-spin" />}
+                  Update
+                </button>
+              </div>
             ) : null
           )}
           {can('can_assign_tickets') && (
@@ -1871,7 +1888,7 @@ export default function TicketDetailPage() {
           <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
             <h2 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
               <Paperclip size={15} className="text-gray-400" /> Attachments
-              {can('can_update_tickets') && (
+              {canEdit && (
               <button
                 onClick={() => attachFileRef.current?.click()}
                 disabled={uploadingAttach}
@@ -1906,7 +1923,7 @@ export default function TicketDetailPage() {
                   <a href={a.url} target="_blank" rel="noreferrer" className="text-indigo-500 hover:text-indigo-700 p-1" title="Download">
                     <Download size={14} />
                   </a>
-                  {can('can_update_tickets') && (
+                  {canEdit && (
                   <button onClick={() => deleteAttachment(a.id)} className="text-red-400 hover:text-red-600 p-1" title="Remove">
                     <X size={14} />
                   </button>
@@ -2085,7 +2102,7 @@ export default function TicketDetailPage() {
             )}
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                {can('can_update_tickets') && (
+                {managerView && (
                 <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
                   <input
                     type="checkbox"

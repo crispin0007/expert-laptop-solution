@@ -136,8 +136,8 @@ class MeSerializer(serializers.ModelSerializer):
             'can_transfer_tickets': _perm(is_manager, 'tickets.transfer'),
             'can_close_tickets': _perm(is_manager, 'tickets.close'),
             'can_manage_ticket_types': _perm(is_admin, 'tickets.manage_types'),
-            # Customers
-            'can_view_customers': _perm(True, 'customers.view'),
+            # Customers — manager+ only by default; custom roles can override
+            'can_view_customers': _perm(is_manager, 'customers.view'),
             'can_create_customers': _perm(is_staff, 'customers.create'),
             'can_update_customers': _perm(is_staff, 'customers.update'),
             'can_delete_customers': _perm(is_manager, 'customers.delete'),
@@ -152,8 +152,8 @@ class MeSerializer(serializers.ModelSerializer):
             # Staff
             'can_view_staff': _perm(is_manager, 'staff.view'),
             'can_manage_staff': _perm(is_admin, 'staff.manage'),
-            # Inventory
-            'can_view_inventory': _perm(True, 'inventory.view'),
+            # Inventory — manager+ only by default; custom roles can override
+            'can_view_inventory': _perm(is_manager, 'inventory.view'),
             'can_manage_inventory': _perm(is_admin, 'inventory.manage'),
             # Accounting
             'can_view_accounting': _perm(is_manager, 'accounting.view'),

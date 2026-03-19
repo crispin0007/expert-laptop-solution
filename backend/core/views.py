@@ -188,6 +188,7 @@ class DashboardStatsView(TenantMixin, APIView):
 
         now = timezone.now()
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
         # ── Optional FY filter ────────────────────────────────────────────
         fy_start_ad = None
@@ -221,6 +222,20 @@ class DashboardStatsView(TenantMixin, APIView):
         if fy_start_ad:
             project_qs = project_qs.filter(created_at__date__gte=fy_start_ad, created_at__date__lte=fy_end_ad)
         active_projects_count = project_qs.count()
+
+        pending_tasks_count = ProjectTask.objects.filter(
+            tenant=tenant, status__in=["todo", "in_progress"]
+        ).count()
+
+        overdue_tasks_count = ProjectTask.objects.filter(
+            tenant=tenant, status__in=["todo", "in_progress"],
+            due_date__lt=now.date(),
+        ).count()
+
+        completed_projects_month = Project.objects.filter(
+            tenant=tenant, status="completed", is_deleted=False,
+            updated_at__gte=month_start,
+        ).count()
 
         # ── Coins (tenant-wide) ───────────────────────────────────────────
         coin_qs = CoinTransaction.objects.filter(tenant=tenant, status="pending")
@@ -313,6 +328,29 @@ class DashboardStatsView(TenantMixin, APIView):
             due_date__lt=now.date(),
         ).count()
 
+        my_sla_breached = TicketSLA.objects.filter(
+            ticket__tenant=tenant,
+            ticket__assigned_to=request.user,
+            breached=True,
+        ).count()
+
+        my_total_tickets = Ticket.objects.filter(
+            tenant=tenant, assigned_to=request.user
+        ).count()
+
+        my_tickets_today = Ticket.objects.filter(
+            tenant=tenant,
+            assigned_to=request.user,
+            created_at__gte=today_start,
+        ).count()
+
+        my_resolved_this_month = Ticket.objects.filter(
+            tenant=tenant,
+            assigned_to=request.user,
+            status__in=["resolved", "closed"],
+            updated_at__gte=month_start,
+        ).count()
+
         return ApiResponse.success(data={
             # Tenant-wide
             "open_tickets": open_tickets_count,
@@ -320,6 +358,9 @@ class DashboardStatsView(TenantMixin, APIView):
             "sla_breached": sla_breached_count,
             "sla_warning": sla_warning_count,
             "active_projects": active_projects_count,
+            "pending_tasks": pending_tasks_count,
+            "overdue_tasks": overdue_tasks_count,
+            "completed_projects_month": completed_projects_month,
             "pending_coins": pending_coins_count,
             "revenue_this_month": revenue_this_month,
             "unpaid_invoices_count": unpaid_invoices_count,
@@ -337,4 +378,8 @@ class DashboardStatsView(TenantMixin, APIView):
             "my_coins_pending": my_coins_pending,
             "my_coins_approved": my_coins_approved,
             "my_overdue_tasks": my_overdue_tasks,
+            "my_sla_breached": my_sla_breached,
+            "my_total_tickets": my_total_tickets,
+            "my_tickets_today": my_tickets_today,
+            "my_resolved_this_month": my_resolved_this_month,
         })

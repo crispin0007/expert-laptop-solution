@@ -1,6 +1,6 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import apiClient from '../../api/client'
 import { PROJECTS, CUSTOMERS, STAFF } from '../../api/endpoints'
 import toast from 'react-hot-toast'
@@ -37,7 +37,7 @@ export default function ProjectListPage() {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const currentUser = useAuthStore((s) => s.user)
-  const { can } = usePermissions()
+  const { can, isManager } = usePermissions()
   const [urlParams] = useSearchParams()
   const assignedToMe = urlParams.get('assigned') === 'me'
   const [showCreate, setShowCreate] = useState(false)
@@ -48,26 +48,25 @@ export default function ProjectListPage() {
   useEffect(() => { setPage(1) }, [fyYear, assignedToMe])
 
   const { data: projectPage, isLoading } = useQuery<{ projects: Project[]; total: number }>({
-    queryKey: ['projects', fyYear, page],
-    queryFn: () => apiClient.get(PROJECTS.LIST, {
-      params: { ...(fyYear ? { fiscal_year: fyYear } : {}), page, page_size: 25 },
-    }).then(r => {
-      const d = r.data.data ?? r.data
-      const arr: Project[] = Array.isArray(d) ? d : d.results ?? []
-      const pag = r.data.meta?.pagination ?? {}
-      return { projects: arr, total: pag.total ?? arr.length }
-    }),
+    queryKey: ['projects', fyYear, page, assignedToMe, currentUser?.id],
+    queryFn: () => {
+      const params: Record<string, string | number> = { page, page_size: 25 }
+      if (fyYear) params.fiscal_year = fyYear
+      // Server-side filter: staff only see projects where they are the manager
+      if (assignedToMe && currentUser?.id) params.manager = currentUser.id
+      return apiClient.get(PROJECTS.LIST, { params }).then(r => {
+        const d = r.data.data ?? r.data
+        const arr: Project[] = Array.isArray(d) ? d : d.results ?? []
+        const pag = r.data.meta?.pagination ?? {}
+        return { projects: arr, total: pag.total ?? arr.length }
+      })
+    },
     placeholderData: prev => prev,
   })
 
-  const rawProjects = projectPage?.projects ?? []
+  const projects = projectPage?.projects ?? []
   const totalCount = projectPage?.total ?? 0
   const totalPages = Math.ceil(totalCount / 25)
-
-  const projects = useMemo(() => {
-    if (!assignedToMe || !currentUser) return rawProjects
-    return rawProjects.filter(p => p.manager === currentUser.id)
-  }, [rawProjects, assignedToMe, currentUser])
 
   const { data: customers = [] } = useQuery<Customer[]>({
     queryKey: ['customers-simple'],
@@ -111,6 +110,12 @@ export default function ProjectListPage() {
     onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
       setForm(p => ({ ...p, [key]: e.target.value })),
   })
+
+  // Staff / viewer see only their own projects — redirect if no ?assigned=me.
+  // After all hooks to respect React's rules of hooks.
+  if (!isManager && !assignedToMe) {
+    return <Navigate to="/projects?assigned=me" replace />
+  }
 
   return (
     <div>

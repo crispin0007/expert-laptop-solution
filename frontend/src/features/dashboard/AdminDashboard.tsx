@@ -17,7 +17,7 @@ import { useFyStore } from '../../store/fyStore'
 import {
   Ticket as TicketIcon, FolderKanban, Coins, AlertTriangle,
   Clock, CircleDot, ArrowRight, Plus, TrendingUp, ShieldAlert,
-  Users, FileText, UserPlus, TrendingDown,
+  Users, FileText, UserPlus, TrendingDown, ListChecks, CheckCircle2, CalendarX2,
 } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -28,6 +28,9 @@ interface DashboardStats {
   sla_breached: number
   sla_warning: number
   active_projects: number
+  pending_tasks: number
+  overdue_tasks: number
+  completed_projects_month: number
   pending_coins: number
   revenue_this_month: string
   unpaid_invoices_count: number
@@ -114,7 +117,7 @@ function fmtNum(n: string | number) {
 // ── Stat Card ──────────────────────────────────────────────────────────────────
 
 function StatCard({
-  label, value, sub, icon: Icon, iconBg, iconColor, alert,
+  label, value, sub, icon: Icon, iconBg, iconColor, alert, onClick,
 }: {
   label: string
   value: string | number
@@ -123,11 +126,15 @@ function StatCard({
   iconBg: string
   iconColor: string
   alert?: boolean
+  onClick?: () => void
 }) {
   return (
-    <div className={`bg-white rounded-xl border shadow-sm p-4 flex items-center gap-4 ${
-      alert ? 'border-red-300 ring-1 ring-red-200' : 'border-gray-200'
-    }`}>
+    <div
+      onClick={onClick}
+      className={`bg-white rounded-xl border shadow-sm p-4 flex items-center gap-4 ${
+        alert ? 'border-red-300 ring-1 ring-red-200' : 'border-gray-200'
+      } ${onClick ? 'cursor-pointer hover:shadow-md hover:border-indigo-200 transition-all' : ''}`}
+    >
       <div className={`w-10 h-10 rounded-xl ${iconBg} flex items-center justify-center shrink-0`}>
         <Icon size={18} className={iconColor} />
       </div>
@@ -183,7 +190,7 @@ export default function AdminDashboard() {
 
   // ── List data ────────────────────────────────────────────────────────────
   const showTickets  = modules.has('tickets') && perms.can('can_view_tickets')
-  const showProjects = modules.has('projects') && perms.can('can_view_projects')
+  const showProjects = modules.has('projects')
   const showCoins    = modules.has('accounting') && perms.can('can_approve_coins')
   const showAccounting = modules.has('accounting') && perms.can('can_view_accounting')
 
@@ -292,6 +299,7 @@ export default function AdminDashboard() {
             icon={TrendingUp}
             iconBg="bg-teal-50"
             iconColor="text-teal-600"
+            onClick={() => navigate('/accounting')}
           />
           <StatCard
             label="Unpaid Invoices"
@@ -301,6 +309,7 @@ export default function AdminDashboard() {
             iconBg={stats?.unpaid_invoices_count ? 'bg-orange-50' : 'bg-gray-50'}
             iconColor={stats?.unpaid_invoices_count ? 'text-orange-500' : 'text-gray-400'}
             alert={!!stats?.unpaid_invoices_count}
+            onClick={() => navigate('/invoices')}
           />
           <StatCard
             label="New Customers"
@@ -309,6 +318,7 @@ export default function AdminDashboard() {
             icon={Users}
             iconBg="bg-violet-50"
             iconColor="text-violet-500"
+            onClick={() => navigate('/customers')}
           />
           <StatCard
             label="Pending Coin Approvals"
@@ -317,6 +327,7 @@ export default function AdminDashboard() {
             iconBg={stats?.pending_coins ? 'bg-amber-50' : 'bg-gray-50'}
             iconColor={stats?.pending_coins ? 'text-amber-500' : 'text-gray-400'}
             alert={!!stats?.pending_coins}
+            onClick={() => navigate('/coins')}
           />
         </div>
       )}
@@ -330,6 +341,7 @@ export default function AdminDashboard() {
             icon={CircleDot}
             iconBg="bg-blue-50"
             iconColor="text-blue-500"
+            onClick={() => navigate('/tickets?status=open')}
           />
           <StatCard
             label="In Progress"
@@ -337,6 +349,7 @@ export default function AdminDashboard() {
             icon={Clock}
             iconBg="bg-indigo-50"
             iconColor="text-indigo-500"
+            onClick={() => navigate('/tickets?status=in_progress')}
           />
           <StatCard
             label="SLA Breached"
@@ -345,6 +358,7 @@ export default function AdminDashboard() {
             iconBg={breachedCount > 0 ? 'bg-red-50' : 'bg-gray-50'}
             iconColor={breachedCount > 0 ? 'text-red-500' : 'text-gray-400'}
             alert={breachedCount > 0}
+            onClick={() => navigate('/tickets?sla_breached=true')}
           />
           <StatCard
             label="SLA Warning"
@@ -352,12 +366,13 @@ export default function AdminDashboard() {
             icon={ShieldAlert}
             iconBg={warningCount > 0 ? 'bg-orange-50' : 'bg-gray-50'}
             iconColor={warningCount > 0 ? 'text-orange-500' : 'text-gray-400'}
+            onClick={() => navigate('/tickets?sla_breached=true')}
           />
         </div>
       )}
 
-      {/* ── Active projects KPI (if not showing accounting row) ────────── */}
-      {showProjects && !showAccounting && (
+      {/* ── Projects KPI row ────────────────────────────────────────── */}
+      {showProjects && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <StatCard
             label="Active Projects"
@@ -365,6 +380,32 @@ export default function AdminDashboard() {
             icon={FolderKanban}
             iconBg="bg-emerald-50"
             iconColor="text-emerald-500"
+            onClick={() => navigate('/projects')}
+          />
+          <StatCard
+            label="Pending Tasks"
+            value={stats?.pending_tasks ?? 0}
+            icon={ListChecks}
+            iconBg="bg-sky-50"
+            iconColor="text-sky-500"
+            onClick={() => navigate('/projects')}
+          />
+          <StatCard
+            label="Overdue Tasks"
+            value={stats?.overdue_tasks ?? 0}
+            icon={CalendarX2}
+            iconBg={stats?.overdue_tasks ? 'bg-red-50' : 'bg-gray-50'}
+            iconColor={stats?.overdue_tasks ? 'text-red-500' : 'text-gray-400'}
+            alert={!!(stats?.overdue_tasks && stats.overdue_tasks > 0)}
+            onClick={() => navigate('/projects')}
+          />
+          <StatCard
+            label="Completed This Month"
+            value={stats?.completed_projects_month ?? 0}
+            icon={CheckCircle2}
+            iconBg="bg-teal-50"
+            iconColor="text-teal-500"
+            onClick={() => navigate('/projects?status=completed')}
           />
         </div>
       )}

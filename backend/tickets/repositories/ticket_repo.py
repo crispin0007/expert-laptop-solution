@@ -49,7 +49,11 @@ class TicketRepository(BaseRepository):
             .prefetch_related('team_members', 'vehicles')
         )
         if status:
-            qs = qs.filter(status=status)
+            statuses = [s.strip() for s in str(status).split(',') if s.strip()]
+            if len(statuses) == 1:
+                qs = qs.filter(status=statuses[0])
+            else:
+                qs = qs.filter(status__in=statuses)
         if priority:
             qs = qs.filter(priority=priority)
         if assigned_to_id:

@@ -376,7 +376,8 @@ function SidebarContent({
             {/* Module-gated: hidden when module not in tenant's active plan */}
             {modules.has('tickets') && perms.can('can_view_tickets') && (
               <NavSection label="Tickets" icon={Ticket} basePath="/tickets" collapsed={collapsed}>
-                <SubNavItem to="/tickets" label="All Tickets" icon={<Ticket size={13} />} />
+                {/* Managers/admins/owners see all tickets; staff only see their own */}
+                {perms.isManager && <SubNavItem to="/tickets" label="All Tickets" icon={<Ticket size={13} />} />}
                 <SubNavItem to="/tickets?assigned=me" label="My Tickets" icon={<UserCircle size={13} />} />
                 {perms.can('can_manage_ticket_types') && (
                   <SubNavItem to="/tickets/settings" label="Settings" icon={<Settings size={13} />} />
@@ -385,7 +386,8 @@ function SidebarContent({
             )}
             {modules.has('projects') && perms.can('can_view_projects') && (
               <NavSection label="Projects" icon={FolderKanban} basePath="/projects" collapsed={collapsed}>
-                <SubNavItem to="/projects" label="All Projects" icon={<FolderKanban size={13} />} />
+                {/* Managers/admins/owners see all projects; staff only see their own */}
+                {perms.isManager && <SubNavItem to="/projects" label="All Projects" icon={<FolderKanban size={13} />} />}
                 <SubNavItem to="/projects?assigned=me" label="My Projects" icon={<CheckSquare size={13} />} />
               </NavSection>
             )}
@@ -429,7 +431,7 @@ function SidebarContent({
                 </NavSubSection>
               </NavSection>
             )}
-            {modules.has('cms') && (
+            {modules.has('cms') && perms.isManager && (
               <NavSection label="Website / CMS" icon={Globe} basePath="/cms" collapsed={collapsed}>
                 <SubNavItem to="/cms?tab=settings" label="Site Settings"   icon={<Globe size={13} />} />
                 <SubNavItem to="/cms?tab=pages"    label="Pages"           icon={<Layout size={13} />} />

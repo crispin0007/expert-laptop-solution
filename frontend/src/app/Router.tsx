@@ -188,12 +188,14 @@ export default function Router() {
             }
           />
 
-          {/* CMS / Website Builder module */}
+          {/* CMS / Website Builder module — manager+ only */}
           <Route
             path="cms"
             element={
               <ModuleGuard module="cms">
-                <CMSSitePage />
+                <RoleGuard require="isManager">
+                  <CMSSitePage />
+                </RoleGuard>
               </ModuleGuard>
             }
           />
@@ -202,7 +204,9 @@ export default function Router() {
             path="cms/pages/:pageId/edit"
             element={
               <ModuleGuard module="cms">
-                <PageEditor />
+                <RoleGuard require="isManager">
+                  <PageEditor />
+                </RoleGuard>
               </ModuleGuard>
             }
           />
@@ -211,7 +215,9 @@ export default function Router() {
             path="cms/pages/:pageId/blocks"
             element={
               <ModuleGuard module="cms">
-                <PageBlockManager />
+                <RoleGuard require="isManager">
+                  <PageBlockManager />
+                </RoleGuard>
               </ModuleGuard>
             }
           />

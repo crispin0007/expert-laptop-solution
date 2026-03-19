@@ -50,6 +50,14 @@ class ProjectViewSet(NexusViewSet):
                 qs = qs.filter(created_at__date__gte=start_ad, created_at__date__lte=end_ad)
             except (ValueError, KeyError):
                 pass
+        # Allow filtering to only the projects managed by a specific user
+        if manager_id := self.request.query_params.get('manager'):
+            try:
+                qs = qs.filter(manager_id=int(manager_id))
+            except (ValueError, TypeError):
+                pass
+        if status_param := self.request.query_params.get('status'):
+            qs = qs.filter(status=status_param)
         return qs
 
 

@@ -18,7 +18,7 @@ import { useFyStore } from '../../store/fyStore'
 import {
   Ticket as TicketIcon, FolderKanban, AlertTriangle,
   Clock, CircleDot, ArrowRight, Plus, Users, UserCheck,
-  UserX,
+  UserX, ListChecks, CalendarX2, CheckCircle2,
 } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -30,6 +30,9 @@ interface DashboardStats {
   dept_unassigned_tickets: number
   dept_team_size: number
   active_projects: number
+  pending_tasks: number
+  overdue_tasks: number
+  completed_projects_month: number
   sla_warning: number
 }
 
@@ -92,7 +95,7 @@ const STATUS_LABEL: Record<string, string> = {
 // ── Stat Card ──────────────────────────────────────────────────────────────────
 
 function StatCard({
-  label, value, icon: Icon, iconBg, iconColor, alert,
+  label, value, icon: Icon, iconBg, iconColor, alert, onClick,
 }: {
   label: string
   value: string | number
@@ -100,11 +103,15 @@ function StatCard({
   iconBg: string
   iconColor: string
   alert?: boolean
+  onClick?: () => void
 }) {
   return (
-    <div className={`bg-white rounded-xl border shadow-sm p-4 flex items-center gap-4 ${
-      alert ? 'border-red-300 ring-1 ring-red-200' : 'border-gray-200'
-    }`}>
+    <div
+      onClick={onClick}
+      className={`bg-white rounded-xl border shadow-sm p-4 flex items-center gap-4 ${
+        alert ? 'border-red-300 ring-1 ring-red-200' : 'border-gray-200'
+      } ${onClick ? 'cursor-pointer hover:shadow-md hover:border-indigo-200 transition-all' : ''}`}
+    >
       <div className={`w-10 h-10 rounded-xl ${iconBg} flex items-center justify-center shrink-0`}>
         <Icon size={18} className={iconColor} />
       </div>
@@ -159,7 +166,7 @@ export default function ManagerDashboard() {
   })
 
   const showTickets  = modules.has('tickets') && perms.can('can_view_tickets')
-  const showProjects = modules.has('projects') && perms.can('can_view_projects')
+  const showProjects = modules.has('projects')
 
   // ── Dept ticket lists ────────────────────────────────────────────────────
   const { data: deptTicketsData } = useQuery({
@@ -173,7 +180,7 @@ export default function ManagerDashboard() {
   const { data: unassignedData } = useQuery({
     queryKey: ['dash-mgr-unassigned', deptId, fyYear],
     queryFn: () => apiClient.get(TICKETS.LIST, {
-      params: { department: deptId, status: 'open', assigned_to: 'none', page_size: 8 },
+      params: { department: deptId, status: 'open', page_size: 50 },
     }).then(r => r.data),
     enabled: showTickets && !!deptId,
   })
@@ -191,7 +198,12 @@ export default function ManagerDashboard() {
   })
 
   const deptTickets    = useMemo(() => toArray<TicketRow>(deptTicketsData), [deptTicketsData])
-  const unassignedTickets = useMemo(() => toArray<TicketRow>(unassignedData), [unassignedData])
+  // Filter truly unassigned from the dept open set (no assigned_to_id)
+  const allDeptOpen    = useMemo(() => toArray<TicketRow>(unassignedData), [unassignedData])
+  const unassignedTickets = useMemo(
+    () => allDeptOpen.filter((t: any) => !t.assigned_to && !t.assigned_to_id && !t.assigned_to_name),
+    [allDeptOpen],
+  )
   const activeProjects = useMemo(() => toArray<ProjectRow>(projectsData), [projectsData])
   const teamMembers    = useMemo(() => toArray<StaffRow>(staffData), [staffData])
 
@@ -241,6 +253,7 @@ export default function ManagerDashboard() {
           icon={CircleDot}
           iconBg="bg-blue-50"
           iconColor="text-blue-500"
+          onClick={() => navigate(deptId ? `/tickets?department=${deptId}&status=open` : '/tickets?status=open')}
         />
         <StatCard
           label="SLA Breached (Dept)"
@@ -249,6 +262,7 @@ export default function ManagerDashboard() {
           iconBg={breachedCount > 0 ? 'bg-red-50' : 'bg-gray-50'}
           iconColor={breachedCount > 0 ? 'text-red-500' : 'text-gray-400'}
           alert={breachedCount > 0}
+          onClick={() => navigate('/tickets?sla_breached=true')}
         />
         <StatCard
           label="Unassigned Tickets"
@@ -257,6 +271,7 @@ export default function ManagerDashboard() {
           iconBg={(stats?.dept_unassigned_tickets ?? 0) > 0 ? 'bg-orange-50' : 'bg-gray-50'}
           iconColor={(stats?.dept_unassigned_tickets ?? 0) > 0 ? 'text-orange-500' : 'text-gray-400'}
           alert={(stats?.dept_unassigned_tickets ?? 0) > 0}
+          onClick={() => navigate(deptId ? `/tickets?department=${deptId}` : '/tickets')}
         />
         <StatCard
           label="Team Members"
@@ -264,9 +279,47 @@ export default function ManagerDashboard() {
           icon={Users}
           iconBg="bg-violet-50"
           iconColor="text-violet-500"
+          onClick={() => navigate('/staff')}
         />
       </div>
-
+      {/* ── Projects KPI row ──────────────────────────────────────── */}
+      {showProjects && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <StatCard
+            label="Active Projects"
+            value={stats?.active_projects ?? 0}
+            icon={FolderKanban}
+            iconBg="bg-emerald-50"
+            iconColor="text-emerald-500"
+            onClick={() => navigate('/projects')}
+          />
+          <StatCard
+            label="Pending Tasks"
+            value={stats?.pending_tasks ?? 0}
+            icon={ListChecks}
+            iconBg="bg-sky-50"
+            iconColor="text-sky-500"
+            onClick={() => navigate('/projects')}
+          />
+          <StatCard
+            label="Overdue Tasks"
+            value={stats?.overdue_tasks ?? 0}
+            icon={CalendarX2}
+            iconBg={stats?.overdue_tasks ? 'bg-red-50' : 'bg-gray-50'}
+            iconColor={stats?.overdue_tasks ? 'text-red-500' : 'text-gray-400'}
+            alert={!!(stats?.overdue_tasks && stats.overdue_tasks > 0)}
+            onClick={() => navigate('/projects')}
+          />
+          <StatCard
+            label="Completed This Month"
+            value={stats?.completed_projects_month ?? 0}
+            icon={CheckCircle2}
+            iconBg="bg-teal-50"
+            iconColor="text-teal-500"
+            onClick={() => navigate('/projects?status=completed')}
+          />
+        </div>
+      )}
       {/* ── Main content grid ─────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 

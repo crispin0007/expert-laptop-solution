@@ -16,7 +16,7 @@ import DateDisplay from '../../components/DateDisplay'
 import {
   Ticket as TicketIcon, Coins, AlertTriangle,
   Clock, CheckCircle2, CircleDot, ArrowRight,
-  CalendarClock, InboxIcon,
+  CalendarClock, InboxIcon, History, CalendarDays, TrendingUp,
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -41,12 +41,17 @@ interface CoinEntry {
 }
 
 interface DashboardStats {
+  // user-scoped (active work)
   my_open_tickets: number
   my_in_progress_tickets: number
+  my_sla_breached: number
+  my_tickets_today: number
+  // user-scoped (context/history)
+  my_total_tickets: number
+  my_resolved_this_month: number
   my_overdue_tasks: number
-  my_coins_pending: number
-  my_coins_approved: number
-  sla_breached: number
+  my_coins_pending: string
+  my_coins_approved: string
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -60,9 +65,10 @@ function toArray<T>(data: unknown): T[] {
   return []
 }
 
-function fmtNum(n: number | undefined): string {
+function fmtNum(n: number | string | undefined | null): string {
   if (n === undefined || n === null) return '–'
-  return n.toLocaleString()
+  const num = Number(n)
+  return isNaN(num) ? String(n) : num.toLocaleString()
 }
 
 const PRIORITY_CHIP: Record<string, string> = {
@@ -86,11 +92,17 @@ interface KpiProps {
   icon: React.ReactNode
   accent: string
   sub?: string
+  onClick?: () => void
 }
 
-function KpiCard({ label, value, icon, accent, sub }: KpiProps) {
+function KpiCard({ label, value, icon, accent, sub, onClick }: KpiProps) {
   return (
-    <div className={`bg-white rounded-xl border border-gray-200 p-4 flex items-start gap-3 shadow-sm`}>
+    <div
+      onClick={onClick}
+      className={`bg-white rounded-xl border border-gray-200 p-4 flex items-start gap-3 shadow-sm ${
+        onClick ? 'cursor-pointer hover:shadow-md hover:border-indigo-200 transition-all' : ''
+      }`}
+    >
       <div className={`p-2 rounded-lg ${accent}`}>{icon}</div>
       <div className="min-w-0">
         <p className="text-xs text-gray-500 truncate">{label}</p>
@@ -169,23 +181,23 @@ export default function StaffDashboard() {
   )
   const coinHistory = useMemo(() => toArray<CoinEntry>(coinsData).slice(0, 8), [coinsData])
 
-  const hasSlaBreached = (stats?.sla_breached ?? 0) > 0
+  const hasSlaBreached = (stats?.my_sla_breached ?? 0) > 0
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-6">
 
-      {/* SLA breach alert */}
+      {/* SLA breach alert — personal only */}
       {hasSlaBreached && (
         <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           <span>
-            You have <strong>{fmtNum(stats?.sla_breached)}</strong> SLA-breached ticket
-            {(stats?.sla_breached ?? 0) !== 1 ? 's' : ''} that need immediate attention.
+            You have <strong>{fmtNum(stats?.my_sla_breached)}</strong> of your ticket
+            {(stats?.my_sla_breached ?? 0) !== 1 ? 's' : ''} with a breached SLA — action required.
           </span>
           <button
-            onClick={() => navigate('/tickets?sla_breached=true&assigned_to=me')}
+            onClick={() => navigate('/tickets?assigned=me&sla_breached=true')}
             className="ml-auto text-red-600 font-medium hover:underline whitespace-nowrap"
           >
             View all →
@@ -193,42 +205,70 @@ export default function StaffDashboard() {
         </div>
       )}
 
-      {/* KPI row */}
+      {/* KPI grid — 2 rows × 4 cols */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+
+        {/* Row 1 — Active work */}
         <KpiCard
           label="My Open Tickets"
           value={fmtNum(stats?.my_open_tickets)}
           icon={<TicketIcon className="w-4 h-4 text-blue-600" />}
           accent="bg-blue-50"
+          onClick={() => navigate('/tickets?assigned=me&status=open')}
         />
         <KpiCard
           label="In Progress"
           value={fmtNum(stats?.my_in_progress_tickets)}
           icon={<CircleDot className="w-4 h-4 text-indigo-600" />}
           accent="bg-indigo-50"
+          onClick={() => navigate('/tickets?assigned=me&status=in_progress')}
+        />
+        <KpiCard
+          label="My SLA Breached"
+          value={fmtNum(stats?.my_sla_breached)}
+          icon={<AlertTriangle className="w-4 h-4 text-red-600" />}
+          accent={(stats?.my_sla_breached ?? 0) > 0 ? 'bg-red-50' : 'bg-gray-50'}
+          onClick={() => navigate('/tickets?assigned=me&sla_breached=true')}
+        />
+        <KpiCard
+          label="Today's Tickets"
+          value={fmtNum(stats?.my_tickets_today)}
+          icon={<CalendarDays className="w-4 h-4 text-sky-600" />}
+          accent="bg-sky-50"
+          onClick={() => navigate('/tickets?assigned=me')}
+        />
+
+        {/* Row 2 — History & context */}
+        <KpiCard
+          label="All Time Assigned"
+          value={fmtNum(stats?.my_total_tickets)}
+          icon={<History className="w-4 h-4 text-gray-500" />}
+          accent="bg-gray-50"
+          onClick={() => navigate('/tickets?assigned=me')}
+        />
+        <KpiCard
+          label="Resolved This Month"
+          value={fmtNum(stats?.my_resolved_this_month)}
+          icon={<TrendingUp className="w-4 h-4 text-green-600" />}
+          accent="bg-green-50"
+          onClick={() => navigate('/tickets?assigned=me&status=resolved')}
         />
         <KpiCard
           label="Overdue Tasks"
           value={fmtNum(stats?.my_overdue_tasks)}
           icon={<CalendarClock className="w-4 h-4 text-orange-600" />}
-          accent="bg-orange-50"
+          accent={(stats?.my_overdue_tasks ?? 0) > 0 ? 'bg-orange-50' : 'bg-gray-50'}
+          onClick={() => navigate('/projects')}
         />
-        {canViewAccounting ? (
-          <KpiCard
-            label="Coins (Pending)"
-            value={fmtNum(stats?.my_coins_pending)}
-            icon={<Coins className="w-4 h-4 text-yellow-600" />}
-            accent="bg-yellow-50"
-            sub={`${fmtNum(stats?.my_coins_approved)} approved`}
-          />
-        ) : (
-          <KpiCard
-            label="My SLA Breached"
-            value={fmtNum(stats?.sla_breached)}
-            icon={<AlertTriangle className="w-4 h-4 text-red-600" />}
-            accent="bg-red-50"
-          />
-        )}
+        <KpiCard
+          label="Coins (Pending)"
+          value={fmtNum(stats?.my_coins_pending)}
+          icon={<Coins className="w-4 h-4 text-yellow-600" />}
+          accent="bg-yellow-50"
+          sub={`${fmtNum(stats?.my_coins_approved)} approved this month`}
+          onClick={canViewAccounting ? () => navigate('/coins') : undefined}
+        />
+
       </div>
 
       {/* Main grid */}
