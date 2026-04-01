@@ -4,6 +4,10 @@ Email notification service.
 All outbound email is sent through this module — never directly from views,
 signals, or serializers.  Actual delivery is dispatched via Celery tasks so
 callers are non-blocking.
+
+Per-tenant SMTP: if the sending tenant has an active TenantSmtpConfig, email
+is routed through that SMTP server.  Falls back to global Django EMAIL_*
+settings when no tenant config exists or is_active=False.
 """
 import logging
 from django.core.mail import send_mail
@@ -12,16 +16,43 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
-def _send(subject: str, message: str, recipient_list: list[str]) -> None:
-    """Low-level wrapper — not called directly; use the named helpers below."""
+def _get_tenant_smtp(tenant):
+    """
+    Return the active TenantSmtpConfig for *tenant*, or None.
+    Returns None if tenant is None, config doesn't exist, or is_active=False.
+    """
+    if tenant is None:
+        return None
     try:
-        send_mail(
-            subject=subject,
-            message=message,
-            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@techyatra.com'),
-            recipient_list=recipient_list,
-            fail_silently=False,
-        )
+        from tenants.models import TenantSmtpConfig
+        cfg = TenantSmtpConfig.objects.get(tenant=tenant, is_active=True)
+        return cfg
+    except Exception:
+        return None
+
+
+def _send(subject: str, message: str, recipient_list: list[str], tenant=None) -> None:
+    """Low-level wrapper — not called directly; use the named helpers below."""
+    smtp = _get_tenant_smtp(tenant)
+    try:
+        if smtp:
+            connection = smtp.build_email_backend()
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=smtp.from_address,
+                recipient_list=recipient_list,
+                connection=connection,
+                fail_silently=False,
+            )
+        else:
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@techyatra.com'),
+                recipient_list=recipient_list,
+                fail_silently=False,
+            )
     except Exception as exc:  # pragma: no cover
         logger.error("Email delivery failed: %s", exc, exc_info=True)
 
@@ -42,6 +73,7 @@ def send_ticket_assigned(ticket, assignee) -> None:
             f"Priority: {ticket.priority}\n"
         ),
         recipient_list=[assignee.email],
+        tenant=getattr(ticket, 'tenant', None),
     )
 
 
@@ -56,6 +88,7 @@ def send_ticket_comment(ticket, comment, recipient) -> None:
             f"{comment.body}\n"
         ),
         recipient_list=[recipient.email],
+        tenant=getattr(ticket, 'tenant', None),
     )
 
 
@@ -70,6 +103,7 @@ def send_sla_warning(ticket, recipient) -> None:
             f"Please take action as soon as possible.\n"
         ),
         recipient_list=[recipient.email],
+        tenant=getattr(ticket, 'tenant', None),
     )
 
 
@@ -85,6 +119,7 @@ def send_ticket_transferred(ticket, new_assignee) -> None:
             f"Priority: {ticket.priority}\n"
         ),
         recipient_list=[new_assignee.email],
+        tenant=getattr(ticket, 'tenant', None),
     )
 
 
@@ -99,6 +134,7 @@ def send_invoice_issued(invoice, recipient_email: str) -> None:
             f"Due: {invoice.due_date}\n"
         ),
         recipient_list=[recipient_email],
+        tenant=getattr(invoice, 'tenant', None),
     )
 
 
@@ -118,6 +154,7 @@ def send_staff_invite(user, tenant, temp_password: str) -> None:
             f"Regards,\nThe TechYatra Team"
         ),
         recipient_list=[user.email],
+        tenant=tenant,
     )
 
 
@@ -135,6 +172,7 @@ def send_staff_password_reset(user, tenant, new_password: str) -> None:
             f"Regards,\nThe TechYatra Team"
         ),
         recipient_list=[user.email],
+        tenant=tenant,
     )
 
 
@@ -153,6 +191,7 @@ def send_staff_reactivated(user, tenant) -> None:
             f"Regards,\nThe TechYatra Team"
         ),
         recipient_list=[user.email],
+        tenant=tenant,
     )
 
 
@@ -169,6 +208,7 @@ def send_low_stock_alert(product, quantity: int, recipient_email: str) -> None:
             f"Please create a purchase order to replenish stock."
         ),
         recipient_list=[recipient_email],
+        tenant=getattr(product, 'tenant', None),
     )
 
 
@@ -181,6 +221,7 @@ def send_po_status_changed(po, recipient_email: str) -> None:
             f"has been updated to status: {po.get_status_display()}.\n"
         ),
         recipient_list=[recipient_email],
+        tenant=getattr(po, 'tenant', None),
     )
 
 
@@ -193,6 +234,7 @@ def send_return_status_changed(return_order, recipient_email: str) -> None:
             f"has been updated to status: {return_order.get_status_display()}.\n"
         ),
         recipient_list=[recipient_email],
+        tenant=getattr(return_order, 'tenant', None),
     )
 
 
@@ -211,6 +253,7 @@ def send_project_assigned(project, manager) -> None:
             f"Status: {project.get_status_display()}\n"
         ),
         recipient_list=[manager.email],
+        tenant=getattr(project, 'tenant', None),
     )
 
 
@@ -229,6 +272,7 @@ def send_task_assigned(task, assignee) -> None:
             f"Please log in to NEXUS BMS to view the full details.\n"
         ),
         recipient_list=[assignee.email],
+        tenant=getattr(task, 'tenant', None),
     )
 
 
@@ -248,5 +292,6 @@ def send_task_completed(task, manager) -> None:
             f"by {assignee_name}.\n"
         ),
         recipient_list=[manager.email],
+        tenant=getattr(task, 'tenant', None),
     )
 

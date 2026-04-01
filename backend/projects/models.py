@@ -43,6 +43,7 @@ class Project(TenantModel):
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PLANNING)
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
     budget = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     # Optional phone number to contact for this project
     contact_phone = models.CharField(max_length=32, blank=True, help_text='Phone number to contact for this project')

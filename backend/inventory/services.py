@@ -13,9 +13,58 @@ import logging
 from django.db import transaction
 from django.utils import timezone
 
+from core.events import EventBus
 from core.exceptions import ConflictError, ValidationError as AppValidationError
 
 logger = logging.getLogger(__name__)
+
+
+def publish_stock_movement_events(movement, on_hand: int) -> None:
+    """Publish stock-level domain events based on a saved StockMovement.
+
+    Called by the StockMovement post_save signal after on_hand is updated.
+    Centralises all stock EventBus calls so signals stay calculation-only.
+
+    Args:
+        movement:  The saved StockMovement instance.
+        on_hand:   The current quantity_on_hand after this movement.
+    """
+    from inventory.models import StockMovement  # lazy — avoids circular import at module level
+
+    IN_TYPES  = (StockMovement.MOVEMENT_IN, StockMovement.MOVEMENT_RETURN)
+    OUT_TYPES = (StockMovement.MOVEMENT_OUT, StockMovement.MOVEMENT_RETURN_SUPPLIER)
+
+    if movement.movement_type in IN_TYPES:
+        EventBus.publish('inventory.stock.added', {
+            'id': movement.product_id,
+            'tenant_id': movement.tenant_id,
+            'quantity': movement.quantity,
+            'reference_type': movement.reference_type,
+            'reference_id': movement.reference_id,
+        }, tenant=movement.tenant)
+    elif movement.movement_type in OUT_TYPES:
+        EventBus.publish('inventory.stock.out', {
+            'id': movement.product_id,
+            'tenant_id': movement.tenant_id,
+            'quantity': movement.quantity,
+            'reference_type': movement.reference_type,
+            'reference_id': movement.reference_id,
+        }, tenant=movement.tenant)
+
+    product = movement.product
+    if (
+        product.track_stock
+        and not product.is_service
+        and not product.is_deleted
+        and on_hand <= product.reorder_level
+    ):
+        EventBus.publish('inventory.stock.low', {
+            'id': product.pk,
+            'tenant_id': movement.tenant_id,
+            'quantity_on_hand': on_hand,
+            'reorder_level': product.reorder_level,
+        }, tenant=movement.tenant)
+
 
 
 def receive_purchase_order(po, lines: list, notes: str, user) -> object:
@@ -67,18 +116,8 @@ def receive_purchase_order(po, lines: list, notes: str, user) -> object:
             )
             item.quantity_received += qty
             item.save(update_fields=['quantity_received'])
-
-            try:
-                from core.events import EventBus
-                EventBus.publish('inventory.stock.added', {
-                    'id': item.product_id,
-                    'tenant_id': po.tenant_id,
-                    'quantity': qty,
-                    'reference_type': 'purchase_order',
-                    'reference_id': po.pk,
-                }, tenant=po.tenant)
-            except Exception:
-                pass
+            # inventory.stock.added event is published by the StockMovement
+            # post_save signal → publish_stock_movement_events() service helper.
 
         # Recompute PO status
         po.refresh_from_db()

@@ -454,6 +454,14 @@ class TicketCommentViewSet(NexusViewSet):
             created_by=self.request.user,
             metadata={'comment_id': comment.pk, 'is_internal': comment.is_internal},
         )
+        from core.events import EventBus
+        EventBus.publish('ticket.comment.added', {
+            'id': comment.pk,
+            'ticket_id': ticket.pk,
+            'tenant_id': self.tenant.pk,
+            'author_id': self.request.user.pk,
+            'is_internal': comment.is_internal,
+        }, tenant=self.tenant)
         return ApiResponse.created(data=self.get_serializer(comment).data)
 
 

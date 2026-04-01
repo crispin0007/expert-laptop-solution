@@ -37,6 +37,37 @@ class ProjectViewSet(NexusViewSet):
             return _MANAGER_PERMS()
         return _STAFF_PERMS()
 
+    def create(self, request, *args, **kwargs):
+        self.ensure_tenant()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        from projects import services as project_service
+        project = project_service.create_project(
+            tenant=self.tenant,
+            created_by=request.user,
+            validated_data=serializer.validated_data,
+        )
+        out = self.get_serializer(project)
+        return ApiResponse.created(data=out.data)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        from projects import services as project_service
+        project = project_service.update_project(
+            instance=instance,
+            tenant=self.tenant,
+            validated_data=serializer.validated_data,
+        )
+        out = self.get_serializer(project)
+        return ApiResponse.success(data=out.data)
+
+    def partial_update(self, request, *args, **kwargs):
+        kwargs['partial'] = True
+        return self.update(request, *args, **kwargs)
+
     def get_queryset(self):
         self.ensure_tenant()
         qs = Project.objects.filter(
@@ -120,16 +151,13 @@ class ProjectTaskViewSet(NexusViewSet):
         project    = Project.objects.get(pk=project_pk, tenant=self.request.tenant)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        task = serializer.save(
-            tenant=self.tenant, created_by=self.request.user, project=project
+        from projects import services as project_service
+        task = project_service.create_task(
+            project=project,
+            tenant=self.tenant,
+            created_by=self.request.user,
+            validated_data=serializer.validated_data,
         )
-        # Notify assignee (async — import inline to avoid circular)
-        if task.assigned_to_id:
-            try:
-                from notifications.service import notify_task_assigned
-                notify_task_assigned(task)
-            except Exception:
-                pass
         return ApiResponse.created(data=self.get_serializer(task).data)
 
     @action(detail=True, methods=['patch'], url_path='status')
@@ -137,19 +165,15 @@ class ProjectTaskViewSet(NexusViewSet):
         """PATCH /projects/{id}/tasks/{pk}/status/  body: {status, actual_hours?}"""
         task       = self.get_object()
         new_status = request.data.get('status')
-        valid      = [s for s, _ in ProjectTask.STATUS_CHOICES]
-        if new_status not in valid:
-            raise AppValidationError(f'Invalid status. Choose from {valid}')
-
-        old_status  = task.status
-        task.status = new_status
-        if 'actual_hours' in request.data:
-            task.actual_hours = request.data['actual_hours']
-        if new_status == ProjectTask.STATUS_DONE and old_status != ProjectTask.STATUS_DONE:
-            task.completed_at = timezone.now()
-        elif new_status != ProjectTask.STATUS_DONE:
-            task.completed_at = None
-        task.save()
+        from projects import services as project_service
+        try:
+            task = project_service.update_task_status(
+                task=task,
+                new_status=new_status,
+                actual_hours=request.data.get('actual_hours'),
+            )
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
         return ApiResponse.success(data=ProjectTaskSerializer(task).data)
 
 

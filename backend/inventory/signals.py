@@ -81,53 +81,14 @@ def update_stock_level(sender, instance, created, **kwargs):
         )
 
     # ── Stock event hooks ────────────────────────────────────────────────────
+    # EventBus events and low-stock notifications are published by the
+    # inventory service helper — keeping signals calculation-only.
     if created:
         try:
-            from core.events import EventBus
-            IN_TYPES_EB  = (StockMovement.MOVEMENT_IN, StockMovement.MOVEMENT_RETURN)
-            OUT_TYPES_EB = (StockMovement.MOVEMENT_OUT, StockMovement.MOVEMENT_RETURN_SUPPLIER)
-            if instance.movement_type in IN_TYPES_EB:
-                EventBus.publish('inventory.stock.added', {
-                    'id': instance.product_id,
-                    'tenant_id': instance.tenant_id,
-                    'quantity': instance.quantity,
-                    'reference_type': instance.reference_type,
-                    'reference_id': instance.reference_id,
-                }, tenant=instance.tenant)
-            elif instance.movement_type in OUT_TYPES_EB:
-                EventBus.publish('inventory.stock.out', {
-                    'id': instance.product_id,
-                    'tenant_id': instance.tenant_id,
-                    'quantity': instance.quantity,
-                    'reference_type': instance.reference_type,
-                    'reference_id': instance.reference_id,
-                }, tenant=instance.tenant)
+            from inventory.services import publish_stock_movement_events
+            publish_stock_movement_events(instance, on_hand)
         except Exception:
-            pass
-
-    # ── Low stock alert ──────────────────────────────────────────────────────
-    product = instance.product
-    if (
-        product.track_stock
-        and not product.is_service
-        and not product.is_deleted
-        and on_hand <= product.reorder_level
-    ):
-        try:
-            from notifications.service import notify_low_stock
-            notify_low_stock(product, on_hand)
-        except Exception:
-            logger.exception("Low stock notification failed for product %s", product.pk)
-        try:
-            from core.events import EventBus
-            EventBus.publish('inventory.stock.low', {
-                'id': product.pk,
-                'tenant_id': instance.tenant_id,
-                'quantity_on_hand': on_hand,
-                'reorder_level': product.reorder_level,
-            }, tenant=instance.tenant)
-        except Exception:
-            pass
+            logger.exception('publish_stock_movement_events failed for movement %s', instance.pk)
 
 
 @receiver(post_save, sender='tickets.TicketProduct')

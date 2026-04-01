@@ -294,6 +294,100 @@ class Tenant(models.Model):
         )
 
 
+class TenantSmtpConfig(models.Model):
+    """
+    Per-tenant outbound SMTP configuration.
+
+    One row per tenant (OneToOne).  When ``is_active=True`` every email sent
+    to recipients belonging to this tenant will use these credentials instead
+    of the global Django EMAIL_* settings.
+
+    The SMTP password is stored encrypted via Django's signing module
+    (HMAC-SHA256 + base64, keyed from SECRET_KEY).  It is never returned in
+    API responses — the frontend receives a ``has_password`` boolean instead.
+    """
+
+    tenant = models.OneToOneField(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='smtp_config',
+    )
+    host = models.CharField(max_length=255, help_text='SMTP server hostname, e.g. smtp.gmail.com')
+    port = models.PositiveIntegerField(default=587)
+    username = models.CharField(max_length=255, blank=True)
+    # Encrypted with Django signing — never stored in plaintext.
+    _encrypted_password = models.TextField(
+        blank=True,
+        db_column='encrypted_password',
+        help_text='Encrypted SMTP password — set via the password property, never directly.',
+    )
+    use_tls = models.BooleanField(default=True)
+    use_ssl = models.BooleanField(default=False)
+    from_email = models.EmailField(help_text='Envelope/From address, e.g. support@yourcompany.com')
+    from_name = models.CharField(max_length=128, blank=True, help_text='Friendly sender name, e.g. Acme Support')
+    is_active = models.BooleanField(default=True, help_text='False = fall back to global SMTP even if config exists')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Tenant SMTP Config'
+        verbose_name_plural = 'Tenant SMTP Configs'
+
+    def __str__(self):
+        return f'SMTP config for {self.tenant.slug} ({self.host}:{self.port})'
+
+    # ── Password encryption helpers ───────────────────────────────────────────
+
+    @property
+    def password(self) -> str:
+        """Return the decrypted SMTP password, or '' if none set."""
+        if not self._encrypted_password:
+            return ''
+        from django.core import signing
+        try:
+            return signing.loads(self._encrypted_password, salt='smtp-password')
+        except signing.BadSignature:
+            return ''
+
+    @password.setter
+    def password(self, raw: str) -> None:
+        """Encrypt and store the SMTP password."""
+        if raw:
+            from django.core import signing
+            self._encrypted_password = signing.dumps(raw, salt='smtp-password')
+        else:
+            self._encrypted_password = ''
+
+    @property
+    def has_password(self) -> bool:
+        """True if an encrypted password is stored."""
+        return bool(self._encrypted_password)
+
+    def build_email_backend(self):
+        """
+        Return a configured Django email backend connection for this tenant.
+        Use as a context manager or pass directly to send_mail(connection=...).
+        """
+        from django.core.mail import get_connection
+        return get_connection(
+            backend='django.core.mail.backends.smtp.EmailBackend',
+            host=self.host,
+            port=self.port,
+            username=self.username,
+            password=self.password,
+            use_tls=self.use_tls,
+            use_ssl=self.use_ssl,
+            fail_silently=False,
+        )
+
+    @property
+    def from_address(self) -> str:
+        """Formatted From header: 'Name <email>' or just 'email'."""
+        if self.from_name:
+            return f'{self.from_name} <{self.from_email}>'
+        return self.from_email
+
+
 class SlugReservation(models.Model):
     """
     Permanently reserves a tenant slug that was previously in use.

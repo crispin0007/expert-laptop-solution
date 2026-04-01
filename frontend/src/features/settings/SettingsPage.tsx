@@ -8,8 +8,8 @@ import { QRCodeSVG } from 'qrcode.react'
 import {
   Loader2, Save, Settings, Building2, Percent, Coins,
   Calendar, Monitor, Check, Globe, ShieldCheck, Info,
-  UploadCloud, X, Image, Link2, Palette,
-  Bell, Mail, Smartphone, ChevronDown, ChevronUp,
+  UploadCloud, X, Image, Link2, Palette, Server,
+  Bell, Mail, Smartphone, ChevronDown, ChevronUp, FlaskConical,
 } from 'lucide-react'
 import { useAuthStore, type User } from '../../store/authStore'
 import { usePermissions } from '../../hooks/usePermissions'
@@ -30,7 +30,7 @@ interface TenantSettings {
   coin_to_money_rate: string
 }
 
-type SettingsTab = 'workspace' | 'tax' | 'security' | 'display' | 'notifications'
+type SettingsTab = 'workspace' | 'tax' | 'security' | 'display' | 'notifications' | 'email'
 
 const TABS: { id: SettingsTab; label: string; icon: React.ElementType }[] = [
   { id: 'workspace',     label: 'Workspace',     icon: Building2   },
@@ -38,7 +38,23 @@ const TABS: { id: SettingsTab; label: string; icon: React.ElementType }[] = [
   { id: 'security',     label: 'Security',       icon: ShieldCheck },
   { id: 'display',      label: 'Display',        icon: Monitor     },
   { id: 'notifications',label: 'Notifications',  icon: Bell        },
+  { id: 'email',        label: 'Email',          icon: Mail        },
 ]
+
+interface SmtpConfig {
+  id?: number
+  host: string
+  port: number
+  username: string
+  use_tls: boolean
+  use_ssl: boolean
+  from_email: string
+  from_name: string
+  is_active: boolean
+  has_password: boolean
+  created_at?: string
+  updated_at?: string
+}
 
 // ── Human-readable notification type labels ───────────────────────────────────
 const NOTIF_TYPES: { key: string; label: string; group: string }[] = [
@@ -420,7 +436,7 @@ export default function SettingsPage() {
   const [searchParams] = useSearchParams()
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
     const t = searchParams.get('tab')
-    if (t && ['workspace','tax','security','display','notifications'].includes(t))
+    if (t && ['workspace','tax','security','display','notifications','email'].includes(t))
       return t as SettingsTab
     return 'workspace'
   })
@@ -609,6 +625,79 @@ export default function SettingsPage() {
       await refetchBackupCodes()
     },
     onError: () => toast.error('Invalid authenticator code.'),
+  })
+
+  // ── SMTP settings ─────────────────────────────────────────────────────────
+  const [smtpForm, setSmtpForm] = useState<Omit<SmtpConfig, 'id' | 'has_password' | 'created_at' | 'updated_at'>>({
+    host: '', port: 587, username: '', use_tls: true, use_ssl: false,
+    from_email: '', from_name: '', is_active: true,
+  })
+  const [smtpPassword, setSmtpPassword] = useState('')
+  const [smtpTestRecipient, setSmtpTestRecipient] = useState('')
+  const [smtpTestResult, setSmtpTestResult] = useState<{ success: boolean; message: string } | null>(null)
+
+  const { data: smtpData, isLoading: smtpLoading } = useQuery<{ configured: boolean; data: SmtpConfig | null }>({
+    queryKey: ['smtp-config'],
+    queryFn: () => apiClient.get(SETTINGS.SMTP).then(r => r.data),
+    enabled: activeTab === 'email',
+  })
+
+  useEffect(() => {
+    if (smtpData?.data) {
+      const d = smtpData.data
+      setSmtpForm({
+        host: d.host, port: d.port, username: d.username,
+        use_tls: d.use_tls, use_ssl: d.use_ssl,
+        from_email: d.from_email, from_name: d.from_name, is_active: d.is_active,
+      })
+    }
+  }, [smtpData])
+
+  const smtpSaveMutation = useMutation({
+    mutationFn: () => {
+      const payload: Record<string, unknown> = { ...smtpForm }
+      if (smtpPassword) payload['password'] = smtpPassword
+      return apiClient.put(SETTINGS.SMTP, payload).then(r => r.data)
+    },
+    onSuccess: () => {
+      toast.success('SMTP settings saved')
+      setSmtpPassword('')
+      queryClient.invalidateQueries({ queryKey: ['smtp-config'] })
+    },
+    onError: (err: unknown) => {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(detail ?? 'Failed to save SMTP settings')
+    },
+  })
+
+  const smtpDeleteMutation = useMutation({
+    mutationFn: () => apiClient.delete(SETTINGS.SMTP),
+    onSuccess: () => {
+      toast.success('SMTP config removed — using global settings')
+      setSmtpForm({ host: '', port: 587, username: '', use_tls: true, use_ssl: false, from_email: '', from_name: '', is_active: true })
+      setSmtpPassword('')
+      queryClient.invalidateQueries({ queryKey: ['smtp-config'] })
+    },
+    onError: () => toast.error('Failed to remove SMTP config'),
+  })
+
+  const smtpTestMutation = useMutation({
+    mutationFn: () => apiClient.post(SETTINGS.SMTP_TEST, { recipient: smtpTestRecipient || undefined }).then(r => r.data),
+    onSuccess: (data: { success: boolean; sent_to?: string; error?: string }) => {
+      if (data.success) {
+        setSmtpTestResult({ success: true, message: `Test email sent to ${data.sent_to}` })
+        toast.success(`Test email sent to ${data.sent_to}`)
+      } else {
+        setSmtpTestResult({ success: false, message: data.error ?? 'Test failed' })
+        toast.error(data.error ?? 'Test email failed')
+      }
+    },
+    onError: (err: unknown) => {
+      const detail = (err as { response?: { data?: { error?: string; detail?: string } } })?.response?.data
+      const msg = detail?.error ?? detail?.detail ?? 'Could not send test email'
+      setSmtpTestResult({ success: false, message: msg })
+      toast.error(msg)
+    },
   })
 
   // ── Date preferences ──────────────────────────────────────────────────────
@@ -1299,6 +1388,237 @@ export default function SettingsPage() {
                 The system API always uses AD dates internally — this preference only affects what you see.
               </div>
             </SectionCard>
+          </div>
+        )}
+
+        {/* ═══════════════ EMAIL TAB ═══════════════ */}
+        {activeTab === 'email' && (
+          <div className="space-y-6">
+
+            {/* Info banner */}
+            <div className="flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-sm text-blue-700">
+              <Info size={15} className="shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold mb-0.5">Custom outbound email (per-tenant SMTP)</p>
+                <p className="text-xs text-blue-600 leading-relaxed">
+                  Configure your own SMTP server so all system emails — ticket notifications, invoices,
+                  staff invites — are delivered from your domain. Leave unconfigured to use the platform default.
+                </p>
+              </div>
+            </div>
+
+            {smtpLoading ? (
+              <div className="flex items-center justify-center py-10 text-gray-400">
+                <Loader2 size={20} className="animate-spin" />
+              </div>
+            ) : (
+              <>
+                {/* SMTP Server */}
+                <SectionCard icon={Server} title="SMTP Server" subtitle="Outbound mail server credentials">
+                  <FieldRow label="Active" hint="Disable to fall back to platform defaults without deleting config">
+                    <div className="flex items-center justify-between">
+                      <span className={`text-sm font-medium ${smtpForm.is_active ? 'text-indigo-700' : 'text-gray-400'}`}>
+                        {smtpForm.is_active ? 'Custom SMTP active' : 'Using platform defaults'}
+                      </span>
+                      <Toggle
+                        checked={smtpForm.is_active}
+                        onChange={v => setSmtpForm(f => ({ ...f, is_active: v }))}
+                        disabled={!managerView}
+                      />
+                    </div>
+                  </FieldRow>
+
+                  <FieldRow label="Hostname" hint="e.g. smtp.gmail.com, smtp.mailgun.org">
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      data-1p-ignore="true"
+                      value={smtpForm.host}
+                      onChange={e => setSmtpForm(f => ({ ...f, host: e.target.value }))}
+                      disabled={!managerView}
+                      placeholder="smtp.example.com"
+                      className={inputCls(!managerView)}
+                    />
+                  </FieldRow>
+
+                  <FieldRow label="Port" hint="587 (TLS), 465 (SSL), or 25 (plain)">
+                    <input
+                      type="number"
+                      autoComplete="off"
+                      min={1}
+                      max={65535}
+                      value={smtpForm.port}
+                      onChange={e => setSmtpForm(f => ({ ...f, port: Number(e.target.value) }))}
+                      disabled={!managerView}
+                      className={`w-28 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition ${
+                        !managerView ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed' : 'border-gray-300 bg-white text-gray-800'
+                      }`}
+                    />
+                  </FieldRow>
+
+                  <FieldRow label="Encryption">
+                    <div className="flex gap-4">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={smtpForm.use_tls}
+                          onChange={e => setSmtpForm(f => ({ ...f, use_tls: e.target.checked, use_ssl: e.target.checked ? false : f.use_ssl }))}
+                          disabled={!managerView}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span className="text-sm text-gray-700">STARTTLS (port 587)</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={smtpForm.use_ssl}
+                          onChange={e => setSmtpForm(f => ({ ...f, use_ssl: e.target.checked, use_tls: e.target.checked ? false : f.use_tls }))}
+                          disabled={!managerView}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span className="text-sm text-gray-700">SSL/TLS (port 465)</span>
+                      </label>
+                    </div>
+                  </FieldRow>
+
+                  <FieldRow label="Username" hint="Usually your email address">
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      data-1p-ignore="true"
+                      value={smtpForm.username}
+                      onChange={e => setSmtpForm(f => ({ ...f, username: e.target.value }))}
+                      disabled={!managerView}
+                      placeholder="you@example.com"
+                      className={inputCls(!managerView)}
+                    />
+                  </FieldRow>
+
+                  <FieldRow
+                    label="Password"
+                    hint={smtpData?.data?.has_password ? 'A password is saved — leave blank to keep it' : 'Enter SMTP password'}
+                  >
+                    <div className="relative">
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={smtpPassword}
+                        onChange={e => setSmtpPassword(e.target.value)}
+                        disabled={!managerView}
+                        placeholder={smtpData?.data?.has_password ? '••••••••' : 'Enter password'}
+                        className={inputCls(!managerView)}
+                      />
+                      {smtpData?.data?.has_password && !smtpPassword && (
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-green-600 font-medium">Saved</span>
+                      )}
+                    </div>
+                  </FieldRow>
+                </SectionCard>
+
+                {/* Sender Identity */}
+                <SectionCard icon={Mail} title="Sender Identity" subtitle="From address shown on all outgoing emails">
+                  <FieldRow label="From Email" hint="e.g. support@yourcompany.com">
+                    <input
+                      type="email"
+                      autoComplete="off"
+                      data-1p-ignore="true"
+                      value={smtpForm.from_email}
+                      onChange={e => setSmtpForm(f => ({ ...f, from_email: e.target.value }))}
+                      disabled={!managerView}
+                      placeholder="support@yourcompany.com"
+                      className={inputCls(!managerView)}
+                    />
+                  </FieldRow>
+
+                  <FieldRow label="From Name" hint="e.g. ACME Support — shown as the sender name">
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      data-1p-ignore="true"
+                      value={smtpForm.from_name}
+                      onChange={e => setSmtpForm(f => ({ ...f, from_name: e.target.value }))}
+                      disabled={!managerView}
+                      placeholder="Your Company Name"
+                      className={inputCls(!managerView)}
+                    />
+                  </FieldRow>
+
+                  {smtpForm.from_email && (
+                    <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg">
+                      <p className="text-xs text-gray-400 mb-0.5">Preview</p>
+                      <p className="text-sm font-mono text-gray-700">
+                        {smtpForm.from_name ? `${smtpForm.from_name} <${smtpForm.from_email}>` : smtpForm.from_email}
+                      </p>
+                    </div>
+                  )}
+                </SectionCard>
+
+                {/* Test Connection */}
+                {smtpData?.configured && (
+                  <SectionCard icon={FlaskConical} title="Test Connection" subtitle="Send a test email to verify your SMTP configuration">
+                    <FieldRow label="Test recipient" hint="Defaults to your account email if left blank">
+                      <input
+                        type="email"
+                        autoComplete="off"
+                        value={smtpTestRecipient}
+                        onChange={e => setSmtpTestRecipient(e.target.value)}
+                        placeholder="test@example.com (optional)"
+                        className={inputCls(false)}
+                      />
+                    </FieldRow>
+
+                    {smtpTestResult && (
+                      <div className={`flex items-start gap-2 px-3 py-2.5 rounded-lg border text-sm ${
+                        smtpTestResult.success
+                          ? 'bg-green-50 border-green-200 text-green-700'
+                          : 'bg-red-50 border-red-200 text-red-700'
+                      }`}>
+                        {smtpTestResult.success
+                          ? <Check size={14} className="mt-0.5 shrink-0" />
+                          : <X size={14} className="mt-0.5 shrink-0" />
+                        }
+                        {smtpTestResult.message}
+                      </div>
+                    )}
+
+                    <div className="flex justify-end">
+                      <button
+                        onClick={() => { setSmtpTestResult(null); smtpTestMutation.mutate() }}
+                        disabled={smtpTestMutation.isPending}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-gray-800 text-white rounded-xl text-sm font-semibold hover:bg-gray-900 disabled:opacity-60 transition"
+                      >
+                        {smtpTestMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <FlaskConical size={14} />}
+                        {smtpTestMutation.isPending ? 'Sending…' : 'Send test email'}
+                      </button>
+                    </div>
+                  </SectionCard>
+                )}
+
+                {managerView && (
+                  <div className="flex items-center justify-between pt-2">
+                    {smtpData?.configured && (
+                      <button
+                        onClick={() => { if (confirm('Remove SMTP config and revert to platform defaults?')) smtpDeleteMutation.mutate() }}
+                        disabled={smtpDeleteMutation.isPending}
+                        className="text-sm text-red-500 hover:text-red-700 font-medium disabled:opacity-60 transition"
+                      >
+                        {smtpDeleteMutation.isPending ? 'Removing…' : 'Remove SMTP config'}
+                      </button>
+                    )}
+                    <div className="ml-auto">
+                      <button
+                        onClick={() => smtpSaveMutation.mutate()}
+                        disabled={smtpSaveMutation.isPending || !smtpForm.host}
+                        className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 disabled:opacity-60 transition shadow-sm"
+                      >
+                        {smtpSaveMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                        Save SMTP Settings
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
 

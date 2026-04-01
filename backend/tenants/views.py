@@ -23,6 +23,7 @@ from .models import Tenant, Plan, Module, TenantModuleOverride
 from .serializers import (
     TenantSerializer, TenantMemberSerializer, TenantSettingsSerializer,
     PlanSerializer, ModuleSerializer, TenantModuleOverrideSerializer,
+    TenantSmtpConfigSerializer,
 )
 
 
@@ -580,6 +581,107 @@ class TenantSettingsView(TenantMixin, APIView):
         serializer.save()
         cache.delete(f'tenant_slug_{self.tenant.slug}')
         return Response(serializer.data)
+
+
+class TenantSmtpConfigView(TenantMixin, APIView):
+    """
+    GET  /api/v1/settings/smtp/  — Return SMTP config (password omitted, has_password returned).
+    PUT  /api/v1/settings/smtp/  — Create or replace SMTP config.
+    PATCH /api/v1/settings/smtp/ — Partial update (e.g. toggle is_active, update host).
+    DELETE /api/v1/settings/smtp/ — Remove SMTP config (fall back to global settings).
+
+    POST /api/v1/settings/smtp/test/ — Send a test email using current config.
+
+    Only accessible by tenant admin/manager.
+    """
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*MANAGER_ROLES, permission_key='can_manage_settings')]
+
+    def _get_config(self):
+        from .models import TenantSmtpConfig
+        try:
+            return TenantSmtpConfig.objects.get(tenant=self.tenant)
+        except TenantSmtpConfig.DoesNotExist:
+            return None
+
+    def get(self, request):
+        self.ensure_tenant()
+        cfg = self._get_config()
+        if cfg is None:
+            return Response({'configured': False, 'data': None})
+        return Response({'configured': True, 'data': TenantSmtpConfigSerializer(cfg).data})
+
+    def put(self, request):
+        self.ensure_tenant()
+        cfg = self._get_config()
+        serializer = TenantSmtpConfigSerializer(
+            cfg, data=request.data, partial=False,
+            context={'request': request},
+        )
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save(tenant=self.tenant)
+        return Response(
+            {'configured': True, 'data': TenantSmtpConfigSerializer(instance).data},
+            status=status.HTTP_200_OK if cfg else status.HTTP_201_CREATED,
+        )
+
+    def patch(self, request):
+        self.ensure_tenant()
+        cfg = self._get_config()
+        if cfg is None:
+            return Response({'detail': 'No SMTP config exists. Use PUT to create one.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = TenantSmtpConfigSerializer(cfg, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save()
+        return Response({'configured': True, 'data': TenantSmtpConfigSerializer(instance).data})
+
+    def delete(self, request):
+        self.ensure_tenant()
+        cfg = self._get_config()
+        if cfg:
+            cfg.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class TenantSmtpTestView(TenantMixin, APIView):
+    """
+    POST /api/v1/settings/smtp/test/
+
+    Send a test email via the tenant's configured SMTP server.
+    Body: { "recipient": "test@example.com" }  (optional — defaults to requesting user's email)
+    """
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*MANAGER_ROLES, permission_key='can_manage_settings')]
+
+    def post(self, request):
+        self.ensure_tenant()
+        from .models import TenantSmtpConfig
+        try:
+            cfg = TenantSmtpConfig.objects.get(tenant=self.tenant, is_active=True)
+        except TenantSmtpConfig.DoesNotExist:
+            return Response({'detail': 'No active SMTP config found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        recipient = request.data.get('recipient') or request.user.email
+        if not recipient:
+            return Response({'detail': 'No recipient email provided.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from django.core.mail import send_mail
+            connection = cfg.build_email_backend()
+            send_mail(
+                subject=f'[{self.tenant.name}] NEXUS BMS — SMTP test',
+                message=(
+                    f'This is a test email from NEXUS BMS.\n\n'
+                    f'Your SMTP configuration for {self.tenant.name} is working correctly.\n\n'
+                    f'Server: {cfg.host}:{cfg.port}\n'
+                    f'From:   {cfg.from_address}\n'
+                ),
+                from_email=cfg.from_address,
+                recipient_list=[recipient],
+                connection=connection,
+                fail_silently=False,
+            )
+            return Response({'success': True, 'sent_to': recipient})
+        except Exception as exc:
+            return Response({'success': False, 'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class TenantBrandingUploadView(TenantMixin, APIView):

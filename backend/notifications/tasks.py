@@ -299,6 +299,17 @@ def task_check_sla_deadlines() -> None:
             except Exception as exc:
                 logger.error("SLA breach email failed for ticket %s: %s", sla.ticket_id, exc)
 
+        # Publish ticket.overdue event for cross-module listeners
+        try:
+            from core.events import EventBus
+            EventBus.publish('ticket.overdue', {
+                'id': sla.ticket_id,
+                'tenant_id': sla.ticket.tenant_id,
+                'assigned_to_id': sla.ticket.assigned_to_id,
+            }, tenant=sla.ticket.tenant)
+        except Exception as exc:
+            logger.error("EventBus publish ticket.overdue failed for ticket %s: %s", sla.ticket_id, exc)
+
         breach_count += 1
 
     # ── 2. Send warnings (approaching breach — within 6 hours) ──────────────

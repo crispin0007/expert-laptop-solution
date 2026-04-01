@@ -411,19 +411,8 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
 
     def create(self, request):
         self.ensure_tenant()
-        serializer = InviteStaffSerializer(data=request.data, context={'tenant': self.tenant})
-        serializer.is_valid(raise_exception=True)
-        user = serializer.save()
-        cache.delete(f'staff_availability_{self.tenant.pk}')
-        try:
-            from core.events import EventBus
-            EventBus.publish('staff.created', {
-                'id': user.pk,
-                'tenant_id': self.tenant.pk,
-                'email': user.email,
-            }, tenant=self.tenant)
-        except Exception:
-            pass
+        from accounts import services as staff_service
+        user = staff_service.invite_staff(tenant=self.tenant, data=request.data)
         out = StaffSerializer(user, context={'tenant': self.tenant, 'request': request})
         return Response(out.data, status=status.HTTP_201_CREATED)
 
@@ -448,22 +437,8 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
             )
         except TenantMembership.DoesNotExist:
             return Response(self._NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
-        serializer = UpdateStaffSerializer(
-            membership.user, data=request.data, partial=True,
-            context={'tenant': self.tenant}
-        )
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        cache.delete(f'staff_availability_{self.tenant.pk}')
-        try:
-            from core.events import EventBus
-            EventBus.publish('staff.updated', {
-                'id': membership.user_id,
-                'tenant_id': self.tenant.pk,
-                'change': 'profile_updated',
-            }, tenant=self.tenant)
-        except Exception:
-            pass
+        from accounts import services as staff_service
+        staff_service.update_staff(tenant=self.tenant, user=membership.user, data=request.data)
         out = StaffSerializer(membership.user, context={'tenant': self.tenant, 'request': request})
         return Response(out.data)
 
@@ -497,20 +472,11 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
             membership = TenantMembership.objects.get(user_id=pk, tenant=self.tenant)
         except TenantMembership.DoesNotExist:
             return Response(self._NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
-        if not membership.is_active:
-            return Response({'detail': 'Staff member is already inactive.'}, status=status.HTTP_400_BAD_REQUEST)
-        membership.is_active = False
-        membership.save(update_fields=['is_active'])
-        cache.delete(f'staff_availability_{self.tenant.pk}')
+        from accounts import services as staff_service
         try:
-            from core.events import EventBus
-            EventBus.publish('staff.updated', {
-                'id': membership.user_id,
-                'tenant_id': self.tenant.pk,
-                'change': 'deactivated',
-            }, tenant=self.tenant)
-        except Exception:
-            pass
+            staff_service.deactivate_staff(tenant=self.tenant, membership=membership)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response({'detail': 'Staff member deactivated.'})
 
     @action(detail=True, methods=['post'], url_path='reactivate')
@@ -523,30 +489,11 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
             )
         except TenantMembership.DoesNotExist:
             return Response(self._NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
-        if membership.is_active:
-            return Response({'detail': 'Staff member is already active.'}, status=status.HTTP_400_BAD_REQUEST)
-        membership.is_active = True
-        membership.save(update_fields=['is_active'])
-        cache.delete(f'staff_availability_{self.tenant.pk}')
+        from accounts import services as staff_service
         try:
-            from core.events import EventBus
-            EventBus.publish('staff.updated', {
-                'id': membership.user_id,
-                'tenant_id': self.tenant.pk,
-                'change': 'reactivated',
-            }, tenant=self.tenant)
-        except Exception:
-            pass
-        # Send reactivation email — try Celery first, fall back to synchronous send
-        try:
-            from notifications.tasks import task_send_staff_reactivated
-            task_send_staff_reactivated.delay(user_id=membership.user.pk, tenant_id=self.tenant.pk)
-        except Exception:
-            try:
-                from notifications.email import send_staff_reactivated
-                send_staff_reactivated(membership.user, self.tenant)
-            except Exception:
-                pass
+            staff_service.reactivate_staff(tenant=self.tenant, membership=membership)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response({'detail': f'Staff member reactivated. Email sent to {membership.user.email}.'})
 
     @action(detail=True, methods=['post'], url_path='reset_password')
@@ -615,46 +562,19 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
             return Response(self._NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
 
         role = request.data.get('role', '').strip()
-        valid_system_roles = ['owner', 'admin', 'manager', 'staff', 'viewer', 'custom']
-        if role not in valid_system_roles:
-            return Response(
-                {'detail': f'Invalid role. Choose from: {", ".join(valid_system_roles)}'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
 
-        if role == 'custom':
-            custom_role_id = request.data.get('custom_role_id')
-            if not custom_role_id:
-                return Response(
-                    {'detail': 'custom_role_id is required when role is "custom".'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            from roles.models import Role as CustomRole
-            try:
-                custom_role = CustomRole.objects.get(pk=custom_role_id, tenant=self.tenant)
-            except CustomRole.DoesNotExist:
-                return Response(
-                    {'detail': 'Custom role not found in this workspace.'},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-            membership.role = 'custom'
-            membership.custom_role = custom_role
-        else:
-            membership.role = role
-            membership.custom_role = None
-
-        membership.save(update_fields=['role', 'custom_role'])
-        cache.delete(f'staff_availability_{self.tenant.pk}')
+        from accounts import services as staff_service
         try:
-            from core.events import EventBus
-            EventBus.publish('staff.updated', {
-                'id': membership.user_id,
-                'tenant_id': self.tenant.pk,
-                'change': 'role_assigned',
-                'role': membership.role,
-            }, tenant=self.tenant)
-        except Exception:
-            pass
+            membership = staff_service.assign_role(
+                tenant=self.tenant,
+                membership=membership,
+                role=role,
+                custom_role_id=request.data.get('custom_role_id'),
+            )
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except LookupError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_404_NOT_FOUND)
 
         role_display = (
             membership.custom_role.name if membership.custom_role else membership.role

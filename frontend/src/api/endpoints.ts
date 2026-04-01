@@ -231,6 +231,8 @@ export const ACCOUNTING = {
 export const SETTINGS = {
   LIST: '/settings/',
   UPLOAD: '/settings/upload/',
+  SMTP: '/settings/smtp/',
+  SMTP_TEST: '/settings/smtp/test/',
 } as const
 
 export const TENANTS = {

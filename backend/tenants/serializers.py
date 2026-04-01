@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Tenant, Plan, Module, TenantModuleOverride
+from .models import Tenant, Plan, Module, TenantModuleOverride, TenantSmtpConfig
 
 
 # ── Module ────────────────────────────────────────────────────────────────────
@@ -167,3 +167,58 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
         if not value or not value.strip():
             return None
         return value.strip().lower()
+
+
+class TenantSmtpConfigSerializer(serializers.ModelSerializer):
+    """
+    Read/write serializer for TenantSmtpConfig.
+
+    The SMTP password is write-only — responses include ``has_password`` (bool)
+    instead of the raw or encrypted value.
+    """
+    password = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        style={'input_type': 'password'},
+        help_text='Leave blank to keep existing password unchanged.',
+    )
+    has_password = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = TenantSmtpConfig
+        fields = (
+            'id', 'host', 'port', 'username', 'password', 'has_password',
+            'use_tls', 'use_ssl', 'from_email', 'from_name', 'is_active',
+            'created_at', 'updated_at',
+        )
+        read_only_fields = ('id', 'created_at', 'updated_at')
+
+    def get_has_password(self, obj) -> bool:
+        return obj.has_password
+
+    def validate(self, data):
+        use_tls = data.get('use_tls', getattr(self.instance, 'use_tls', True))
+        use_ssl = data.get('use_ssl', getattr(self.instance, 'use_ssl', False))
+        if use_tls and use_ssl:
+            raise serializers.ValidationError('use_tls and use_ssl cannot both be True.')
+        port = data.get('port', getattr(self.instance, 'port', 587))
+        if not (1 <= port <= 65535):
+            raise serializers.ValidationError({'port': 'Port must be between 1 and 65535.'})
+        return data
+
+    def create(self, validated_data):
+        password = validated_data.pop('password', '')
+        instance = super().create(validated_data)
+        if password:
+            instance.password = password
+            instance.save(update_fields=['_encrypted_password'])
+        return instance
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        instance = super().update(instance, validated_data)
+        if password is not None and password != '':
+            instance.password = password
+            instance.save(update_fields=['_encrypted_password'])
+        return instance
