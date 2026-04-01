@@ -33,14 +33,18 @@ def _cache_task_state(sender, instance, **kwargs):
 
 @receiver(pre_save, sender='projects.Project')
 def _cache_project_manager(sender, instance, **kwargs):
-    """Store previous manager_id before save."""
+    """Store previous manager_id and status before save."""
     if instance.pk:
         try:
-            instance._pre_manager_id = sender.objects.values_list('manager_id', flat=True).get(pk=instance.pk)
+            prev = sender.objects.values('manager_id', 'status').get(pk=instance.pk)
+            instance._pre_manager_id = prev['manager_id']
+            instance._pre_status    = prev['status']
         except sender.DoesNotExist:
             instance._pre_manager_id = None
+            instance._pre_status    = None
     else:
         instance._pre_manager_id = None
+        instance._pre_status    = None
 
 
 # ── Task signals ──────────────────────────────────────────────────────────────
@@ -86,6 +90,18 @@ def handle_task_completed(sender, instance, created, **kwargs):
         except Exception:
             logger.exception("Failed to create CoinTransaction for task %s", instance.pk)
 
+    # ── Publish event ─────────────────────────────────────────────────────────
+    try:
+        from core.events import EventBus
+        EventBus.publish('task.completed', {
+            'id': instance.id,
+            'tenant_id': instance.tenant_id,
+            'project_id': instance.project_id,
+            'assigned_to_id': instance.assigned_to_id,
+        }, tenant=instance.tenant)
+    except Exception:
+        logger.exception('EventBus failed for task.completed task=%s', instance.pk)
+
     # ── Notify project manager ────────────────────────────────────────────────
     try:
         from notifications.service import notify_task_completed
@@ -107,6 +123,17 @@ def handle_task_assigned(sender, instance, created, **kwargs):
 
     # Don't double-fire on STATUS_DONE transition (handle_task_completed handles its own logic)
     try:
+        from core.events import EventBus
+        EventBus.publish('task.assigned', {
+            'id': instance.id,
+            'tenant_id': instance.tenant_id,
+            'project_id': instance.project_id,
+            'assigned_to_id': instance.assigned_to_id,
+        }, tenant=instance.tenant)
+    except Exception:
+        logger.exception('EventBus failed for task.assigned task=%s', instance.pk)
+
+    try:
         from notifications.service import notify_task_assigned
         notify_task_assigned(instance)
     except Exception:
@@ -114,6 +141,37 @@ def handle_task_assigned(sender, instance, created, **kwargs):
 
 
 # ── Project signals ───────────────────────────────────────────────────────────
+
+@receiver(post_save, sender='projects.Project')
+def handle_project_lifecycle(sender, instance, created, **kwargs):
+    """Fire project.created and project.completed events."""
+    from core.events import EventBus
+
+    if created:
+        try:
+            EventBus.publish('project.created', {
+                'id': instance.id,
+                'tenant_id': instance.tenant_id,
+                'customer_id': instance.customer_id,
+                'manager_id': instance.manager_id,
+            }, tenant=instance.tenant)
+        except Exception:
+            logger.exception('EventBus failed for project.created project=%s', instance.pk)
+        return
+
+    # Detect status transition to completed
+    old_status = getattr(instance, '_pre_status', None)
+    if old_status != 'completed' and instance.status == 'completed':
+        try:
+            EventBus.publish('project.completed', {
+                'id': instance.id,
+                'tenant_id': instance.tenant_id,
+                'customer_id': instance.customer_id,
+                'manager_id': instance.manager_id,
+            }, tenant=instance.tenant)
+        except Exception:
+            logger.exception('EventBus failed for project.completed project=%s', instance.pk)
+
 
 @receiver(post_save, sender='projects.Project')
 def handle_project_manager_assigned(sender, instance, created, **kwargs):
@@ -128,3 +186,20 @@ def handle_project_manager_assigned(sender, instance, created, **kwargs):
         notify_project_assigned(instance)
     except Exception:
         logger.exception("Failed to send project_assigned notification for project %s", instance.pk)
+
+
+@receiver(post_save, sender='projects.ProjectTask')
+def handle_task_created(sender, instance, created, **kwargs):
+    """Fire task.created when a new task is added."""
+    if not created:
+        return
+    try:
+        from core.events import EventBus
+        EventBus.publish('task.created', {
+            'id': instance.id,
+            'tenant_id': instance.tenant_id,
+            'project_id': instance.project_id,
+            'assigned_to_id': instance.assigned_to_id,
+        }, tenant=instance.tenant)
+    except Exception:
+        logger.exception('EventBus failed for task.created task=%s', instance.pk)

@@ -10,7 +10,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import {
   Tag, FolderOpen, Plus, Pencil, Trash2, Check, X, ChevronDown, ChevronRight,
-  Clock, Package, ToggleLeft, ToggleRight, Palette, Smile,
+  Clock, Package, ToggleLeft, ToggleRight, Palette, Smile, Coins,
   Car, Fuel, Gauge, Route,
 } from 'lucide-react'
 import apiClient from '../../api/client'
@@ -39,6 +39,9 @@ interface TicketType {
   color: string
   icon: string
   requires_product: boolean
+  is_free_service: boolean
+  coin_service_rate: string
+  coin_product_rate: string
   is_active: boolean
 }
 
@@ -131,7 +134,7 @@ function TicketTypesTab() {
 
   const [showForm, setShowForm] = useState(false)
   const [editTarget, setEditTarget] = useState<TicketType | null>(null)
-  const [form, setForm] = useState({ name: '', default_sla_hours: 24, color: '#6366f1', icon: '', requires_product: false })
+  const [form, setForm] = useState({ name: '', default_sla_hours: 24, color: '#6366f1', icon: '', requires_product: false, is_free_service: false, coin_service_rate: '25', coin_product_rate: '1' })
 
   const { data: types = [], isLoading } = useQuery<TicketType[]>({
     queryKey: ['ticket-types-all'],
@@ -142,14 +145,23 @@ function TicketTypesTab() {
   })
 
   const resetForm = () => {
-    setForm({ name: '', default_sla_hours: 24, color: '#6366f1', icon: '', requires_product: false })
+    setForm({ name: '', default_sla_hours: 24, color: '#6366f1', icon: '', requires_product: false, is_free_service: false, coin_service_rate: '25', coin_product_rate: '1' })
     setEditTarget(null)
     setShowForm(false)
   }
 
   const startEdit = (t: TicketType) => {
     setEditTarget(t)
-    setForm({ name: t.name, default_sla_hours: t.default_sla_hours, color: t.color, icon: t.icon, requires_product: t.requires_product })
+    setForm({
+      name: t.name,
+      default_sla_hours: t.default_sla_hours,
+      color: t.color,
+      icon: t.icon,
+      requires_product: t.requires_product,
+      is_free_service: t.is_free_service,
+      coin_service_rate: t.coin_service_rate,
+      coin_product_rate: t.coin_product_rate,
+    })
     setShowForm(true)
   }
 
@@ -252,6 +264,68 @@ function TicketTypesTab() {
                 <Package size={14} />
                 {form.requires_product ? 'Requires product (on)' : 'Requires product (off)'}
               </button>
+              <button
+                type="button"
+                onClick={() => setForm(p => ({ ...p, is_free_service: !p.is_free_service }))}
+                className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border transition-colors ${
+                  form.is_free_service
+                    ? 'bg-amber-50 border-amber-300 text-amber-700'
+                    : 'bg-white border-slate-300 text-slate-600'
+                }`}
+              >
+                {form.is_free_service ? 'Free service (on)' : 'Free service (off)'}
+              </button>
+            </div>
+
+            {/* Coin rates */}
+            <div className="col-span-2">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2 mt-1 flex items-center gap-1.5">
+                <Coins size={12} /> Coin Reward Rates
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-medium text-slate-600 block mb-1">
+                    Service Charge Rate (%)
+                    <span className="ml-1 text-slate-400 font-normal">— coins earned per % of service charge</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={0.01}
+                      value={form.coin_service_rate}
+                      onChange={e => setForm(p => ({ ...p, coin_service_rate: e.target.value }))}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <span className="text-slate-500 text-sm">%</span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1">
+                    e.g. 25 → staff earns {form.coin_service_rate || 0} coins per NPR 100 of service charge
+                  </p>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-600 block mb-1">
+                    Product Sales Rate (%)
+                    <span className="ml-1 text-slate-400 font-normal">— coins earned per % of product sales</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={0.01}
+                      value={form.coin_product_rate}
+                      onChange={e => setForm(p => ({ ...p, coin_product_rate: e.target.value }))}
+                      className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <span className="text-slate-500 text-sm">%</span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1">
+                    e.g. 1 → staff earns {form.coin_product_rate || 0} coins per NPR 100 of product sales
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
           <div className="flex gap-2 mt-4">
@@ -301,11 +375,16 @@ function TicketTypesTab() {
                       <Package size={10} /> Requires product
                     </span>
                   )}
+                  {t.is_free_service && (
+                    <span className="text-xs bg-green-50 text-green-700 border border-green-200 px-1.5 py-0.5 rounded">Free</span>
+                  )}
                 </div>
-                <div className="flex items-center gap-1 text-xs text-slate-400 mt-0.5">
-                  <Clock size={10} />
-                  <span>SLA: {t.default_sla_hours}h</span>
-                  {t.icon && <span className="ml-2">Icon: {t.icon}</span>}
+                <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5">
+                  <span className="flex items-center gap-1"><Clock size={10} />SLA: {t.default_sla_hours}h</span>
+                  <span className="flex items-center gap-1 text-amber-600">
+                    <Coins size={10} />Svc {t.coin_service_rate}% · Prod {t.coin_product_rate}%
+                  </span>
+                  {t.icon && <span>Icon: {t.icon}</span>}
                 </div>
               </div>
               <div className="flex items-center gap-1">

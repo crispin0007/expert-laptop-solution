@@ -156,6 +156,7 @@ export const ACCOUNTING = {
 
   // ── Coins ─────────────────────────────────────────────────────────────────
   COINS: '/accounting/coins/',
+  COINS_SUMMARY: '/accounting/coins/summary/',
   COIN_DETAIL: (id: number) => `/accounting/coins/${id}/`,
   COIN_APPROVE: (id: number) => `/accounting/coins/${id}/approve/`,
   COIN_REJECT: (id: number) => `/accounting/coins/${id}/reject/`,

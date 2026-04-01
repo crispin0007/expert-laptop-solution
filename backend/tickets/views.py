@@ -340,13 +340,18 @@ class TicketViewSet(NexusViewSet):
     def close_ticket(self, request, pk=None):
         """
         POST /tickets/{id}/close/ — Manager/Admin only.
-        Body: { coin_amount: number, reason: str (optional) }
-        Closes the ticket and immediately awards coins to assigned staff.
+        Body: { coin_amount: number (optional), reason: str (optional) }
+
+        coin_amount:
+          - Omitted or null → server auto-calculates from ticket type rates
+          - 0               → explicitly no coins
+          - positive        → manager override
         """
         ticket = self.get_object()
+        raw_amount = request.data.get('coin_amount')   # None when not sent
         ticket, coin_txn = self.get_service().close_ticket(
             ticket,
-            coin_amount=request.data.get('coin_amount', 0),
+            coin_amount=raw_amount,   # None → auto-calculate
             reason=request.data.get('reason', '').strip(),
             actor=request.user,
         )

@@ -10,6 +10,36 @@ from .models import (
 )
 
 
+def _tenant_from_context(serializer) -> object:
+    request = serializer.context.get('request')
+    return getattr(request, 'tenant', None) if request is not None else None
+
+
+def _ensure_same_tenant(obj, tenant, label: str):
+    if obj is None or tenant is None:
+        return
+    if getattr(obj, 'tenant_id', None) != tenant.id:
+        raise serializers.ValidationError({
+            label: f'{label.replace("_", " ").capitalize()} does not belong to this workspace.'
+        })
+
+
+def _ensure_staff_in_tenant(staff, tenant, label: str = 'staff'):
+    if staff is None or tenant is None:
+        return
+    from accounts.models import TenantMembership
+
+    is_member = TenantMembership.objects.filter(
+        tenant=tenant,
+        user=staff,
+        is_active=True,
+    ).exists()
+    if not is_member:
+        raise serializers.ValidationError({
+            label: 'Staff member is not part of this workspace.'
+        })
+
+
 # ─── Chart of Accounts ───────────────────────────────────────────────────────
 
 class AccountSerializer(serializers.ModelSerializer):
@@ -134,6 +164,12 @@ class BillSerializer(NepaliModelSerializer):
             return obj.supplier.name
         return obj.supplier_name
 
+    def validate(self, attrs):
+        tenant = _tenant_from_context(self)
+        supplier = attrs.get('supplier', getattr(self.instance, 'supplier', None))
+        _ensure_same_tenant(supplier, tenant, 'supplier')
+        return attrs
+
 
 # ─── Payments ────────────────────────────────────────────────────────────────
 
@@ -154,6 +190,21 @@ class PaymentSerializer(NepaliModelSerializer):
             'created_by_name', 'created_at',
         )
         read_only_fields = ('payment_number', 'created_at')
+
+    def validate(self, attrs):
+        tenant = _tenant_from_context(self)
+        invoice = attrs.get('invoice', getattr(self.instance, 'invoice', None))
+        bill = attrs.get('bill', getattr(self.instance, 'bill', None))
+        bank_account = attrs.get('bank_account', getattr(self.instance, 'bank_account', None))
+
+        _ensure_same_tenant(invoice, tenant, 'invoice')
+        _ensure_same_tenant(bill, tenant, 'bill')
+        _ensure_same_tenant(bank_account, tenant, 'bank_account')
+
+        if invoice is not None and bill is not None:
+            raise serializers.ValidationError({'non_field_errors': ['Payment cannot be linked to both invoice and bill.']})
+
+        return attrs
 
 
 # ─── Credit Notes ────────────────────────────────────────────────────────────
@@ -189,6 +240,98 @@ class CoinTransactionSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('status', 'approved_by', 'approved_by_name', 'created_at')
 
+    def validate(self, attrs):
+        tenant = _tenant_from_context(self)
+        staff = attrs.get('staff', getattr(self.instance, 'staff', None))
+        _ensure_staff_in_tenant(staff, tenant, 'staff')
+        return attrs
+
+
+class CoinTransactionDetailSerializer(CoinTransactionSerializer):
+    """
+    Extended serializer for the retrieve endpoint.
+    Includes source_context: full ticket/task info with service charge
+    and per-product breakdown so the approver has full context.
+    """
+    source_context = serializers.SerializerMethodField(read_only=True)
+
+    class Meta(CoinTransactionSerializer.Meta):
+        fields = CoinTransactionSerializer.Meta.fields + ('source_context',)
+
+    def get_source_context(self, obj):
+        """Resolve the linked ticket or task and return relevant billing context."""
+        from decimal import Decimal
+
+        if obj.source_type == CoinTransaction.SOURCE_TICKET and obj.source_id:
+            try:
+                from tickets.models import Ticket, TicketProduct
+                ticket = (
+                    Ticket.objects
+                    .select_related('customer', 'assigned_to', 'ticket_type', 'department')
+                    .get(pk=obj.source_id, tenant=obj.tenant)
+                )
+                products = list(
+                    TicketProduct.objects
+                    .filter(ticket=ticket)
+                    .select_related('product')
+                )
+                product_total = sum(
+                    p.unit_price * p.quantity * (1 - p.discount / Decimal('100'))
+                    for p in products
+                ) if products else Decimal('0')
+                return {
+                    'type': 'ticket',
+                    'id': ticket.pk,
+                    'ticket_number': ticket.ticket_number,
+                    'title': ticket.title,
+                    'customer_name': ticket.customer.name if ticket.customer else None,
+                    'department_name': ticket.department.name if ticket.department else None,
+                    'ticket_type_name': ticket.ticket_type.name if ticket.ticket_type else None,
+                    'status': ticket.status,
+                    'priority': ticket.priority,
+                    'service_charge': str(ticket.service_charge),
+                    'product_total': str(product_total.quantize(Decimal('0.01'))),
+                    'billing_total': str((ticket.service_charge + product_total).quantize(Decimal('0.01'))),
+                    'product_count': len(products),
+                    'products': [
+                        {
+                            'name': p.product.name,
+                            'quantity': p.quantity,
+                            'unit_price': str(p.unit_price),
+                            'discount': str(p.discount),
+                            'line_total': str(
+                                (p.unit_price * p.quantity * (1 - p.discount / Decimal('100')))
+                                .quantize(Decimal('0.01'))
+                            ),
+                        }
+                        for p in products
+                    ],
+                    'closed_at': ticket.closed_at.isoformat() if ticket.closed_at else None,
+                    'assigned_to_name': ticket.assigned_to.full_name if ticket.assigned_to else None,
+                }
+            except Exception:
+                return None
+
+        if obj.source_type == CoinTransaction.SOURCE_TASK and obj.source_id:
+            try:
+                from projects.models import Task
+                task = (
+                    Task.objects
+                    .select_related('project')
+                    .get(pk=obj.source_id, tenant=obj.tenant)
+                )
+                return {
+                    'type': 'task',
+                    'id': task.pk,
+                    'title': task.title,
+                    'project_name': task.project.name if task.project else None,
+                    'status': task.status,
+                }
+            except Exception:
+                return None
+
+        return None
+
 
 # ─── Payslips ────────────────────────────────────────────────────────────────
 
@@ -209,6 +352,12 @@ class StaffSalaryProfileSerializer(serializers.ModelSerializer):
             'effective_from', 'notes', 'created_at', 'updated_at',
         )
         read_only_fields = ('created_at', 'updated_at')
+
+    def validate(self, attrs):
+        tenant = _tenant_from_context(self)
+        staff = attrs.get('staff', getattr(self.instance, 'staff', None))
+        _ensure_staff_in_tenant(staff, tenant, 'staff')
+        return attrs
 
 
 class PayslipSerializer(NepaliModelSerializer):
@@ -236,6 +385,14 @@ class PayslipSerializer(NepaliModelSerializer):
             'issued_at', 'paid_at', 'payment_method', 'bank_account',
             'bank_account_name', 'created_at',
         )
+
+    def validate(self, attrs):
+        tenant = _tenant_from_context(self)
+        staff = attrs.get('staff', getattr(self.instance, 'staff', None))
+        bank_account = attrs.get('bank_account', getattr(self.instance, 'bank_account', None))
+        _ensure_staff_in_tenant(staff, tenant, 'staff')
+        _ensure_same_tenant(bank_account, tenant, 'bank_account')
+        return attrs
 
 
 # ─── Invoices ────────────────────────────────────────────────────────────────
@@ -286,6 +443,16 @@ class InvoiceSerializer(NepaliModelSerializer):
         if obj.finance_reviewed_by:
             return obj.finance_reviewed_by.get_full_name() or obj.finance_reviewed_by.email
         return ''
+
+    def validate(self, attrs):
+        tenant = _tenant_from_context(self)
+        customer = attrs.get('customer', getattr(self.instance, 'customer', None))
+        ticket = attrs.get('ticket', getattr(self.instance, 'ticket', None))
+        project = attrs.get('project', getattr(self.instance, 'project', None))
+        _ensure_same_tenant(customer, tenant, 'customer')
+        _ensure_same_tenant(ticket, tenant, 'ticket')
+        _ensure_same_tenant(project, tenant, 'project')
+        return attrs
 
 
 # ─── Quotations ──────────────────────────────────────────────────────────────

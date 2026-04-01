@@ -7,4 +7,6 @@ class ProjectsConfig(AppConfig):
     verbose_name = 'Projects'
 
     def ready(self):
-        import projects.signals  # noqa: F401
+        import projects.signals   # noqa: F401
+        import projects.module    # noqa: F401
+        import projects.listeners  # noqa: F401

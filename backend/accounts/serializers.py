@@ -77,6 +77,8 @@ class TenantMembershipSerializer(serializers.ModelSerializer):
             'id', 'user', 'tenant', 'role', 'department',
             'employee_id', 'join_date', 'is_admin', 'is_active', 'created_at',
         )
+        # tenant is always injected server-side via perform_create — never from request body.
+        read_only_fields = ('tenant', 'created_at')
 
 
 class MeSerializer(serializers.ModelSerializer):
@@ -155,12 +157,12 @@ class MeSerializer(serializers.ModelSerializer):
             # Inventory — manager+ only by default; custom roles can override
             'can_view_inventory': _perm(is_manager, 'inventory.view'),
             'can_manage_inventory': _perm(is_admin, 'inventory.manage'),
-            # Accounting
-            'can_view_accounting': _perm(is_manager, 'accounting.view'),
-            'can_manage_accounting': _perm(is_admin, 'accounting.manage'),
-            # Coins
-            'can_view_coins': _perm(True, 'coins.view'),
-            'can_approve_coins': _perm(is_manager, 'coins.approve'),
+            # Accounting — keys must match roles/permissions_map.py PERMISSION_MAP
+            'can_view_accounting': _perm(is_manager, 'accounting.view_invoices'),
+            'can_manage_accounting': _perm(is_admin, 'accounting.manage_invoices'),
+            # Coins — keys must match roles/permissions_map.py PERMISSION_MAP
+            'can_view_coins': _perm(True, 'accounting.view_coins'),
+            'can_approve_coins': _perm(is_manager, 'accounting.manage_coins'),
             # Settings & roles
             'can_manage_settings': _perm(is_admin, 'settings.manage'),
             'can_manage_roles': _perm(is_admin, 'roles.manage'),
@@ -281,10 +283,19 @@ class InviteStaffSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True, min_length=8, required=False)
     role = serializers.ChoiceField(choices=TenantMembership.ROLE_CHOICES, default='staff')
     department = serializers.PrimaryKeyRelatedField(
-        queryset=__import__('departments.models', fromlist=['Department']).Department.objects.all(),
+        queryset=__import__('departments.models', fromlist=['Department']).Department.objects.none(),
         required=False,
         allow_null=True,
     )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Scope department queryset to the current tenant so cross-tenant PKs
+        # fail at the field level (404-style) rather than needing validate_department.
+        tenant = self.context.get('tenant')
+        if tenant is not None:
+            from departments.models import Department
+            self.fields['department'].queryset = Department.objects.filter(tenant=tenant)
     employee_id = serializers.CharField(max_length=64, required=False, allow_blank=True)
     join_date = serializers.DateField(required=False, allow_null=True)
     is_admin = serializers.BooleanField(default=False)
@@ -376,10 +387,18 @@ class UpdateStaffSerializer(serializers.ModelSerializer):
     """PATCH /api/v1/staff/{id}/ — update user profile + membership fields."""
     role = serializers.ChoiceField(choices=TenantMembership.ROLE_CHOICES, required=False)
     department = serializers.PrimaryKeyRelatedField(
-        queryset=__import__('departments.models', fromlist=['Department']).Department.objects.all(),
+        queryset=__import__('departments.models', fromlist=['Department']).Department.objects.none(),
         required=False,
         allow_null=True,
     )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Scope department queryset to the current tenant.
+        tenant = self.context.get('tenant')
+        if tenant is not None:
+            from departments.models import Department
+            self.fields['department'].queryset = Department.objects.filter(tenant=tenant)
     employee_id = serializers.CharField(max_length=64, required=False, allow_blank=True)
     join_date = serializers.DateField(required=False, allow_null=True)
     is_admin = serializers.BooleanField(required=False)

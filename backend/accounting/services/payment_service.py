@@ -33,6 +33,15 @@ def record_payment(
     if invoice and bill:
         raise ValueError("Payment can be linked to either an invoice or a bill, not both.")
 
+    if invoice and getattr(invoice, 'tenant_id', None) != tenant.id:
+        raise ValueError('Invoice does not belong to this workspace.')
+
+    if bill and getattr(bill, 'tenant_id', None) != tenant.id:
+        raise ValueError('Bill does not belong to this workspace.')
+
+    if bank_account and getattr(bank_account, 'tenant_id', None) != tenant.id:
+        raise ValueError('Bank account does not belong to this workspace.')
+
     payment = Payment.objects.create(
         tenant=tenant,
         created_by=created_by,
@@ -52,6 +61,17 @@ def record_payment(
         invoice.status = 'paid'
         invoice.paid_at = timezone.now()
         invoice.save(update_fields=['status', 'paid_at'])
+        try:
+            from core.events import EventBus
+            EventBus.publish('invoice.paid', {
+                'id': invoice.pk,
+                'tenant_id': tenant.id,
+                'customer_id': invoice.customer_id,
+                'amount': str(payment.amount),
+                'paid_at': invoice.paid_at.isoformat(),
+            }, tenant=tenant)
+        except Exception:
+            pass
 
     if bill and bill.amount_due <= Decimal('0'):
         bill.status = 'paid'

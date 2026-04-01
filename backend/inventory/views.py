@@ -36,6 +36,11 @@ from .serializers import (
     SupplierProductSerializer,
     StockCountSerializer, StockCountWriteSerializer, StockCountItemSerializer,
 )
+from .services import (
+    receive_purchase_order,
+    complete_stock_count,
+    auto_reorder as run_auto_reorder,
+)
 
 
 class ProductPagination(PageNumberPagination):
@@ -382,59 +387,14 @@ class PurchaseOrderViewSet(NexusViewSet):
         Creates StockMovement(in) for each line and updates PO status.
         """
         po = self.get_object()
-        if po.status == PurchaseOrder.STATUS_CANCELLED:
-            raise ConflictError('Cannot receive a cancelled purchase order.')
-        if po.status == PurchaseOrder.STATUS_RECEIVED:
-            raise ConflictError('Purchase order is already fully received.')
-
         ser = ReceiveItemsSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
-        lines = ser.validated_data['lines']
-        notes = ser.validated_data.get('notes', '')
-
-        items_map = {item.id: item for item in po.items.select_related('product')}
-
-        for line in lines:
-            item = items_map.get(line['item_id'])
-            if not item:
-                raise AppValidationError(f"Item {line['item_id']} not found on this PO.")
-            qty = line['quantity_received']
-            if qty <= 0:
-                continue
-            max_receivable = item.quantity_ordered - item.quantity_received
-            if qty > max_receivable:
-                raise AppValidationError(
-                    f"Cannot receive {qty} of '{item.product.name}' — only {max_receivable} pending."
-                )
-            StockMovement.objects.create(
-                tenant=po.tenant,
-                product=item.product,
-                movement_type=StockMovement.MOVEMENT_IN,
-                quantity=qty,
-                reference_type='purchase_order',
-                reference_id=po.pk,
-                notes=notes or f"Received via {po.po_number}",
-                created_by=request.user,
-            )
-            item.quantity_received += qty
-            item.save(update_fields=['quantity_received'])
-
-        # Recompute status
-        po.refresh_from_db()
-        total_ordered  = sum(i.quantity_ordered  for i in po.items.all())
-        total_received = sum(i.quantity_received for i in po.items.all())
-        if total_received >= total_ordered:
-            new_status = PurchaseOrder.STATUS_RECEIVED
-        elif total_received > 0:
-            new_status = PurchaseOrder.STATUS_PARTIAL
-        else:
-            new_status = po.status
-
-        po.status = new_status
-        if new_status in (PurchaseOrder.STATUS_RECEIVED, PurchaseOrder.STATUS_PARTIAL):
-            po.received_by = request.user
-            po.received_at = timezone.now()
-        po.save(update_fields=['status', 'received_by', 'received_at'])
+        po = receive_purchase_order(
+            po=po,
+            lines=ser.validated_data['lines'],
+            notes=ser.validated_data.get('notes', ''),
+            user=request.user,
+        )
         return ApiResponse.success(data=PurchaseOrderSerializer(po).data)
 
     @action(detail=True, methods=['post'], url_path='send')
@@ -823,76 +783,10 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
         Returns a summary of POs created and any products skipped (no preferred supplier).
         """
         self.ensure_tenant()
-
-        products = (
-            Product.objects
-            .filter(tenant=self.tenant, is_deleted=False, is_active=True,
-                    is_service=False, track_stock=True)
-            .select_related('stock_level')
-        )
-        low_stock_products = [
-            p for p in products
-            if getattr(getattr(p, 'stock_level', None), 'quantity_on_hand', 0) <= p.reorder_level
-        ]
-
-        if not low_stock_products:
-            return ApiResponse.success(data={'detail': 'No low-stock products found.', 'pos_created': 0})
-
-        product_ids = [p.id for p in low_stock_products]
-
-        sp_qs = (
-            SupplierProduct.objects
-            .filter(tenant=self.tenant, product_id__in=product_ids, is_preferred=True)
-            .select_related('supplier', 'product')
-        )
-        preferred_map = {sp.product_id: sp for sp in sp_qs}
-
-        supplier_lines: dict = {}
-        skipped = []
-        for p in low_stock_products:
-            sp = preferred_map.get(p.id)
-            if not sp:
-                skipped.append({'id': p.id, 'name': p.name, 'sku': p.sku})
-                continue
-            if sp.supplier_id not in supplier_lines:
-                supplier_lines[sp.supplier_id] = {'supplier': sp.supplier, 'items': []}
-            current_stock = getattr(getattr(p, 'stock_level', None), 'quantity_on_hand', 0)
-            reorder_qty = max(p.reorder_level - current_stock, sp.min_order_qty)
-            supplier_lines[sp.supplier_id]['items'].append({
-                'product': p,
-                'quantity_ordered': reorder_qty,
-                'unit_cost': sp.unit_cost,
-            })
-
-        created_pos = []
-        for supplier_id, data in supplier_lines.items():
-            po = PurchaseOrder.objects.create(
-                tenant=self.tenant,
-                supplier=data['supplier'],
-                status=PurchaseOrder.STATUS_DRAFT,
-                notes='Auto-generated from low-stock reorder',
-                created_by=request.user,
-            )
-            for item in data['items']:
-                PurchaseOrderItem.objects.create(
-                    tenant=self.tenant,
-                    po=po,
-                    product=item['product'],
-                    quantity_ordered=item['quantity_ordered'],
-                    unit_cost=item['unit_cost'],
-                    created_by=request.user,
-                )
-            created_pos.append({
-                'po_number': po.po_number,
-                'supplier': data['supplier'].name,
-                'line_count': len(data['items']),
-            })
-
-        return ApiResponse.created(data={
-            'pos_created': len(created_pos),
-            'purchase_orders': created_pos,
-            'skipped_no_supplier': skipped,
-        })
+        result = run_auto_reorder(tenant=self.tenant, user=request.user)
+        if result.get('pos_created', 0) == 0:
+            return ApiResponse.success(data=result)
+        return ApiResponse.created(data=result)
 
 
 # ── Supplier–Product Catalog ──────────────────────────────────────────────────
@@ -1045,41 +939,7 @@ class StockCountViewSet(NexusViewSet):
         create a StockMovement(adjustment) and update StockLevel.
         """
         sc = self.get_object()
-        if sc.status != StockCount.STATUS_COUNTING:
-            raise ConflictError('Only counting-status sessions can be completed.')
-
-        # Wrap inside a transaction so a mid-loop failure does not leave stock
-        # levels partially adjusted while movements are only partially created.
-        from django.db import transaction as _tx
-        from django.db.models import F as DbF
-        adjustments_created = 0
-        with _tx.atomic():
-            for item in sc.items.select_related('product'):
-                if item.counted_qty is None:
-                    continue
-                diff = item.discrepancy
-                if diff == 0:
-                    continue
-                StockMovement.objects.create(
-                    tenant=sc.tenant,
-                    product=item.product,
-                    movement_type=StockMovement.MOVEMENT_ADJUSTMENT,
-                    quantity=abs(diff),
-                    reference_type='stock_count',
-                    reference_id=sc.pk,
-                    notes=f"Stock count {sc.count_number}: {'surplus' if diff > 0 else 'shrinkage'} of {abs(diff)}",
-                    created_by=request.user,
-                )
-                StockLevel.objects.filter(product=item.product).update(
-                    quantity_on_hand=DbF('quantity_on_hand') + diff
-                )
-                adjustments_created += 1
-
-            sc.status       = StockCount.STATUS_COMPLETED
-            sc.completed_at = timezone.now()
-            sc.completed_by = request.user
-            sc.save(update_fields=['status', 'completed_at', 'completed_by'])
-
+        sc, adjustments_created = complete_stock_count(sc=sc, user=request.user)
         return ApiResponse.success(data={
             **StockCountSerializer(sc).data,
             'adjustments_created': adjustments_created,

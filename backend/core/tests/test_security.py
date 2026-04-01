@@ -116,6 +116,774 @@ class CrossTenantIDORTest(TestCase):
         # TenantMixin filters by tenant B — the tenant A customer must not be found
         self.assertIn(response.status_code, [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND])
 
+    def test_cannot_create_contact_for_other_tenant_customer(self):
+        """A user from tenant B cannot create a contact under tenant A customer."""
+        from customers.models import Customer
+
+        customer_a = Customer.objects.create(
+            tenant=self.tenant_a,
+            name='Tenant A Customer',
+            phone='9800000001',
+        )
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_b}')
+        response = client.post(
+            f'/api/v1/customers/{customer_a.pk}/contacts/',
+            data={
+                'name': 'Probe Contact',
+                'email': 'probe@example.com',
+                'phone': '9800000002',
+            },
+            format='json',
+            HTTP_HOST='idor-b.bms.local',
+        )
+
+        self.assertIn(response.status_code, [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND])
+
+    def test_department_serializer_rejects_cross_tenant_head(self):
+        """Department head must belong to the current tenant workspace."""
+        from departments.serializers import DepartmentSerializer
+
+        user_a = _create_user('dept-head-a@example.com')
+        _add_member(user_a, self.tenant_a, role='manager')
+
+        request = RequestFactory().post('/api/v1/departments/')
+        request.tenant = self.tenant_b
+
+        serializer = DepartmentSerializer(
+            data={'name': 'Operations', 'head': user_a.pk},
+            context={'request': request},
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('head', serializer.errors)
+
+    def test_supplier_product_serializer_rejects_cross_tenant_links(self):
+        """SupplierProduct cannot link supplier/product from a different tenant."""
+        from inventory.models import Supplier, Product
+        from inventory.serializers import SupplierProductSerializer
+
+        supplier_a = Supplier.objects.create(tenant=self.tenant_a, name='Supplier A')
+        product_a = Product.objects.create(tenant=self.tenant_a, name='Product A', sku='A-1')
+
+        request = RequestFactory().post('/api/v1/inventory/supplier-products/')
+        request.tenant = self.tenant_b
+
+        serializer = SupplierProductSerializer(
+            data={'supplier': supplier_a.pk, 'product': product_a.pk, 'unit_cost': '10.00'},
+            context={'request': request},
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertTrue('supplier' in serializer.errors or 'product' in serializer.errors)
+
+    def test_purchase_order_serializer_rejects_cross_tenant_refs(self):
+        """PurchaseOrder write serializer must reject supplier/product from another tenant."""
+        from inventory.models import Supplier, Product
+        from inventory.serializers import PurchaseOrderWriteSerializer
+
+        supplier_a = Supplier.objects.create(tenant=self.tenant_a, name='Supplier A')
+        product_a = Product.objects.create(tenant=self.tenant_a, name='Product A', sku='A-2')
+
+        request = RequestFactory().post('/api/v1/inventory/purchase-orders/')
+        request.tenant = self.tenant_b
+
+        serializer = PurchaseOrderWriteSerializer(
+            data={
+                'supplier': supplier_a.pk,
+                'items': [
+                    {
+                        'product': product_a.pk,
+                        'quantity_ordered': 1,
+                        'quantity_received': 0,
+                        'unit_cost': '5.00',
+                    }
+                ],
+            },
+            context={'request': request},
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('supplier', serializer.errors)
+
+    def test_invoice_serializer_rejects_cross_tenant_customer(self):
+        """Invoice serializer must reject customer from another tenant."""
+        from customers.models import Customer
+        from accounting.serializers import InvoiceSerializer
+
+        customer_a = Customer.objects.create(
+            tenant=self.tenant_a,
+            name='Tenant A Customer',
+            phone='9811111111',
+        )
+
+        request = RequestFactory().post('/api/v1/accounting/invoices/')
+        request.tenant = self.tenant_b
+
+        serializer = InvoiceSerializer(
+            data={
+                'customer': customer_a.pk,
+                'line_items': [{'description': 'Service', 'qty': 1, 'unit_price': '100.00'}],
+                'due_date': '2026-04-30',
+            },
+            context={'request': request},
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('customer', serializer.errors)
+
+    def test_payment_serializer_rejects_cross_tenant_invoice(self):
+        """Payment serializer must reject invoice from another tenant."""
+        from accounting.models import Invoice
+        from accounting.serializers import PaymentSerializer
+
+        invoice_a = Invoice.objects.create(
+            tenant=self.tenant_a,
+            line_items=[{'description': 'Repair', 'qty': 1, 'unit_price': '50.00'}],
+            subtotal='50.00',
+            total='50.00',
+        )
+
+        request = RequestFactory().post('/api/v1/accounting/payments/')
+        request.tenant = self.tenant_b
+
+        serializer = PaymentSerializer(
+            data={
+                'date': '2026-04-01',
+                'type': 'incoming',
+                'method': 'cash',
+                'amount': '50.00',
+                'invoice': invoice_a.pk,
+            },
+            context={'request': request},
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('invoice', serializer.errors)
+
+    def test_payment_service_rejects_cross_tenant_bill(self):
+        """record_payment must reject bill linked from another tenant."""
+        from accounting.models import Bill
+        from accounting.services.payment_service import record_payment
+
+        bill_a = Bill.objects.create(
+            tenant=self.tenant_a,
+            supplier_name='Vendor A',
+            line_items=[{'description': 'Parts', 'qty': 1, 'unit_price': '20.00'}],
+            subtotal='20.00',
+            total='20.00',
+        )
+
+        with self.assertRaisesMessage(ValueError, 'Bill does not belong to this workspace.'):
+            record_payment(
+                tenant=self.tenant_b,
+                created_by=self.user_b,
+                payment_type='outgoing',
+                method='cash',
+                amount=20,
+                bill=bill_a,
+            )
+
+    def test_cms_create_blog_post_rejects_cross_tenant_author(self):
+        """CMS blog author must be a member of the same tenant as the site."""
+        from cms.services import create_blog_post
+        from cms.models import CMSSite
+
+        outsider = _create_user('cms-outsider@example.com')
+        _add_member(outsider, self.tenant_a, role='staff')
+
+        site_b, _ = CMSSite.objects.get_or_create(
+            tenant=self.tenant_b,
+            defaults={'site_name': 'Tenant B Site'},
+        )
+
+        with self.assertRaisesMessage(ValueError, 'Author must be an active member of this workspace.'):
+            create_blog_post(
+                site=site_b,
+                data={
+                    'title': 'Tenant B Post',
+                    'author': outsider.pk,
+                },
+                user=self.user_b,
+            )
+
+    def test_tenant_membership_create_rejects_cross_tenant_body(self):
+        """POST /api/v1/accounts/memberships/ must not allow tenant injection from request body."""
+        admin_b = _create_user('admin-b@example.com')
+        _add_member(admin_b, self.tenant_b, role='admin')
+        token_b = _get_token(admin_b, self.tenant_b)
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {token_b}')
+
+        # Attempt to create a membership in tenant_a by passing tenant_a.pk in the body
+        response = client.post(
+            '/api/v1/accounts/memberships/',
+            data={
+                'tenant': self.tenant_a.pk,   # cross-tenant injection attempt
+                'role': 'admin',
+                'user': admin_b.pk,
+            },
+            format='json',
+            HTTP_HOST='idor-b.bms.local',
+        )
+        # Must succeed only for tenant_b (tenant is injected server-side) or
+        # fail entirely — never create a membership in tenant_a.
+        if response.status_code in (status.HTTP_201_CREATED, status.HTTP_200_OK):
+            from accounts.models import TenantMembership as TM
+            created = TM.objects.filter(
+                user=admin_b, tenant=self.tenant_a
+            ).exists()
+            self.assertFalse(
+                created,
+                'TenantMembership was created in tenant_a despite being requested from tenant_b context.',
+            )
+
+    def test_invite_staff_rejects_cross_tenant_department(self):
+        """InviteStaffSerializer must reject a department from a different tenant."""
+        from accounts.serializers import InviteStaffSerializer
+        from departments.models import Department
+
+        dept_a = Department.objects.create(tenant=self.tenant_a, name='Dept A')
+
+        serializer = InviteStaffSerializer(
+            data={
+                'email': 'newstaff@example.com',
+                'department': dept_a.pk,
+            },
+            context={'tenant': self.tenant_b},
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('department', serializer.errors)
+
+    def test_me_serializer_permission_keys_match_permission_map(self):
+        """MeSerializer permission dict must use keys from PERMISSION_MAP for custom roles."""
+        from accounts.serializers import MeSerializer
+        from roles.models import Role
+        from roles.permissions_map import PERMISSION_MAP
+
+        # Create a custom role with every permission key set to True
+        custom_role = Role.objects.create(
+            tenant=self.tenant_b,
+            name='All-Perms',
+            permissions={k: True for k in PERMISSION_MAP},
+        )
+        membership = _add_member(
+            _create_user('custom-role-user@example.com'),
+            self.tenant_b,
+            role='custom',
+        )
+        membership.custom_role = custom_role
+        membership.save()
+
+        request = RequestFactory().get('/api/v1/accounts/me/')
+        request.tenant = self.tenant_b
+
+        serializer = MeSerializer(membership.user, context={'request': request})
+        data = serializer.data
+        perms = data['membership']['permissions']
+
+        # For a custom role with all permissions True, the coin/accounting flags
+        # must resolve to True (verifying correct PERMISSION_MAP key usage).
+        self.assertTrue(perms.get('can_view_coins'),
+                        'can_view_coins should be True — check PERMISSION_MAP key in MeSerializer')
+        self.assertTrue(perms.get('can_approve_coins'),
+                        'can_approve_coins should be True — check PERMISSION_MAP key in MeSerializer')
+        self.assertTrue(perms.get('can_view_accounting'),
+                        'can_view_accounting should be True — check PERMISSION_MAP key in MeSerializer')
+        self.assertTrue(perms.get('can_manage_accounting'),
+                        'can_manage_accounting should be True — check PERMISSION_MAP key in MeSerializer')
+
+    # ── Customer service / view IDOR ─────────────────────────────────────────
+
+    def test_customer_delete_blocked_cross_tenant(self):
+        """DELETE /api/v1/customers/{id}/ must 404 for a customer from another tenant."""
+        from customers.models import Customer
+
+        customer_a = Customer.objects.create(
+            tenant=self.tenant_a,
+            name='Cross-Tenant Corp',
+            phone='9800000099',
+        )
+
+        admin_b = _create_user('admin-del-b@example.com')
+        _add_member(admin_b, self.tenant_b, role='admin')
+        token_b = _get_token(admin_b, self.tenant_b)
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {token_b}')
+        response = client.delete(
+            f'/api/v1/customers/{customer_a.pk}/',
+            HTTP_HOST='idor-b.bms.local',
+        )
+
+        self.assertIn(
+            response.status_code,
+            [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND],
+            'Tenant B must not be able to delete tenant A customer.',
+        )
+        # Original record must survive
+        customer_a.refresh_from_db()
+        self.assertFalse(customer_a.is_deleted)
+
+    def test_customer_contact_update_blocked_cross_tenant(self):
+        """PATCH /api/v1/customers/{id}/contacts/{cid}/ must 404 for cross-tenant contact."""
+        from customers.models import Customer, CustomerContact
+
+        customer_a = Customer.objects.create(
+            tenant=self.tenant_a,
+            name='Tenant A Org',
+            phone='9800000098',
+        )
+        contact_a = CustomerContact.objects.create(
+            tenant=self.tenant_a,
+            customer=customer_a,
+            name='Main Contact',
+            phone='9800000097',
+        )
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_b}')
+        response = client.patch(
+            f'/api/v1/customers/{customer_a.pk}/contacts/{contact_a.pk}/',
+            data={'name': 'Hacked'},
+            format='json',
+            HTTP_HOST='idor-b.bms.local',
+        )
+
+        self.assertIn(
+            response.status_code,
+            [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND],
+            'Tenant B must not be able to update a contact belonging to tenant A.',
+        )
+        contact_a.refresh_from_db()
+        self.assertEqual(contact_a.name, 'Main Contact')
+
+    def test_soft_delete_customer_service_rejects_cross_tenant(self):
+        """soft_delete_customer service must raise ValueError for cross-tenant instances."""
+        from customers.models import Customer
+        from customers.services import soft_delete_customer
+
+        customer_a = Customer.objects.create(
+            tenant=self.tenant_a,
+            name='Service Guard Test',
+            phone='9800000096',
+        )
+
+        with self.assertRaisesMessage(ValueError, 'Customer does not belong to this workspace.'):
+            soft_delete_customer(instance=customer_a, tenant=self.tenant_b)
+
+        # Must not be soft-deleted
+        customer_a.refresh_from_db()
+        self.assertFalse(customer_a.is_deleted)
+
+    # ── Department service / view IDOR ────────────────────────────────────────
+
+    def test_cannot_read_other_tenant_department(self):
+        """GET /api/v1/departments/{id}/ must 404 for a department from another tenant."""
+        from departments.models import Department
+
+        dept_a = Department.objects.create(
+            tenant=self.tenant_a,
+            name='Tenant A Dept',
+        )
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_b}')
+        response = client.get(
+            f'/api/v1/departments/{dept_a.pk}/',
+            HTTP_HOST='idor-b.bms.local',
+        )
+
+        self.assertIn(
+            response.status_code,
+            [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND],
+            'Tenant B must not be able to read a department from tenant A.',
+        )
+
+    def test_department_delete_blocked_cross_tenant(self):
+        """DELETE /api/v1/departments/{id}/ must 404 for a department from another tenant."""
+        from departments.models import Department
+
+        dept_a = Department.objects.create(
+            tenant=self.tenant_a,
+            name='Tenant A Dept Delete Test',
+        )
+
+        admin_b = _create_user('admin-dept-b@example.com')
+        _add_member(admin_b, self.tenant_b, role='admin')
+        token_b = _get_token(admin_b, self.tenant_b)
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {token_b}')
+        response = client.delete(
+            f'/api/v1/departments/{dept_a.pk}/',
+            HTTP_HOST='idor-b.bms.local',
+        )
+
+        self.assertIn(
+            response.status_code,
+            [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND],
+            'Tenant B must not be able to delete a department from tenant A.',
+        )
+        # Original record must still exist
+        self.assertTrue(Department.objects.filter(pk=dept_a.pk).exists())
+
+    def test_delete_department_service_rejects_cross_tenant(self):
+        """delete_department service must raise ValueError for cross-tenant instances."""
+        from departments.models import Department
+        from departments.services import delete_department
+
+        dept_a = Department.objects.create(
+            tenant=self.tenant_a,
+            name='Service Guard Dept',
+        )
+
+        with self.assertRaisesMessage(ValueError, 'Department does not belong to this workspace.'):
+            delete_department(instance=dept_a, tenant=self.tenant_b)
+
+        # Record must survive
+        self.assertTrue(Department.objects.filter(pk=dept_a.pk).exists())
+
+    # ── Ticket service / view IDOR ─────────────────────────────────────────
+
+    def test_cannot_read_other_tenant_ticket(self):
+        """GET /api/v1/tickets/{id}/ must 404 for a ticket belonging to another tenant."""
+        from tickets.models import Ticket
+
+        ticket_a = Ticket.objects.create(
+            tenant=self.tenant_a,
+            title='Tenant A secret ticket',
+            status=Ticket.STATUS_OPEN,
+            priority=Ticket.PRIORITY_MEDIUM,
+        )
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_b}')
+        response = client.get(
+            f'/api/v1/tickets/{ticket_a.pk}/',
+            HTTP_HOST='idor-b.bms.local',
+        )
+        self.assertIn(
+            response.status_code,
+            [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND],
+            'Tenant B must not be able to read a ticket from tenant A.',
+        )
+
+    def test_ticket_comment_create_blocked_cross_tenant(self):
+        """POST /api/v1/tickets/{ticket_pk}/comments/ must 404 for a cross-tenant ticket."""
+        from tickets.models import Ticket
+
+        ticket_a = Ticket.objects.create(
+            tenant=self.tenant_a,
+            title='Tenant A ticket for comment probe',
+            status=Ticket.STATUS_OPEN,
+            priority=Ticket.PRIORITY_LOW,
+        )
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_b}')
+        response = client.post(
+            f'/api/v1/tickets/{ticket_a.pk}/comments/',
+            data={'body': 'Injected comment'},
+            format='json',
+            HTTP_HOST='idor-b.bms.local',
+        )
+        self.assertIn(
+            response.status_code,
+            [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND],
+            'Tenant B must not be able to comment on a ticket from tenant A.',
+        )
+
+    def test_ticket_service_assign_rejects_cross_tenant_user(self):
+        """TicketService.assign() must raise ValidationError for a user not in the tenant."""
+        from tickets.models import Ticket
+        from tickets.services.ticket_service import TicketService
+        from core.exceptions import ValidationError as NexusValidationError
+
+        # ticket lives in tenant_b; user_a is only a member of tenant_a
+        user_a = _create_user('user_a_assign@example.com')
+        _add_member(user_a, self.tenant_a)
+
+        ticket_b = Ticket.objects.create(
+            tenant=self.tenant_b,
+            title='Tenant B ticket',
+            status=Ticket.STATUS_OPEN,
+            priority=Ticket.PRIORITY_MEDIUM,
+        )
+
+        service = TicketService(tenant=self.tenant_b, user=self.user_b)
+        with self.assertRaises(NexusValidationError):
+            service.assign(ticket_b, user_id=user_a.pk)
+
+    # ── Inventory view / service IDOR ──────────────────────────────────────
+
+    def _enable_inventory_module(self):
+        """Add the inventory module to the shared test plan and clear cache."""
+        from tenants.models import Module
+        inv_mod, _ = Module.objects.get_or_create(
+            key='inventory',
+            defaults={'name': 'Inventory', 'is_core': False},
+        )
+        self.plan.modules.add(inv_mod)
+        self.tenant_b.clear_module_cache()
+
+    def test_cannot_read_other_tenant_product(self):
+        """GET /api/v1/inventory/products/{id}/ must 404 for a product from another tenant."""
+        from inventory.models import Product
+
+        self._enable_inventory_module()
+
+        product_a = Product.objects.create(
+            tenant=self.tenant_a,
+            name='Tenant A Secret Product',
+            sku='SKU-SECRET-001',
+            unit_price='99.00',
+        )
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_b}')
+        response = client.get(
+            f'/api/v1/inventory/products/{product_a.pk}/',
+            HTTP_HOST='idor-b.bms.local',
+        )
+        self.assertIn(
+            response.status_code,
+            [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND],
+            'Tenant B must not be able to read a product from tenant A.',
+        )
+
+    def test_cannot_receive_cross_tenant_po(self):
+        """POST /api/v1/inventory/purchase-orders/{id}/receive/ must 404 for a PO from another tenant."""
+        from inventory.models import Product, Supplier, PurchaseOrder, PurchaseOrderItem
+
+        self._enable_inventory_module()
+
+        product_a = Product.objects.create(
+            tenant=self.tenant_a,
+            name='PO Probe Product',
+            sku='SKU-PO-PROBE',
+            unit_price='10.00',
+        )
+        supplier_a = Supplier.objects.create(
+            tenant=self.tenant_a,
+            name='Probe Supplier',
+        )
+        po_a = PurchaseOrder.objects.create(
+            tenant=self.tenant_a,
+            supplier=supplier_a,
+            status=PurchaseOrder.STATUS_SENT,
+        )
+        PurchaseOrderItem.objects.create(
+            tenant=self.tenant_a,
+            po=po_a,
+            product=product_a,
+            quantity_ordered=5,
+            quantity_received=0,
+            unit_cost='10.00',
+        )
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_b}')
+        response = client.post(
+            f'/api/v1/inventory/purchase-orders/{po_a.pk}/receive/',
+            data={'lines': [{'item_id': 999, 'quantity_received': 1}]},
+            format='json',
+            HTTP_HOST='idor-b.bms.local',
+        )
+        self.assertIn(
+            response.status_code,
+            [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND],
+            'Tenant B must not be able to receive a PO from tenant A.',
+        )
+
+    def test_service_receive_po_rejects_cross_tenant_item(self):
+        """receive_purchase_order() must raise ValidationError for an item not on the PO."""
+        from inventory.models import Product, Supplier, PurchaseOrder, PurchaseOrderItem
+        from inventory.services import receive_purchase_order
+        from core.exceptions import ValidationError as NexusValidationError
+
+        product_b = Product.objects.create(
+            tenant=self.tenant_b,
+            name='Service PO Probe',
+            sku='SKU-SVC-PO',
+            unit_price='5.00',
+        )
+        supplier_b = Supplier.objects.create(
+            tenant=self.tenant_b,
+            name='Service Supplier B',
+        )
+        po_b = PurchaseOrder.objects.create(
+            tenant=self.tenant_b,
+            supplier=supplier_b,
+            status=PurchaseOrder.STATUS_SENT,
+        )
+        PurchaseOrderItem.objects.create(
+            tenant=self.tenant_b,
+            po=po_b,
+            product=product_b,
+            quantity_ordered=10,
+            quantity_received=0,
+            unit_cost='5.00',
+        )
+
+        # Pass an item_id that does not belong to this PO → ValidationError
+        with self.assertRaises(NexusValidationError):
+            receive_purchase_order(
+                po=po_b,
+                lines=[{'item_id': 999999, 'quantity_received': 1}],
+                notes='',
+                user=self.user_b,
+            )
+
+    # ── Accounting view / service IDOR ─────────────────────────────────────
+
+    def _enable_accounting_module(self):
+        """Add the accounting module to the shared test plan and clear cache."""
+        from tenants.models import Module
+        acc_mod, _ = Module.objects.get_or_create(
+            key='accounting',
+            defaults={'name': 'Accounting', 'is_core': False},
+        )
+        self.plan.modules.add(acc_mod)
+        self.tenant_b.clear_module_cache()
+
+    def test_cannot_read_other_tenant_invoice(self):
+        """GET /api/v1/accounting/invoices/{id}/ must 404 for an invoice from another tenant."""
+        from accounting.models import Invoice
+
+        self._enable_accounting_module()
+
+        invoice_a = Invoice.objects.create(
+            tenant=self.tenant_a,
+            line_items=[],
+            subtotal='100.00',
+            vat_amount='13.00',
+            total='113.00',
+            status=Invoice.STATUS_DRAFT,
+        )
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_b}')
+        response = client.get(
+            f'/api/v1/accounting/invoices/{invoice_a.pk}/',
+            HTTP_HOST='idor-b.bms.local',
+        )
+        self.assertIn(
+            response.status_code,
+            [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND],
+            'Tenant B must not be able to read an invoice from tenant A.',
+        )
+
+    def test_payment_service_rejects_invoice_wrong_tenant(self):
+        """record_payment() must raise ValueError for an invoice from a different tenant."""
+        from decimal import Decimal
+        from accounting.models import Invoice
+        from accounting.services.payment_service import record_payment
+
+        invoice_a = Invoice.objects.create(
+            tenant=self.tenant_a,
+            line_items=[],
+            subtotal='200.00',
+            vat_amount='26.00',
+            total='226.00',
+            status=Invoice.STATUS_ISSUED,
+        )
+
+        with self.assertRaises(ValueError):
+            record_payment(
+                tenant=self.tenant_b,
+                created_by=self.user_b,
+                payment_type='incoming',
+                method='cash',
+                amount=Decimal('226.00'),
+                invoice=invoice_a,
+            )
+
+
+    def test_cannot_read_other_tenant_notification(self):
+        """Notification queryset must not expose records from another tenant."""
+        from notifications.models import Notification
+
+        user_a = _create_user('notif-user-a@example.com')
+        _add_member(user_a, self.tenant_a)
+        notif_a = Notification.objects.create(
+            tenant=self.tenant_a,
+            recipient=user_a,
+            notification_type=Notification.TYPE_GENERAL,
+            title='Private notification',
+        )
+
+        # Direct queryset check: tenant B filter must not return tenant A record
+        qs_b = Notification.objects.filter(tenant=self.tenant_b)
+        self.assertNotIn(
+            notif_a.pk,
+            qs_b.values_list('pk', flat=True),
+            'Notification from tenant A must not appear in tenant B queryset.',
+        )
+
+        # API-level check: tenant B user must not see tenant A notification
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_b}')
+        response = client.get(
+            '/api/v1/notifications/',
+            HTTP_HOST='idor-b.bms.local',
+        )
+        self.assertNotEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        if response.status_code == status.HTTP_200_OK:
+            ids_returned = [n['id'] for n in response.json().get('data', [])]
+            self.assertNotIn(
+                notif_a.pk,
+                ids_returned,
+                'Tenant A notification must not appear in tenant B response.',
+            )
+
+    def test_cannot_read_other_tenant_project(self):
+        """A user from tenant B cannot access a project created in tenant A."""
+        from projects.models import Project
+
+        project_a = Project.objects.create(
+            tenant=self.tenant_a,
+            name='Secret Project Alpha',
+        )
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_b}')
+        response = client.get(
+            f'/api/v1/projects/{project_a.pk}/',
+            HTTP_HOST='idor-b.bms.local',
+        )
+        self.assertIn(
+            response.status_code,
+            [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND],
+            'Tenant B must not be able to read a project from tenant A.',
+        )
+
+    def test_cannot_create_task_under_other_tenant_project(self):
+        """POST /api/v1/projects/{id}/tasks/ must return 404 for a cross-tenant project."""
+        from projects.models import Project
+
+        project_a = Project.objects.create(
+            tenant=self.tenant_a,
+            name='Tenant A Confidential Project',
+        )
+
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token_b}')
+        response = client.post(
+            f'/api/v1/projects/{project_a.pk}/tasks/',
+            data={'title': 'Injected Task', 'status': 'todo'},
+            format='json',
+            HTTP_HOST='idor-b.bms.local',
+        )
+        self.assertIn(
+            response.status_code,
+            [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND],
+            'Tenant B must not be able to create tasks under a tenant A project.',
+        )
+
 
 class SlugImmutabilityTest(TestCase):
     """Tenant slug cannot be changed via PATCH after creation."""

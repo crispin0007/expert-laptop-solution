@@ -80,6 +80,31 @@ def update_stock_level(sender, instance, created, **kwargs):
             defaults={'quantity_on_hand': on_hand},
         )
 
+    # ── Stock event hooks ────────────────────────────────────────────────────
+    if created:
+        try:
+            from core.events import EventBus
+            IN_TYPES_EB  = (StockMovement.MOVEMENT_IN, StockMovement.MOVEMENT_RETURN)
+            OUT_TYPES_EB = (StockMovement.MOVEMENT_OUT, StockMovement.MOVEMENT_RETURN_SUPPLIER)
+            if instance.movement_type in IN_TYPES_EB:
+                EventBus.publish('inventory.stock.added', {
+                    'id': instance.product_id,
+                    'tenant_id': instance.tenant_id,
+                    'quantity': instance.quantity,
+                    'reference_type': instance.reference_type,
+                    'reference_id': instance.reference_id,
+                }, tenant=instance.tenant)
+            elif instance.movement_type in OUT_TYPES_EB:
+                EventBus.publish('inventory.stock.out', {
+                    'id': instance.product_id,
+                    'tenant_id': instance.tenant_id,
+                    'quantity': instance.quantity,
+                    'reference_type': instance.reference_type,
+                    'reference_id': instance.reference_id,
+                }, tenant=instance.tenant)
+        except Exception:
+            pass
+
     # ── Low stock alert ──────────────────────────────────────────────────────
     product = instance.product
     if (
@@ -93,6 +118,16 @@ def update_stock_level(sender, instance, created, **kwargs):
             notify_low_stock(product, on_hand)
         except Exception:
             logger.exception("Low stock notification failed for product %s", product.pk)
+        try:
+            from core.events import EventBus
+            EventBus.publish('inventory.stock.low', {
+                'id': product.pk,
+                'tenant_id': instance.tenant_id,
+                'quantity_on_hand': on_hand,
+                'reorder_level': product.reorder_level,
+            }, tenant=instance.tenant)
+        except Exception:
+            pass
 
 
 @receiver(post_save, sender='tickets.TicketProduct')

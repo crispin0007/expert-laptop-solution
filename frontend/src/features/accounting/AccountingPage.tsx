@@ -28,6 +28,7 @@ import DateDisplay from '../../components/DateDisplay'
 import NepaliDatePicker from '../../components/NepaliDatePicker'
 import { adStringToBsDisplay, currentFiscalYear, fiscalYearAdParams, fiscalYearOf, fiscalYearDateRange } from '../../utils/nepaliDate'
 import { useFyStore } from '../../store/fyStore'
+import { CoinDetailDrawer } from './CoinsPage'
 
 // ─── Fiscal Year — reads/writes the global persistent store ───────────────
 function useFY() { return useFyStore() }
@@ -220,6 +221,8 @@ interface ApiPage<T> { results: T[]; count: number }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toPage<T = any>(raw: any): ApiPage<T> {
   if (Array.isArray(raw)) return { results: raw as T[], count: raw.length }
+  // Handle ApiResponse envelope: { success, data: [...], meta: ... }
+  if (Array.isArray(raw?.data)) return { results: raw.data as T[], count: raw.data.length }
   return { results: raw?.results ?? [], count: raw?.count ?? 0 }
 }
 
@@ -3076,15 +3079,20 @@ function PayslipsTab() {
   const [showSalaryForm, setShowSalaryForm] = useState(false)
   const [editSalary, setEditSalary] = useState<StaffSalaryProfile | null>(null)
   const [salaryForm, setSalaryForm] = useState({ staff: '', base_salary: '0', tds_rate: '10', bonus_default: '0', effective_from: new Date().toISOString().slice(0, 10), notes: '' })
+  const [selectedCoinId, setSelectedCoinId] = useState<number | null>(null)
 
   const { fyYear } = useFY()
   const { data: payslips, isLoading: psLoading } = useQuery<ApiPage<Payslip>>({
     queryKey: ['payslips', fyYear],
     queryFn: () => apiClient.get(addFyParam(ACCOUNTING.PAYSLIPS, fyYear)).then(r => toPage<Payslip>(r.data)),
   })
+  const [coinStatusFilter, setCoinStatusFilter] = useState<'pending' | 'approved' | ''>('pending')
   const { data: coins, isLoading: coinsLoading } = useQuery<ApiPage<CoinTx>>({
-    queryKey: ['coins'],
-    queryFn: () => apiClient.get(ACCOUNTING.COINS).then(r => toPage<CoinTx>(r.data)),
+    queryKey: ['coins', coinStatusFilter],
+    queryFn: () => {
+      const url = coinStatusFilter ? `${ACCOUNTING.COINS}?status=${coinStatusFilter}` : ACCOUNTING.COINS
+      return apiClient.get(url).then(r => toPage<CoinTx>(r.data))
+    },
   })
   // Staff list for the generate modal and salary form
   const { data: staffList = [] } = useQuery<{ id: number; full_name: string; display_name: string; email: string }[]>({
@@ -3367,6 +3375,19 @@ function PayslipsTab() {
 
       {subTab === 'coins' && (coinsLoading ? <Spinner /> : (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50">
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Coin Transactions</span>
+            <div className="flex gap-1">
+              {([['pending', 'Pending'], ['approved', 'Approved'], ['', 'All']] as const).map(([val, label]) => (
+                <button key={label} onClick={() => setCoinStatusFilter(val)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition ${
+                    coinStatusFilter === val ? 'bg-indigo-100 text-indigo-700' : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'
+                  }`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
@@ -3377,14 +3398,18 @@ function PayslipsTab() {
             </thead>
             <tbody className="divide-y divide-gray-50">
               {coins?.results?.map(c => (
-                <tr key={c.id} className="hover:bg-gray-50/50">
+                <tr
+                  key={c.id}
+                  className="hover:bg-amber-50/40 cursor-pointer transition-colors"
+                  onClick={() => setSelectedCoinId(c.id)}
+                >
                   <td className="px-4 py-3 text-gray-700">{c.staff_name}</td>
                   <td className="px-4 py-3 font-semibold text-indigo-700">{c.amount} coins</td>
                   <td className="px-4 py-3 text-gray-500 text-xs capitalize">{c.source_type.replace('_', ' ')}</td>
                   <td className="px-4 py-3 text-gray-500 text-xs max-w-xs truncate">{c.note || '—'}</td>
                   <td className="px-4 py-3"><Badge status={c.status} /></td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{c.approved_by_name ?? '—'}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                     {c.status === 'pending' && (
                       <div className="flex gap-1">
                         <button onClick={() => mutateApprove.mutate(c.id)} className="px-2 py-1 text-xs bg-green-50 text-green-700 rounded hover:bg-green-100">Approve</button>
@@ -3396,9 +3421,20 @@ function PayslipsTab() {
               ))}
             </tbody>
           </table>
-          {!coins?.results?.length && <EmptyState message="No coin transactions." />}
+          {!coins?.results?.length && <EmptyState message={`No ${coinStatusFilter || ''} coin transactions.`} />}
         </div>
       ))}
+
+      {/* Coin detail drawer */}
+      {selectedCoinId !== null && (
+        <CoinDetailDrawer
+          coinId={selectedCoinId}
+          onClose={() => setSelectedCoinId(null)}
+          onApprove={id => { mutateApprove.mutate(id); setSelectedCoinId(null) }}
+          onReject={id => { mutateReject.mutate(id); setSelectedCoinId(null) }}
+          canManage={can('can_approve_coins')}
+        />
+      )}
 
       {/* ── Staff Salaries Sub-tab ─────────────────────────────────────────── */}
       {subTab === 'salaries' && (

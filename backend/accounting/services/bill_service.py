@@ -68,6 +68,15 @@ class BillService:
             **totals,
         )
         logger.info("Bill created id=%s tenant=%s", bill.pk, self.tenant.slug)
+        try:
+            from core.events import EventBus
+            EventBus.publish('expense.created', {
+                'id': bill.pk,
+                'tenant_id': self.tenant.id,
+                'total': str(bill.total),
+            }, tenant=self.tenant)
+        except Exception:
+            pass
         return bill
 
     @transaction.atomic
@@ -101,6 +110,15 @@ class BillService:
         bill.status      = Bill.STATUS_APPROVED
         bill.approved_at = timezone.now()
         bill.save(update_fields=['status', 'approved_at'])
+        try:
+            from core.events import EventBus
+            EventBus.publish('expense.approved', {
+                'id': bill.pk,
+                'tenant_id': self.tenant.id,
+                'total': str(bill.total),
+            }, tenant=self.tenant)
+        except Exception:
+            pass
         return bill
 
     @transaction.atomic

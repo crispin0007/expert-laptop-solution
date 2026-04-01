@@ -90,6 +90,7 @@ class TicketSerializer(NepaliModelSerializer):
     team_member_names  = serializers.SerializerMethodField()
     vehicles           = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
     vehicle_names      = serializers.SerializerMethodField()
+    coin_preview       = serializers.SerializerMethodField()
 
     class Meta:
         model = Ticket
@@ -110,6 +111,7 @@ class TicketSerializer(NepaliModelSerializer):
             'sla_deadline', 'sla_breached', 'sla_breach_at',
             'resolved_at', 'closed_at',
             'service_charge',
+            'coin_preview',
             'is_deleted',
             'created_at', 'updated_at',
         )
@@ -145,6 +147,19 @@ class TicketSerializer(NepaliModelSerializer):
 
     def get_vehicle_names(self, obj):
         return [{'id': v.id, 'name': v.name, 'plate_number': v.plate_number} for v in obj.vehicles.all()]
+
+    def get_coin_preview(self, obj):
+        """
+        Pre-computed coin breakdown for the close-ticket modal.
+        Included in every ticket response so the UI never needs a second request.
+        Returns None when ticket_type is not set.
+        """
+        try:
+            from tickets.services.ticket_service import calculate_ticket_coins_from_ticket
+            _, breakdown = calculate_ticket_coins_from_ticket(obj)
+            return breakdown
+        except Exception:
+            return None
 
 
 # ── Ticket (create / update) ──────────────────────────────────────────────────

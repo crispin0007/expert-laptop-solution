@@ -7,4 +7,6 @@ class InventoryConfig(AppConfig):
     verbose_name = 'Inventory'
 
     def ready(self):
-        import inventory.signals  # noqa: F401
+        import inventory.signals   # noqa: F401
+        import inventory.module    # noqa: F401
+        import inventory.listeners  # noqa: F401

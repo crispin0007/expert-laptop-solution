@@ -13,4 +13,6 @@ class CMSConfig(AppConfig):
 
     def ready(self) -> None:
         # Register signals
-        import cms.signals  # noqa: F401
+        import cms.signals    # noqa: F401
+        import cms.module     # noqa: F401
+        import cms.listeners  # noqa: F401

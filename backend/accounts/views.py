@@ -364,6 +364,11 @@ class TenantMembershipViewSet(TenantMixin, viewsets.ModelViewSet):
             return qs.filter(tenant=tenant)
         return qs.none()
 
+    def perform_create(self, serializer):
+        """Inject tenant server-side — never accept it from request body."""
+        self.ensure_tenant()
+        serializer.save(tenant=self.tenant)
+
 
 # ─── Sprint 2: Staff management ──────────────────────────────────────────────
 
@@ -410,6 +415,15 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         cache.delete(f'staff_availability_{self.tenant.pk}')
+        try:
+            from core.events import EventBus
+            EventBus.publish('staff.created', {
+                'id': user.pk,
+                'tenant_id': self.tenant.pk,
+                'email': user.email,
+            }, tenant=self.tenant)
+        except Exception:
+            pass
         out = StaffSerializer(user, context={'tenant': self.tenant, 'request': request})
         return Response(out.data, status=status.HTTP_201_CREATED)
 
@@ -441,6 +455,15 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         cache.delete(f'staff_availability_{self.tenant.pk}')
+        try:
+            from core.events import EventBus
+            EventBus.publish('staff.updated', {
+                'id': membership.user_id,
+                'tenant_id': self.tenant.pk,
+                'change': 'profile_updated',
+            }, tenant=self.tenant)
+        except Exception:
+            pass
         out = StaffSerializer(membership.user, context={'tenant': self.tenant, 'request': request})
         return Response(out.data)
 
@@ -479,6 +502,15 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
         membership.is_active = False
         membership.save(update_fields=['is_active'])
         cache.delete(f'staff_availability_{self.tenant.pk}')
+        try:
+            from core.events import EventBus
+            EventBus.publish('staff.updated', {
+                'id': membership.user_id,
+                'tenant_id': self.tenant.pk,
+                'change': 'deactivated',
+            }, tenant=self.tenant)
+        except Exception:
+            pass
         return Response({'detail': 'Staff member deactivated.'})
 
     @action(detail=True, methods=['post'], url_path='reactivate')
@@ -496,6 +528,15 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
         membership.is_active = True
         membership.save(update_fields=['is_active'])
         cache.delete(f'staff_availability_{self.tenant.pk}')
+        try:
+            from core.events import EventBus
+            EventBus.publish('staff.updated', {
+                'id': membership.user_id,
+                'tenant_id': self.tenant.pk,
+                'change': 'reactivated',
+            }, tenant=self.tenant)
+        except Exception:
+            pass
         # Send reactivation email — try Celery first, fall back to synchronous send
         try:
             from notifications.tasks import task_send_staff_reactivated
@@ -604,6 +645,16 @@ class StaffViewSet(TenantMixin, viewsets.ViewSet):
 
         membership.save(update_fields=['role', 'custom_role'])
         cache.delete(f'staff_availability_{self.tenant.pk}')
+        try:
+            from core.events import EventBus
+            EventBus.publish('staff.updated', {
+                'id': membership.user_id,
+                'tenant_id': self.tenant.pk,
+                'change': 'role_assigned',
+                'role': membership.role,
+            }, tenant=self.tenant)
+        except Exception:
+            pass
 
         role_display = (
             membership.custom_role.name if membership.custom_role else membership.role

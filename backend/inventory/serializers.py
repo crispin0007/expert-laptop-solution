@@ -8,6 +8,18 @@ from .models import (
 )
 
 
+def _tenant_from_context(serializer) -> object:
+    request = serializer.context.get('request')
+    return getattr(request, 'tenant', None) if request is not None else None
+
+
+def _ensure_same_tenant(obj, tenant, label: str):
+    if obj is None or tenant is None:
+        return
+    if getattr(obj, 'tenant_id', None) != tenant.id:
+        raise serializers.ValidationError({label: f'{label.replace("_", " ").capitalize()} does not belong to this workspace.'})
+
+
 # ── Unit of Measure ───────────────────────────────────────────────────────────
 
 class UnitOfMeasureSerializer(serializers.ModelSerializer):
@@ -114,6 +126,14 @@ class ProductSerializer(serializers.ModelSerializer):
         if obj.has_variants:
             return obj.variants.filter(is_active=True).count()
         return 0
+
+    def validate(self, attrs):
+        tenant = _tenant_from_context(self)
+        category = attrs.get('category', getattr(self.instance, 'category', None))
+        uom = attrs.get('uom', getattr(self.instance, 'uom', None))
+        _ensure_same_tenant(category, tenant, 'category')
+        _ensure_same_tenant(uom, tenant, 'uom')
+        return attrs
 
 
 class StockLevelSerializer(serializers.ModelSerializer):
@@ -226,6 +246,17 @@ class PurchaseOrderWriteSerializer(serializers.ModelSerializer):
         model = PurchaseOrder
         fields = ('supplier', 'expected_delivery', 'notes', 'items')
 
+    def validate(self, attrs):
+        tenant = _tenant_from_context(self)
+        supplier = attrs.get('supplier', getattr(self.instance, 'supplier', None))
+        _ensure_same_tenant(supplier, tenant, 'supplier')
+
+        items = attrs.get('items', [])
+        if items:
+            for i, item in enumerate(items, start=1):
+                _ensure_same_tenant(item.get('product'), tenant, f'items[{i}].product')
+        return attrs
+
     def create(self, validated_data):
         items_data = validated_data.pop('items')
         po = PurchaseOrder.objects.create(**validated_data)
@@ -270,6 +301,12 @@ class ProductVariantSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         )
         read_only_fields = ('created_at', 'updated_at', 'stock_on_hand', 'effective_price')
+
+    def validate(self, attrs):
+        tenant = _tenant_from_context(self)
+        product = attrs.get('product', getattr(self.instance, 'product', None))
+        _ensure_same_tenant(product, tenant, 'product')
+        return attrs
 
 
 # ── Return to Supplier ────────────────────────────────────────────────────────
@@ -324,6 +361,19 @@ class ReturnOrderWriteSerializer(serializers.ModelSerializer):
         model = ReturnOrder
         fields = ('supplier', 'purchase_order', 'reason', 'notes', 'items')
 
+    def validate(self, attrs):
+        tenant = _tenant_from_context(self)
+        supplier = attrs.get('supplier', getattr(self.instance, 'supplier', None))
+        purchase_order = attrs.get('purchase_order', getattr(self.instance, 'purchase_order', None))
+        _ensure_same_tenant(supplier, tenant, 'supplier')
+        _ensure_same_tenant(purchase_order, tenant, 'purchase_order')
+
+        items = attrs.get('items', [])
+        if items:
+            for i, item in enumerate(items, start=1):
+                _ensure_same_tenant(item.get('product'), tenant, f'items[{i}].product')
+        return attrs
+
     def create(self, validated_data):
         items_data = validated_data.pop('items')
         ret = ReturnOrder.objects.create(**validated_data)
@@ -358,6 +408,14 @@ class SupplierProductSerializer(serializers.ModelSerializer):
             'is_preferred', 'notes', 'created_at', 'updated_at',
         )
         read_only_fields = ('created_at', 'updated_at', 'supplier_name', 'product_name', 'product_sku')
+
+    def validate(self, attrs):
+        tenant = _tenant_from_context(self)
+        supplier = attrs.get('supplier', getattr(self.instance, 'supplier', None))
+        product = attrs.get('product', getattr(self.instance, 'product', None))
+        _ensure_same_tenant(supplier, tenant, 'supplier')
+        _ensure_same_tenant(product, tenant, 'product')
+        return attrs
 
 
 # ── Stock Count ───────────────────────────────────────────────────────────────
@@ -415,3 +473,9 @@ class StockCountWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model  = StockCount
         fields = ('description', 'category')
+
+    def validate(self, attrs):
+        tenant = _tenant_from_context(self)
+        category = attrs.get('category', getattr(self.instance, 'category', None))
+        _ensure_same_tenant(category, tenant, 'category')
+        return attrs

@@ -1,6 +1,7 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import NotFound
 from django.db.models import Q, Count
 from core.mixins import TenantMixin
 from core.views import NexusViewSet
@@ -9,6 +10,7 @@ from core.pagination import NexusCursorPagination, NexusPageNumberPagination
 from core.permissions import make_role_permission, STAFF_ROLES, MANAGER_ROLES, ALL_ROLES
 from .models import Customer, CustomerContact
 from .serializers import CustomerSerializer, CustomerMinimalSerializer, CustomerContactSerializer
+from . import services as customer_service
 
 
 class CustomerViewSet(NexusViewSet):
@@ -151,16 +153,23 @@ class CustomerViewSet(NexusViewSet):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        instance = serializer.save(
+        instance = customer_service.create_customer(
             tenant=self.tenant,
-            created_by=self.request.user,
-            is_active=True,
+            created_by=request.user,
+            data=serializer.validated_data,
         )
         return ApiResponse.created(data=self.get_serializer(instance).data)
 
+    def perform_update(self, serializer):
+        customer_service.update_customer(
+            instance=serializer.instance,
+            tenant=self.tenant,
+            data=serializer.validated_data,
+        )
+
     def destroy(self, request, *args, **kwargs):
         customer = self.get_object()
-        customer.soft_delete()
+        customer_service.soft_delete_customer(instance=customer, tenant=self.tenant)
         return ApiResponse.no_content()
 
 
@@ -187,7 +196,16 @@ class CustomerContactViewSet(NexusViewSet):
         )
 
     def create(self, request, *args, **kwargs):
+        self.ensure_tenant()
+        customer = Customer.objects.filter(
+            id=self.kwargs['customer_pk'],
+            tenant=self.tenant,
+            is_deleted=False,
+        ).first()
+        if customer is None:
+            raise NotFound('Customer not found.')
+
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        instance = serializer.save(customer_id=self.kwargs['customer_pk'])
+        instance = serializer.save(customer=customer, tenant=self.tenant)
         return ApiResponse.created(data=self.get_serializer(instance).data)

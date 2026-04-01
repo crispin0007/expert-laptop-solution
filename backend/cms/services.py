@@ -245,8 +245,18 @@ def create_blog_post(site, data: dict, user) -> 'CMSBlogPost':
     """Create a blog post.  Body HTML is sanitized."""
     from .models import CMSBlogPost
     from django.utils.text import slugify
+    from accounts.models import TenantMembership
 
     body = _sanitize_html(data.get('body', ''))
+    author_id = data.get('author') or user.pk
+
+    if not TenantMembership.objects.filter(
+        tenant=site.tenant,
+        user_id=author_id,
+        is_active=True,
+    ).exists():
+        raise ValueError('Author must be an active member of this workspace.')
+
     post = CMSBlogPost(
         tenant=site.tenant,
         site=site,
@@ -255,7 +265,7 @@ def create_blog_post(site, data: dict, user) -> 'CMSBlogPost':
         excerpt=data.get('excerpt', ''),
         body=body,
         tags=data.get('tags', []),
-        author_id=data.get('author') or user.pk,
+        author_id=author_id,
         is_published=data.get('is_published', False),
         created_by=user,
     )
@@ -270,8 +280,18 @@ def create_blog_post(site, data: dict, user) -> 'CMSBlogPost':
 
 def update_blog_post(post, data: dict, user) -> 'CMSBlogPost':
     """Update a blog post.  Body HTML is sanitized."""
+    from accounts.models import TenantMembership
+
     if 'body' in data:
         data['body'] = _sanitize_html(data['body'])
+
+    if 'author' in data and data['author']:
+        if not TenantMembership.objects.filter(
+            tenant=post.tenant,
+            user_id=data['author'],
+            is_active=True,
+        ).exists():
+            raise ValueError('Author must be an active member of this workspace.')
 
     was_published = post.is_published
     for field in ('title', 'slug', 'excerpt', 'body', 'featured_image', 'author', 'tags'):

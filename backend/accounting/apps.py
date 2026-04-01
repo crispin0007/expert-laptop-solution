@@ -7,4 +7,6 @@ class AccountingConfig(AppConfig):
     verbose_name = 'Accounting'
 
     def ready(self):
-        import accounting.signals  # noqa: F401
+        import accounting.signals   # noqa: F401
+        import accounting.module    # noqa: F401
+        import accounting.listeners  # noqa: F401

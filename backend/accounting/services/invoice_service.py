@@ -207,6 +207,16 @@ class InvoiceService:
             **totals,
         )
         logger.info("Invoice created id=%s tenant=%s", instance.pk, self.tenant.slug)
+        try:
+            from core.events import EventBus
+            EventBus.publish('invoice.created', {
+                'id': instance.pk,
+                'tenant_id': self.tenant.id,
+                'customer_id': instance.customer_id,
+                'total': str(instance.total),
+            }, tenant=self.tenant)
+        except Exception:
+            pass
         return instance
 
     @transaction.atomic
@@ -272,6 +282,16 @@ class InvoiceService:
         invoice.status = Invoice.STATUS_ISSUED
         invoice.save(update_fields=['status', 'updated_at'])
         logger.info("Invoice issued id=%s tenant=%s", invoice.pk, self.tenant.slug)
+        try:
+            from core.events import EventBus
+            EventBus.publish('invoice.sent', {
+                'id': invoice.pk,
+                'tenant_id': self.tenant.id,
+                'customer_id': invoice.customer_id,
+                'total': str(invoice.total),
+            }, tenant=self.tenant)
+        except Exception:
+            pass
         return invoice
 
     @transaction.atomic
@@ -343,11 +363,27 @@ class InvoiceService:
         invoice.status = Invoice.STATUS_VOID
         invoice.save(update_fields=['status', 'updated_at'])
         logger.info("Invoice voided id=%s tenant=%s", invoice.pk, self.tenant.slug)
+        try:
+            from core.events import EventBus
+            EventBus.publish('invoice.cancelled', {
+                'id': invoice.pk,
+                'tenant_id': self.tenant.id,
+                'customer_id': invoice.customer_id,
+            }, tenant=self.tenant)
+        except Exception:
+            pass
         return invoice
 
     @transaction.atomic
-    def invoice_from_ticket(self, ticket_id: int, due_date=None, notes: str = ''):
-        """Generate a draft invoice from a ticket's service + products."""
+    def invoice_from_ticket(self, ticket_id: int, due_date=None, notes: str = '',
+                            service_charge=None):
+        """Generate a draft invoice from a ticket's service + products.
+
+        If service_charge is provided (not None), it is saved onto the ticket
+        before the invoice is built so the value is persisted and reflected
+        in the service line item.
+        """
+        from decimal import Decimal
         from core.exceptions import NotFoundError, ValidationError
         from tickets.models import Ticket
         from accounting.services.ticket_invoice_service import generate_ticket_invoice
@@ -356,6 +392,13 @@ class InvoiceService:
             ticket = Ticket.objects.get(pk=ticket_id, tenant=self.tenant)
         except Ticket.DoesNotExist:
             raise NotFoundError("Ticket not found.")
+
+        if service_charge is not None:
+            try:
+                ticket.service_charge = Decimal(str(service_charge))
+                ticket.save(update_fields=['service_charge', 'updated_at'])
+            except Exception:
+                raise ValidationError('service_charge must be a valid decimal number.')
 
         try:
             invoice = generate_ticket_invoice(

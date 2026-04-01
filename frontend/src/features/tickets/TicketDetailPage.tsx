@@ -49,6 +49,16 @@ interface TicketDetail {
   created_at: string
   vehicles: number[]
   vehicle_names: Array<{ id: number; name: string; plate_number: string }>
+  service_charge: string
+  coin_preview: {
+    coin_service_rate: string
+    coin_product_rate: string
+    service_value: string
+    product_value: string
+    service_coins: string
+    product_coins: string
+    total_coins: string
+  } | null
 }
 
 interface TicketAttachment {
@@ -648,7 +658,11 @@ const FINANCE_STATUS_CFG: Record<string, { label: string; cls: string }> = {
   rejected:  { label: 'Finance Rejected',   cls: 'bg-red-100 text-red-600'      },
 }
 
-function TicketInvoicePanel({ ticketId, ticketStatus }: { ticketId: number; ticketStatus: string }) {
+function TicketInvoicePanel({ ticketId, ticketStatus, serviceChargeOnTicket }: {
+  ticketId: number
+  ticketStatus: string
+  serviceChargeOnTicket: string
+}) {
   const qc = useQueryClient()
   const { can } = usePermissions()
 
@@ -663,9 +677,11 @@ function TicketInvoicePanel({ ticketId, ticketStatus }: { ticketId: number; tick
   // Finance review state
   const [finNotes, setFinNotes]   = useState('')
 
-  // Generate invoice state
-  const [serviceCharge, setServiceCharge] = useState('')
-  const [genNotes, setGenNotes]           = useState('')
+  // Generate invoice state — pre-populated from the ticket's stored value
+  const [serviceCharge, setServiceCharge] = useState(
+    () => (Number(serviceChargeOnTicket) > 0 ? serviceChargeOnTicket : '')
+  )
+  const [genNotes, setGenNotes] = useState('')
 
   // Fetch invoice for this ticket
   const { data: invoiceList = [], isLoading } = useQuery<TicketInvoice[]>({
@@ -726,18 +742,16 @@ function TicketInvoicePanel({ ticketId, ticketStatus }: { ticketId: number; tick
       toast.error(err?.response?.data?.detail || 'Finance review failed'),
   })
 
-  // Generate invoice mutation
+  // Generate invoice mutation — service_charge sent directly in body (no separate PATCH)
   const generateMutation = useMutation({
-    mutationFn: async () => {
-      // Patch service_charge onto ticket first (backend reads it when building invoice)
-      if (serviceCharge) {
-        await apiClient.patch(`/tickets/${ticketId}/`, { service_charge: serviceCharge })
-      }
-      return apiClient.post(ACCOUNTING.INVOICE_GENERATE_FROM_TICKET, {
+    mutationFn: () =>
+      apiClient.post(ACCOUNTING.INVOICE_GENERATE_FROM_TICKET, {
         ticket: ticketId,
+        // Always send service_charge so the backend can save+use it.
+        // If the field is blank, send 0 explicitly.
+        service_charge: serviceCharge !== '' ? serviceCharge : '0',
         notes: genNotes || undefined,
-      })
-    },
+      }),
     onSuccess: () => {
       toast.success('Invoice generated')
       setServiceCharge('')
@@ -767,7 +781,9 @@ function TicketInvoicePanel({ ticketId, ticketStatus }: { ticketId: number; tick
           <div className="space-y-3">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
-                Service Charge (optional)
+                Service Charge{Number(serviceChargeOnTicket) > 0 && (
+                  <span className="ml-1 text-gray-400 font-normal">(saved: NPR {Number(serviceChargeOnTicket).toLocaleString('en-IN')})</span>
+                )}
               </label>
               <input
                 type="number"
@@ -1487,25 +1503,34 @@ function TicketVehicleSection({
 
 // ── Close Ticket Modal ───────────────────────────────────────────────────────
 
-function CloseTicketModal({ ticketId, open, onClose, onDone }: {
+function CloseTicketModal({ ticketId, preview, open, onClose, onDone }: {
   ticketId: number
+  preview: TicketDetail['coin_preview']
   open: boolean
   onClose: () => void
   onDone: () => void
 }) {
-  const [coinAmount, setCoinAmount] = useState<number | ''>('')
+  // coin_amount: undefined = auto-calculate server-side, number = manager override
+  const [overrideAmount, setOverrideAmount] = useState<string>('')
+  const [showOverride, setShowOverride] = useState(false)
   const [reason, setReason] = useState('')
 
+  const autoCoins = preview ? Number(preview.total_coins) : null
+
   const mutation = useMutation({
-    mutationFn: () =>
-      apiClient.post(TICKETS.CLOSE(ticketId), {
-        coin_amount: Number(coinAmount),
-        reason,
-      }),
+    mutationFn: () => {
+      const body: Record<string, unknown> = { reason }
+      if (showOverride && overrideAmount !== '') {
+        body.coin_amount = Number(overrideAmount)
+      }
+      // If not overriding, omit coin_amount entirely — server auto-calculates
+      return apiClient.post(TICKETS.CLOSE(ticketId), body)
+    },
     onSuccess: () => {
-      toast.success('Ticket closed and coins awarded!')
-      setCoinAmount('')
+      toast.success('Ticket closed! Coin transaction queued for approval.')
+      setOverrideAmount('')
       setReason('')
+      setShowOverride(false)
       onDone()
     },
     onError: (err: unknown) => {
@@ -1518,23 +1543,58 @@ function CloseTicketModal({ ticketId, open, onClose, onDone }: {
     <Modal open={open} onClose={onClose} title="Close Ticket & Award Coins">
       <div className="space-y-4">
         <p className="text-sm text-gray-500">
-          Closing this ticket will mark it as <span className="font-medium text-gray-700">Closed</span> and
-          immediately credit the assigned staff member with the specified coins.
+          Closing this ticket marks it <span className="font-medium text-gray-700">Closed</span> and
+          queues a coin transaction for the assigned staff, pending admin approval.
         </p>
 
+        {/* Auto-calculated breakdown */}
+        {preview ? (
+          <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 space-y-2">
+            <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide">Auto-calculated coins</p>
+            <div className="space-y-1 text-sm">
+              <div className="flex justify-between text-gray-600">
+                <span>Service charge (NPR {Number(preview.service_value).toLocaleString('en-IN')} × {preview.coin_service_rate}%)</span>
+                <span className="font-medium text-amber-700">{preview.service_coins} coins</span>
+              </div>
+              <div className="flex justify-between text-gray-600">
+                <span>Product sales (NPR {Number(preview.product_value).toLocaleString('en-IN')} × {preview.coin_product_rate}%)</span>
+                <span className="font-medium text-amber-700">{preview.product_coins} coins</span>
+              </div>
+              <div className="flex justify-between font-semibold text-gray-800 border-t border-amber-200 pt-1.5 mt-1">
+                <span>Total</span>
+                <span className="text-amber-600 text-base">{preview.total_coins} coins</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm text-gray-400">
+            No ticket type set — coins will be 0 unless overridden below.
+          </div>
+        )}
+
+        {/* Manager override */}
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">
-            Coin Amount <span className="text-red-400">*</span>
-          </label>
-          <input
-            type="number"
-            min={0}
-            step={1}
-            value={coinAmount}
-            onChange={e => setCoinAmount(e.target.value === '' ? '' : Number(e.target.value))}
-            placeholder="e.g. 10"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
+          <button
+            type="button"
+            onClick={() => setShowOverride(v => !v)}
+            className="text-xs text-indigo-600 hover:underline"
+          >
+            {showOverride ? 'Use auto-calculated amount' : 'Override coin amount'}  
+          </button>
+          {showOverride && (
+            <div className="mt-2">
+              <input
+                type="number"
+                min={0}
+                step={0.01}
+                value={overrideAmount}
+                onChange={e => setOverrideAmount(e.target.value)}
+                placeholder={autoCoins !== null ? `Auto: ${autoCoins}` : '0'}
+                className="w-full border border-indigo-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <p className="text-xs text-gray-400 mt-1">Leave blank to revert to auto-calculated amount.</p>
+            </div>
+          )}
         </div>
 
         <div>
@@ -1542,8 +1602,8 @@ function CloseTicketModal({ ticketId, open, onClose, onDone }: {
           <textarea
             value={reason}
             onChange={e => setReason(e.target.value)}
-            rows={3}
-            placeholder="Optional note for the coin award…"
+            rows={2}
+            placeholder="Optional close note…"
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
         </div>
@@ -1551,11 +1611,11 @@ function CloseTicketModal({ ticketId, open, onClose, onDone }: {
         <div className="flex gap-3">
           <button
             onClick={() => mutation.mutate()}
-            disabled={coinAmount === '' || coinAmount < 0 || mutation.isPending}
+            disabled={mutation.isPending}
             className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-60 transition"
           >
             {mutation.isPending && <Loader2 size={13} className="animate-spin" />}
-            Close Ticket
+            Close & Queue {showOverride && overrideAmount !== '' ? `${overrideAmount} coins` : autoCoins !== null ? `${autoCoins} coins` : ''}
           </button>
           <button
             onClick={onClose}
@@ -1879,7 +1939,11 @@ export default function TicketDetailPage() {
           <TicketProductsPanel ticketId={ticketId} ticketStatus={ticket.status} />
 
           {/* Invoice & Payment */}
-          <TicketInvoicePanel ticketId={ticketId} ticketStatus={ticket.status} />
+          <TicketInvoicePanel
+            ticketId={ticketId}
+            ticketStatus={ticket.status}
+            serviceChargeOnTicket={ticket.service_charge ?? '0'}
+          />
 
           {/* Vehicles */}
           <TicketVehicleSection ticket={ticket} ticketId={ticketId} />
@@ -2154,6 +2218,7 @@ export default function TicketDetailPage() {
       />
       <CloseTicketModal
         ticketId={ticketId}
+        preview={ticket?.coin_preview ?? null}
         open={showCloseModal}
         onClose={() => setShowCloseModal(false)}
         onDone={() => { setShowCloseModal(false); refreshAll() }}

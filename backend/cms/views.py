@@ -425,7 +425,10 @@ class CMSBlogPostListCreateView(TenantMixin, APIView):
         site, _ = services.get_or_create_site(request.tenant)
         serializer = CmsBlogPostWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        post = services.create_blog_post(site, serializer.validated_data, request.user)
+        try:
+            post = services.create_blog_post(site, serializer.validated_data, request.user)
+        except ValueError as exc:
+            return ApiResponse.error(str(exc))
         return ApiResponse.created(data=CmsBlogPostDetailSerializer(post, context={'request': request}).data)
 
 
@@ -457,7 +460,10 @@ class CMSBlogPostDetailView(TenantMixin, APIView):
             return ApiResponse.not_found('Blog post')
         serializer = CmsBlogPostWriteSerializer(post, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        post = services.update_blog_post(post, serializer.validated_data, request.user)
+        try:
+            post = services.update_blog_post(post, serializer.validated_data, request.user)
+        except ValueError as exc:
+            return ApiResponse.error(str(exc))
         return ApiResponse.success(data=CmsBlogPostDetailSerializer(post, context={'request': request}).data)
 
     def patch(self, request, pk):

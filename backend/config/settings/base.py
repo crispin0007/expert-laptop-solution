@@ -73,6 +73,9 @@ INSTALLED_APPS = [
 
     # local — CMS
     'cms',
+
+    # local — Phase 3 stubs
+    'ai_assistant',
 ]
 
 # Use a custom user model provided by the accounts app

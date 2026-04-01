@@ -654,7 +654,7 @@ class CoinTransactionViewSet(NexusViewSet):
     required_module  = 'accounting'
 
     def get_permissions(self):
-        if self.action in ('list', 'retrieve'):
+        if self.action in ('list', 'retrieve', 'summary'):
             return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='accounting.view_coins')()]
         if self.action in ('approve', 'reject', 'pending', 'award', 'staff_history'):
             return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.manage_coins')()]
@@ -683,6 +683,12 @@ class CoinTransactionViewSet(NexusViewSet):
 
     # ── Custom actions ────────────────────────────────────────────────────────
 
+    def retrieve(self, request, pk=None):
+        """GET /coins/{id}/ — full detail with source ticket/task context."""
+        from accounting.serializers import CoinTransactionDetailSerializer
+        ct = self.get_object()
+        return ApiResponse.success(data=CoinTransactionDetailSerializer(ct).data)
+
     @action(detail=True, methods=['post'], url_path='approve')
     def approve(self, request, pk=None):
         """POST /coins/{id}/approve/ — approve a pending coin transaction."""
@@ -702,6 +708,46 @@ class CoinTransactionViewSet(NexusViewSet):
         """GET /coins/pending/ — list all pending coin transactions."""
         qs = self.get_service().pending()
         return ApiResponse.success(data=CoinTransactionSerializer(qs, many=True).data)
+
+    @action(detail=False, methods=['get'], url_path='summary')
+    def summary(self, request):
+        """GET /coins/summary/ — aggregate counts and totals for dashboard tabs.
+
+        Returns pending and approved totals + tenant coin-to-money rate so the
+        frontend can render tab badges and NPR value without extra requests.
+        Respects the same fiscal_year filter as the list endpoint.
+        """
+        from decimal import Decimal
+        from django.db.models import Sum
+        from accounting.models import CoinTransaction as CT
+
+        qs = CT.objects.for_tenant(request.tenant)
+
+        # Optional fiscal-year filter
+        if fy_raw := request.query_params.get('fiscal_year'):
+            try:
+                from core.nepali_date import fiscal_year_date_range, FiscalYear
+                fy = FiscalYear(bs_year=int(fy_raw))
+                fy_start, fy_end = fiscal_year_date_range(fy)
+                qs = qs.filter(created_at__date__range=(fy_start, fy_end))
+            except (ValueError, KeyError):
+                pass
+
+        pending_qs  = qs.filter(status=CT.STATUS_PENDING)
+        approved_qs = qs.filter(status=CT.STATUS_APPROVED)
+
+        pending_coins  = pending_qs.aggregate(t=Sum('amount'))['t']  or Decimal('0')
+        approved_coins = approved_qs.aggregate(t=Sum('amount'))['t'] or Decimal('0')
+        rate           = Decimal(str(request.tenant.coin_to_money_rate or '1'))
+
+        return ApiResponse.success(data={
+            'pending_count':       pending_qs.count(),
+            'pending_total_coins': str(pending_coins),
+            'approved_count':      approved_qs.count(),
+            'approved_total_coins': str(approved_coins),
+            'coin_to_money_rate':  str(rate),
+            'approved_total_npr':  str((approved_coins * rate).quantize(Decimal('0.01'))),
+        })
 
     @action(detail=False, methods=['post'], url_path='award')
     def award(self, request):
@@ -966,12 +1012,19 @@ class InvoiceViewSet(NexusViewSet):
 
     @action(detail=False, methods=['post'], url_path='generate-from-ticket')
     def generate_from_ticket(self, request):
-        """POST /invoices/generate-from-ticket/ — build invoice from ticket products."""
+        """POST /invoices/generate-from-ticket/ — build invoice from ticket products.
+
+        Optional body field:
+          service_charge: decimal — overrides / sets the ticket's service charge before
+                          generating. If omitted, the existing value on the ticket is used.
+        """
         ticket_id = request.data.get('ticket')
+        service_charge = request.data.get('service_charge')  # None if not sent
         inv = self.get_service().invoice_from_ticket(
             ticket_id=ticket_id,
             due_date=request.data.get('due_date'),
             notes=request.data.get('notes', ''),
+            service_charge=service_charge,
         )
         return ApiResponse.created(data=InvoiceSerializer(inv).data)
 

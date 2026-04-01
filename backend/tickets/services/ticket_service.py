@@ -38,6 +38,58 @@ def _user_display(user) -> str:
     return user.get_full_name() or user.email if user else "System"
 
 
+def calculate_ticket_coins_from_ticket(ticket):
+    """
+    Calculate the coin amount for a ticket WITHOUT requiring an invoice.
+    Uses ticket.service_charge + TicketProduct rows directly.
+
+    Rates are read from ticket.ticket_type — never hardcoded.
+
+    Returns:
+        (total_coins: Decimal, breakdown: dict | None)
+
+    The breakdown dict contains all figures needed for the note and the
+    frontend preview:
+        coin_service_rate, coin_product_rate,
+        service_value, product_value,
+        service_coins, product_coins, total_coins
+
+    Returns (Decimal('0'), None) when no ticket_type is set.
+    """
+    from tickets.models import TicketProduct
+
+    ticket_type = ticket.ticket_type
+    if not ticket_type:
+        return Decimal('0'), None
+
+    service_rate = Decimal(str(ticket_type.coin_service_rate)) / Decimal('100')
+    product_rate = Decimal(str(ticket_type.coin_product_rate)) / Decimal('100')
+
+    service_value = Decimal(str(ticket.service_charge or '0'))
+
+    product_value = Decimal('0')
+    for tp in TicketProduct.objects.filter(ticket=ticket):
+        qty        = Decimal(str(tp.quantity))
+        unit_price = Decimal(str(tp.unit_price))
+        pct_disc   = Decimal(str(tp.discount or '0')) / Decimal('100')
+        product_value += max(qty * unit_price * (1 - pct_disc), Decimal('0'))
+
+    service_coins = (service_value * service_rate).quantize(Decimal('0.01'))
+    product_coins = (product_value * product_rate).quantize(Decimal('0.01'))
+    total_coins   = service_coins + product_coins
+
+    breakdown = {
+        'coin_service_rate': str(ticket_type.coin_service_rate),
+        'coin_product_rate': str(ticket_type.coin_product_rate),
+        'service_value':     str(service_value),
+        'product_value':     str(product_value),
+        'service_coins':     str(service_coins),
+        'product_coins':     str(product_coins),
+        'total_coins':       str(total_coins),
+    }
+    return total_coins, breakdown
+
+
 class TicketService:
     """All business logic for Ticket lifecycle."""
 
@@ -186,6 +238,19 @@ class TicketService:
             ticket.vehicles.set(vehicles)
 
         logger.info("Ticket created id=%s tenant=%s", ticket.pk, self.tenant.slug)
+
+        try:
+            from core.events import EventBus
+            EventBus.publish('ticket.created', {
+                'id': ticket.pk,
+                'tenant_id': self.tenant.pk,
+                'customer_id': ticket.customer_id,
+                'assigned_to_id': ticket.assigned_to_id,
+                'priority': ticket.priority,
+            }, tenant=self.tenant)
+        except Exception:
+            pass
+
         return ticket
 
     @transaction.atomic
@@ -272,6 +337,16 @@ class TicketService:
                     'to': assignee.pk,
                 },
             )
+
+            try:
+                from core.events import EventBus
+                EventBus.publish('ticket.assigned', {
+                    'id': ticket.pk,
+                    'tenant_id': ticket.tenant_id,
+                    'assigned_to_id': assignee.pk,
+                }, tenant=ticket.tenant)
+            except Exception:
+                pass
 
             # Email notification — async preferred, sync fallback
             try:
@@ -448,14 +523,37 @@ class TicketService:
             metadata={'from': old_status, 'to': new_status, 'reason': reason},
         )
 
+        try:
+            from core.events import EventBus
+            event_name = (
+                'ticket.resolved' if new_status == Ticket.STATUS_RESOLVED
+                else 'ticket.status.changed'
+            )
+            EventBus.publish(event_name, {
+                'id': ticket.pk,
+                'tenant_id': ticket.tenant_id,
+                'old_status': old_status,
+                'new_status': new_status,
+            }, tenant=ticket.tenant)
+        except Exception:
+            pass
+
         return ticket
 
     @transaction.atomic
-    def close_ticket(self, ticket, coin_amount, reason: str = '', actor=None):
+    def close_ticket(self, ticket, coin_amount=None, reason: str = '', actor=None):
         """
         Close a resolved ticket and award coins to the assigned staff member.
 
-        Validates ticket state and coin_amount.
+        coin_amount:
+          - None (default) → auto-calculated from ticket type rates
+            (coin_service_rate % of service_charge + coin_product_rate % of products)
+          - 0              → explicitly no coins (e.g. free service override)
+          - positive Decimal/int/str → use provided value (manager override)
+
+        Idempotent: if a CoinTransaction already exists for this ticket it is
+        returned as-is without creating a duplicate.
+
         Returns (updated Ticket, CoinTransaction | None).
         """
         from accounting.models import CoinTransaction
@@ -471,12 +569,18 @@ class TicketService:
                 f'Current status: {ticket.status}'
             )
 
-        try:
-            coin_amount = Decimal(str(coin_amount))
-            if coin_amount < 0:
-                raise ValueError
-        except (ValueError, TypeError):
-            raise ValidationError('coin_amount must be a non-negative number.')
+        # ── Coin amount resolution ─────────────────────────────────────────
+        if coin_amount is None:
+            # Auto-calculate from ticket type rates
+            coin_amount, breakdown = calculate_ticket_coins_from_ticket(ticket)
+        else:
+            try:
+                coin_amount = Decimal(str(coin_amount))
+                if coin_amount < 0:
+                    raise ValueError
+            except (ValueError, TypeError):
+                raise ValidationError('coin_amount must be a non-negative number.')
+            breakdown = None  # manually provided — no breakdown
 
         now = timezone.now()
         ticket.status    = Ticket.STATUS_CLOSED
@@ -498,41 +602,77 @@ class TicketService:
                 'to': Ticket.STATUS_CLOSED,
                 'reason': reason,
                 'coin_amount': str(coin_amount),
+                'breakdown': breakdown,
             },
         )
 
+        # ── Idempotent coin transaction ────────────────────────────────────
         coin_txn = None
-        if coin_amount > 0 and ticket.assigned_to_id:
-            coin_txn = CoinTransaction.objects.create(
+        if ticket.assigned_to_id:
+            existing = CoinTransaction.objects.filter(
                 tenant=ticket.tenant,
-                created_by=actor,
-                staff=ticket.assigned_to,
-                amount=coin_amount,
                 source_type=CoinTransaction.SOURCE_TICKET,
                 source_id=ticket.pk,
-                status=CoinTransaction.STATUS_APPROVED,
-                approved_by=actor,
-                note=(
-                    f"Awarded on ticket close by {_user_display(actor)}. {reason}"
-                ).strip(),
-            )
-            TicketTimeline.objects.create(
-                tenant=ticket.tenant,
-                ticket=ticket,
-                event_type=TicketTimeline.EVENT_STATUS_CHANGE,
-                description=(
-                    f"{coin_amount} coin(s) awarded to "
-                    f"{_user_display(ticket.assigned_to)}."
-                ),
-                actor=actor,
-                created_by=actor,
-                metadata={
-                    'coin_amount': str(coin_amount),
-                    'staff_id': ticket.assigned_to_id,
-                },
-            )
+            ).first()
+            if existing:
+                # Already exists (e.g. finance approved beforehand) — return it
+                coin_txn = existing
+                logger.info(
+                    "Ticket %s already has CoinTransaction %s — skipping duplicate",
+                    ticket.pk, existing.pk,
+                )
+            elif coin_amount > 0:
+                note_parts = [f"Auto-calculated: {coin_amount} coins for {ticket.ticket_number}."]
+                if breakdown:
+                    note_parts.append(
+                        f"Service: {breakdown['service_coins']} "
+                        f"(NPR {breakdown['service_value']} × {breakdown['coin_service_rate']}%). "
+                        f"Products: {breakdown['product_coins']} "
+                        f"(NPR {breakdown['product_value']} × {breakdown['coin_product_rate']}%)."
+                    )
+                if reason:
+                    note_parts.append(reason)
+                coin_txn = CoinTransaction.objects.create(
+                    tenant=ticket.tenant,
+                    created_by=actor,
+                    staff=ticket.assigned_to,
+                    amount=coin_amount,
+                    source_type=CoinTransaction.SOURCE_TICKET,
+                    source_id=ticket.pk,
+                    status=CoinTransaction.STATUS_PENDING,
+                    note=' '.join(note_parts).strip(),
+                )
+                TicketTimeline.objects.create(
+                    tenant=ticket.tenant,
+                    ticket=ticket,
+                    event_type=TicketTimeline.EVENT_STATUS_CHANGE,
+                    description=(
+                        f"{coin_amount} coin(s) queued for "
+                        f"{_user_display(ticket.assigned_to)}."
+                    ),
+                    actor=actor,
+                    created_by=actor,
+                    metadata={
+                        'coin_amount': str(coin_amount),
+                        'staff_id': ticket.assigned_to_id,
+                        'breakdown': breakdown,
+                    },
+                )
 
         logger.info(
-            "Ticket %s closed by %s. coins=%s", ticket.pk, actor, coin_amount
+            "Ticket %s closed by %s. coins=%s breakdown=%s",
+            ticket.pk, actor, coin_amount, breakdown,
         )
+
+        try:
+            from core.events import EventBus
+            EventBus.publish('ticket.closed', {
+                'id': ticket.pk,
+                'tenant_id': ticket.tenant_id,
+                'assigned_to_id': ticket.assigned_to_id,
+                'coin_amount': str(coin_amount),
+            }, tenant=ticket.tenant)
+        except Exception:
+            pass
+
         return ticket, coin_txn

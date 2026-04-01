@@ -224,6 +224,18 @@ class PayslipService:
             "Payslip %s (created=%s) for staff=%s period=%s–%s tenant=%s",
             payslip.pk, created, staff_id, ps, pe, self.tenant.slug,
         )
+        try:
+            from core.events import EventBus
+            EventBus.publish('payroll.payslip.generated', {
+                'id': payslip.pk,
+                'tenant_id': self.tenant.id,
+                'staff_id': staff_id,
+                'net_pay': str(payslip.net_pay),
+                'period_start': str(ps),
+                'period_end': str(pe),
+            }, tenant=self.tenant)
+        except Exception:
+            pass
         return payslip, created
 
     # ── State transitions ─────────────────────────────────────────────────────
@@ -291,4 +303,14 @@ class PayslipService:
         payslip.save(update_fields=['status', 'paid_at', 'payment_method', 'bank_account'])
 
         logger.info("Payslip %s marked paid. payment=%s", payslip.pk, payment and payment.pk)
+        try:
+            from core.events import EventBus
+            EventBus.publish('payroll.processed', {
+                'id': payslip.pk,
+                'tenant_id': self.tenant.id,
+                'staff_id': payslip.staff_id,
+                'net_pay': str(payslip.net_pay),
+            }, tenant=self.tenant)
+        except Exception:
+            pass
         return payslip, payment
