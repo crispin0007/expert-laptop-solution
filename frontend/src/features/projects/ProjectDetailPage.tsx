@@ -1357,9 +1357,11 @@ export default function ProjectDetailPage() {
                       className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
                       <option value="">Select member…</option>
-                      {staffList.map(s => (
-                        <option key={s.id} value={s.id}>{s.full_name || s.email}</option>
-                      ))}
+                      {staffList
+                        .filter(s => (project?.team_members ?? []).includes(s.id))
+                        .map(s => (
+                          <option key={s.id} value={s.id}>{s.full_name || s.email}</option>
+                        ))}
                     </select>
                   </div>
                   <div>

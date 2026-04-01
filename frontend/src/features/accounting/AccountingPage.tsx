@@ -9,7 +9,7 @@ import { useState, useCallback, useRef, useEffect, Fragment } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from '../../api/client'
-import { ACCOUNTING, STAFF } from '../../api/endpoints'
+import { ACCOUNTING, INVENTORY, STAFF } from '../../api/endpoints'
 import toast from 'react-hot-toast'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { useAuthStore } from '../../store/authStore'
@@ -410,8 +410,10 @@ function DashboardTab() {
 
 // ─── Invoice Create Modal ──────────────────────────────────────────────────
 
-interface LineItemDraft { description: string; qty: string; unit_price: string; discount: string; line_type: 'service' | 'product' }
+interface LineItemDraft { description: string; qty: string; unit_price: string; discount: string; line_type: 'service' | 'product'; product_id?: number }
 const emptyLine = (): LineItemDraft => ({ description: '', qty: '1', unit_price: '', discount: '0', line_type: 'service' })
+
+interface InventoryProduct { id: number; name: string; unit_price: string; sku: string }
 
 function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
@@ -436,8 +438,17 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
       toast.error(e?.response?.data?.detail ?? 'Failed to create invoice'),
   })
 
-  function setLine<K extends keyof LineItemDraft>(idx: number, key: K, val: string) {
+  function setLine<K extends keyof LineItemDraft>(idx: number, key: K, val: string | number | undefined) {
     setLines(ls => ls.map((l, i) => i === idx ? { ...l, [key]: val } : l))
+  }
+
+  function selectProduct(lineIdx: number, productId: number) {
+    const p = products.find(x => x.id === productId)
+    if (!p) return
+    setLines(ls => ls.map((l, i) => i === lineIdx
+      ? { ...l, product_id: p.id, description: p.name, unit_price: p.unit_price }
+      : l
+    ))
   }
 
   function submit(e: React.FormEvent) {
@@ -503,11 +514,33 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
                 {lines.map((l, i) => (
                   <tr key={i}>
                     <td className="px-2 py-1.5">
-                      <input value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
-                        placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" required />
+                      {l.line_type === 'product' ? (
+                        <select
+                          value={l.product_id ?? ''}
+                          onChange={e => e.target.value
+                            ? selectProduct(i, Number(e.target.value))
+                            : setLine(i, 'product_id', undefined)
+                          }
+                          className="w-full border-0 outline-none text-xs bg-transparent"
+                        >
+                          <option value="">— Select product —</option>
+                          {products.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}{p.sku ? ` (${p.sku})` : ''}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
+                          placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" required />
+                      )}
                     </td>
                     <td className="px-2 py-1.5">
-                      <select value={l.line_type} onChange={e => setLine(i, 'line_type', e.target.value as 'service' | 'product')}
+                      <select value={l.line_type} onChange={e => {
+                        const t = e.target.value as 'service' | 'product'
+                        setLines(ls => ls.map((ln, j) => j === i
+                          ? { ...ln, line_type: t, product_id: undefined, description: '', unit_price: '' }
+                          : ln
+                        ))
+                      }}
                         className="w-full border-0 outline-none text-xs bg-transparent">
                         <option value="service">Service</option>
                         <option value="product">Product</option>
