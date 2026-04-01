@@ -5,14 +5,15 @@ import { useAuthStore } from '../../store/authStore'
 import {
   Ticket as TicketIcon, Plus, Search, Filter, AlertCircle,
   Clock, CheckCircle2, CircleDot, Settings2,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, X, History, User,
 } from 'lucide-react'
 import apiClient from '../../api/client'
-import { TICKETS } from '../../api/endpoints'
+import { TICKETS, STAFF } from '../../api/endpoints'
 import CreateTicketWizard from './CreateTicketWizard'
 import { usePermissions } from '../../hooks/usePermissions'
 import DateDisplay from '../../components/DateDisplay'
 import { useFyStore } from '../../store/fyStore'
+import AvailabilityBadge from '../../components/AvailabilityBadge'
 
 const PAGE_SIZE = 25
 
@@ -67,9 +68,273 @@ const PRIORITY_FILTERS = ['all', 'critical', 'high', 'medium', 'low'] as const
 type StatusFilter = (typeof STATUS_FILTERS)[number]
 type PriorityFilter = (typeof PRIORITY_FILTERS)[number]
 
+interface StaffAvail {
+  id: number
+  full_name: string
+  email: string
+  is_available: boolean
+  open_tickets: number
+  active_tasks: number
+}
+
+// ── Staff Filter Panel ────────────────────────────────────────────────────────
+
+function StaffFilterPanel({
+  availability, staffFilter, onSelect, onHistory,
+}: Readonly<{
+  availability: StaffAvail[]
+  staffFilter: number | null
+  onSelect: (id: number | null) => void
+  onHistory: (s: StaffAvail) => void
+}>) {
+  const [staffSearch, setStaffSearch] = useState('')
+  const [open, setOpen] = useState(false)
+
+  const selected = staffFilter ? availability.find(s => s.id === staffFilter) : null
+
+  let clearBtn: React.ReactNode = null
+  if (selected) {
+    clearBtn = (
+      <button type="button" onClick={() => { onSelect(null); setStaffSearch(''); setOpen(false) }}
+        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-indigo-400 hover:text-indigo-600">
+        <X size={13} />
+      </button>
+    )
+  } else if (staffSearch) {
+    clearBtn = (
+      <button type="button" onClick={() => { setStaffSearch(''); setOpen(false) }}
+        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+        <X size={13} />
+      </button>
+    )
+  }
+
+  const filtered = availability.filter(s =>
+    s.full_name.toLowerCase().includes(staffSearch.toLowerCase()) ||
+    s.email.toLowerCase().includes(staffSearch.toLowerCase())
+  )
+
+  return (
+    <div className="relative">
+      {/* Trigger button */}
+      <div className="flex items-center gap-2">
+        <div className="relative">
+          <User size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Filter by staff…"
+            value={selected ? selected.full_name : staffSearch}
+            readOnly={!!selected}
+            onChange={e => { setStaffSearch(e.target.value); setOpen(true) }}
+            onFocus={() => { if (!selected) setOpen(true) }}
+            onClick={() => { if (selected) { onSelect(null); setStaffSearch('') } else setOpen(true) }}
+            className={`pl-8 pr-8 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 w-52 cursor-pointer ${
+              selected ? 'border-indigo-400 bg-indigo-50 text-indigo-700 font-medium' : 'border-gray-300 bg-white'
+            }`}
+          />
+          {clearBtn}
+        </div>
+
+        {/* Selected staff busy badge inline */}
+        {selected && (
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-700">
+            <AvailabilityBadge isAvailable={selected.is_available} openTickets={selected.open_tickets} activeTasks={selected.active_tasks} />
+            <span className="text-gray-500">{selected.open_tickets} open tickets</span>
+            <button onClick={() => onHistory(selected)} title="View all ticket history"
+              className="text-indigo-400 hover:text-indigo-600 transition ml-1">
+              <History size={13} />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Dropdown */}
+      {open && !selected && (
+        <>
+          <button type="button" className="fixed inset-0 z-10 cursor-default" onClick={() => setOpen(false)} aria-label="Close staff filter" />
+          <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-gray-200 rounded-xl shadow-lg z-20 overflow-hidden">
+            <div className="p-2 border-b border-gray-100">
+              <div className="relative">
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="Search staff…"
+                  value={staffSearch}
+                  onChange={e => setStaffSearch(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+            </div>
+            <div className="max-h-64 overflow-y-auto divide-y divide-gray-50">
+              {filtered.length === 0 ? (
+                <p className="px-4 py-3 text-sm text-gray-400 text-center">No staff found</p>
+              ) : (
+                filtered.map(s => (
+                  <button type="button" key={s.id}
+                    className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-indigo-50 cursor-pointer transition group text-left"
+                    onClick={() => { onSelect(s.id); setOpen(false); setStaffSearch('') }}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-semibold flex-shrink-0">
+                        {s.full_name.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-800 truncate">{s.full_name}</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <AvailabilityBadge isAvailable={s.is_available} openTickets={s.open_tickets} activeTasks={s.active_tasks} />
+                          <span className="text-xs text-gray-400">{s.open_tickets} open</span>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={e => { e.stopPropagation(); onHistory(s); setOpen(false) }}
+                      title="View ticket history"
+                      className="text-gray-300 group-hover:text-indigo-400 hover:text-indigo-600 transition flex-shrink-0 ml-2"
+                    >
+                      <History size={14} />
+                    </button>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ── Staff Ticket History Drawer ───────────────────────────────────────────────
+
+function StaffTicketHistoryDrawer({ staff, onClose }: Readonly<{ staff: StaffAvail; onClose: () => void }>) {
+  const [page, setPage] = useState(1)
+  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const params: Record<string, string | number> = { assigned_to: staff.id, page, page_size: 20, ordering: '-created_at' }
+  if (statusFilter !== 'all') params.status = statusFilter
+
+  const { data: response, isLoading } = useQuery({
+    queryKey: ['staff-ticket-history', staff.id, page, statusFilter],
+    queryFn: () => apiClient.get(TICKETS.LIST, { params }).then(r => r.data),
+  })
+
+  const tickets: Ticket[] = useMemo(() => {
+    if (!response) return []
+    if (Array.isArray(response)) return response
+    return (Array.isArray(response.data) ? response.data : null) ?? response.results ?? []
+  }, [response])
+
+  const totalCount: number = response?.meta?.pagination?.total ?? response?.count ?? tickets.length
+  const totalPages = Math.max(1, Math.ceil(totalCount / 20))
+
+  const initials = staff.full_name.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()
+
+  return (
+    <>
+      <button type="button" className="fixed inset-0 bg-black/20 z-40 cursor-default" onClick={onClose} aria-label="Close drawer" />
+      <div className="fixed right-0 top-0 h-full w-full max-w-lg bg-white shadow-2xl z-50 flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-sm font-semibold">
+              {initials}
+            </div>
+            <div>
+              <p className="font-semibold text-gray-800 text-sm">{staff.full_name}</p>
+              <div className="flex items-center gap-2 mt-0.5">
+                <AvailabilityBadge isAvailable={staff.is_available} openTickets={staff.open_tickets} activeTasks={staff.active_tasks} />
+                <span className="text-xs text-gray-400">{totalCount} ticket{totalCount === 1 ? '' : 's'} total</span>
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition p-1 rounded-lg">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Status filter */}
+        <div className="flex gap-1 px-5 py-3 border-b border-gray-100 flex-wrap">
+          {(['all', 'open', 'in_progress', 'resolved', 'closed'] as const).map(s => (
+            <button key={s} onClick={() => { setStatusFilter(s); setPage(1) }}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition ${
+                statusFilter === s ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              }`}>
+              {s === 'all' ? 'All' : STATUS_LABELS[s] ?? s}
+            </button>
+          ))}
+        </div>
+
+        {/* Ticket list */}
+        <div className="flex-1 overflow-y-auto">
+          {(() => {
+            if (isLoading) return (
+              <div className="flex items-center justify-center py-12 text-gray-400 text-sm gap-2">
+                <Clock size={14} className="animate-spin" /> Loading…
+              </div>
+            )
+            if (tickets.length === 0) return (
+              <div className="py-12 text-center">
+                <TicketIcon size={32} className="text-gray-200 mx-auto mb-2" />
+                <p className="text-sm text-gray-400">No {statusFilter === 'all' ? '' : statusFilter} tickets assigned</p>
+              </div>
+            )
+            return (
+            <div className="divide-y divide-gray-100">
+              {tickets.map(ticket => (
+                <a key={ticket.id} href={`/tickets/${ticket.id}`} target="_blank" rel="noreferrer"
+                  className="flex items-start gap-3 px-5 py-3.5 hover:bg-gray-50 transition group">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-xs text-indigo-500 font-medium">{ticket.ticket_number}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[ticket.status] ?? 'bg-gray-100 text-gray-500'}`}>
+                        {STATUS_LABELS[ticket.status] ?? ticket.status}
+                      </span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${PRIORITY_COLORS[ticket.priority] ?? ''}`}>
+                        {ticket.priority}
+                      </span>
+                      {ticket.sla_breached && (
+                        <span className="flex items-center gap-0.5 text-xs text-red-600 font-medium">
+                          <AlertCircle size={11} /> SLA
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-gray-800 mt-1 font-medium line-clamp-1">{ticket.title}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {ticket.customer_name || '—'} · <DateDisplay adDate={ticket.created_at} compact />
+                    </p>
+                  </div>
+                  <ChevronLeft size={14} className="text-gray-300 group-hover:text-indigo-400 rotate-180 flex-shrink-0 mt-1 transition" />
+                </a>
+              ))}
+            </div>
+          )})()
+          }
+        </div>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 bg-gray-50">
+            <span className="text-xs text-gray-400">Page {page} of {totalPages}</span>
+            <div className="flex gap-1">
+              <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+                className="p-1.5 rounded border border-gray-200 text-gray-500 hover:bg-white disabled:opacity-40">
+                <ChevronLeft size={13} />
+              </button>
+              <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+                className="p-1.5 rounded border border-gray-200 text-gray-500 hover:bg-white disabled:opacity-40">
+                <ChevronRight size={13} />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
 
 
-function SLABadge({ breached, deadline }: { breached: boolean; deadline: string | null }) {
+
+function SLABadge({ breached, deadline }: Readonly<{ breached: boolean; deadline: string | null }>) {
   if (!deadline) return null
   if (breached) {
     return (
@@ -105,6 +370,8 @@ export default function TicketListPage() {
     (urlParams.get('status') as StatusFilter) ?? 'all'
   )
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all')
+  const [staffFilter, setStaffFilter] = useState<number | null>(null)
+  const [historyStaff, setHistoryStaff] = useState<StaffAvail | null>(null)
   const assignedToMe  = urlParams.get('assigned') === 'me'
   const slaBreached   = urlParams.get('sla_breached') === 'true'
   const deptFilter    = urlParams.get('department') ?? null
@@ -113,6 +380,17 @@ export default function TicketListPage() {
 
   // Reset to page 1 whenever filters change
   const resetPage = () => setPage(1)
+
+  // Staff availability — manager/admin only
+  const { data: availability = [] } = useQuery<StaffAvail[]>({
+    queryKey: ['staff', 'availability'],
+    queryFn: () => apiClient.get(STAFF.AVAILABILITY).then(r => {
+      const d = r.data
+      return Array.isArray(d) ? d : d.data ?? d.results ?? []
+    }),
+    enabled: isManager,
+    staleTime: 60_000,
+  })
 
   const queryParams = useMemo(() => {
     const p: Record<string, string | number> = {
@@ -125,6 +403,7 @@ export default function TicketListPage() {
     if (priorityFilter !== 'all')         p.priority      = priorityFilter
     if (search.trim())                    p.search        = search.trim()
     if (assignedToMe && currentUser?.id)  p.assigned_to   = currentUser.id
+    if (staffFilter)                      p.assigned_to   = staffFilter
     if (slaBreached)                      p.sla_breached  = 'true'
     if (deptFilter)                       p.department    = deptFilter
     return p
@@ -220,6 +499,16 @@ export default function TicketListPage() {
           </div>
         ))}
       </div>
+
+      {/* Staff filter panel — manager/admin only */}
+      {isManager && availability.length > 0 && (
+        <StaffFilterPanel
+          availability={availability}
+          staffFilter={staffFilter}
+          onSelect={id => { setStaffFilter(id); resetPage() }}
+          onHistory={s => setHistoryStaff(s)}
+        />
+      )}
 
       {/* Filters row */}
       <div className="flex flex-wrap items-center gap-3">
@@ -376,6 +665,11 @@ export default function TicketListPage() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Staff ticket history drawer */}
+      {historyStaff && (
+        <StaffTicketHistoryDrawer staff={historyStaff} onClose={() => setHistoryStaff(null)} />
       )}
 
       {/* Create wizard */}
