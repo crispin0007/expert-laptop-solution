@@ -270,6 +270,16 @@ class InvoiceService:
             **totals,
         )
         logger.info("Invoice generated+issued id=%s tenant=%s", instance.pk, self.tenant.slug)
+        try:
+            from core.events import EventBus
+            EventBus.publish('invoice.sent', {
+                'id': instance.pk,
+                'tenant_id': self.tenant.id,
+                'customer_id': instance.customer_id,
+                'total': str(instance.total),
+            }, tenant=self.tenant)
+        except Exception:
+            pass
         return instance
 
     @transaction.atomic
