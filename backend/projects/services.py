@@ -54,6 +54,7 @@ def update_project(*, instance, tenant, validated_data: dict):
         The updated Project instance.
     """
     old_status = instance.status
+    team_members = validated_data.pop('team_members', None)
     for attr, value in validated_data.items():
         setattr(instance, attr, value)
 
@@ -67,6 +68,9 @@ def update_project(*, instance, tenant, validated_data: dict):
         instance.completed_at = None
 
     instance.save()
+
+    if team_members is not None:
+        instance.team_members.set(team_members)
 
     if transitioning_to_complete:
         EventBus.publish('project.completed', {
