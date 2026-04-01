@@ -427,6 +427,14 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
     queryFn: () => apiClient.get('/customers/?page_size=200').then(r => toPage<Customer>(r.data)),
   })
 
+  const { data: products = [] } = useQuery<InventoryProduct[]>({
+    queryKey: ['inventory-products-all'],
+    queryFn: () => apiClient.get(`${INVENTORY.PRODUCTS}?page_size=500`).then(r => {
+      const d = r.data?.data ?? r.data
+      return Array.isArray(d) ? d : d.results ?? []
+    }),
+  })
+
   const mutation = useMutation({
     mutationFn: (payload: unknown) => apiClient.post(ACCOUNTING.INVOICES, payload),
     onSuccess: () => {
