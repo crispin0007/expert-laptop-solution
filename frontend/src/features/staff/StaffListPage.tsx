@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import toast from 'react-hot-toast'
-import { Users, Plus, RefreshCw, Search, PowerOff, Pencil, KeyRound, RotateCcw } from 'lucide-react'
+import { Users, Plus, RefreshCw, Search, PowerOff, Pencil, KeyRound, RotateCcw, ChevronRight } from 'lucide-react'
 import apiClient from '../../api/client'
 import AvailabilityBadge from '../../components/AvailabilityBadge'
 import InviteStaffModal from './InviteStaffModal'
@@ -10,6 +10,7 @@ import ResetPasswordModal from './ResetPasswordModal'
 import Modal from '../../components/Modal'
 import { usePermissions } from '../../hooks/usePermissions'
 import DateDisplay from '../../components/DateDisplay'
+import StaffProfileDrawer, { type StaffForProfile } from './StaffProfileDrawer'
 
 interface StaffMembership {
   id: number
@@ -39,7 +40,7 @@ interface StaffMember {
 
 interface Department { id: number; name: string }
 
-function RoleBadge({ role, customRoleName }: { role: string; customRoleName?: string | null }) {
+function RoleBadge({ role, customRoleName }: Readonly<{ role: string; customRoleName?: string | null }>) {
   if (customRoleName) {
     return (
       <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-teal-100 text-teal-700">
@@ -71,6 +72,7 @@ export default function StaffListPage() {
   const [resetTarget, setResetTarget] = useState<StaffMember | null>(null)
   const [deactivateTarget, setDeactivateTarget] = useState<StaffMember | null>(null)
   const [reactivateTarget, setReactivateTarget] = useState<StaffMember | null>(null)
+  const [profileTarget, setProfileTarget] = useState<StaffMember | null>(null)
 
   const { data: staff = [], isLoading, refetch } = useQuery<StaffMember[]>({
     queryKey: ['staff'],
@@ -182,10 +184,11 @@ export default function StaffListPage() {
         {/* Status filter tabs */}
         <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-sm">
           {(['active', 'inactive', 'all'] as const).map(tab => {
-            const count =
-              tab === 'active' ? staff.filter(s => s.membership?.is_active !== false).length
-              : tab === 'inactive' ? staff.filter(s => s.membership?.is_active === false).length
-              : staff.length
+            const count = (() => {
+              if (tab === 'active') return staff.filter(s => s.membership?.is_active !== false).length
+              if (tab === 'inactive') return staff.filter(s => s.membership?.is_active === false).length
+              return staff.length
+            })()
             return (
               <button
                 key={tab}
@@ -225,22 +228,23 @@ export default function StaffListPage() {
             {isLoading && (
               <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">Loading staff…</td></tr>
             )}
-            {!isLoading && filtered.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">
-                {search
-                  ? 'No staff match your search.'
-                  : statusFilter === 'inactive'
-                    ? 'No inactive staff members.'
-                    : statusFilter === 'active'
-                      ? 'No active staff members.'
-                      : 'No staff yet. Invite the first member.'}
-              </td></tr>
-            )}
+              {!isLoading && filtered.length === 0 && (() => {
+                let msg = 'No staff yet. Invite the first member.'
+                if (search) msg = 'No staff match your search.'
+                else if (statusFilter === 'inactive') msg = 'No inactive staff members.'
+                else if (statusFilter === 'active') msg = 'No active staff members.'
+                return (
+                  <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">{msg}</td></tr>
+                )
+              })()}
             {filtered.map(s => {
               const avail = availMap[s.id]
               const isInactive = s.membership?.is_active === false
               return (
-                <tr key={s.id} className={`transition-colors ${isInactive ? 'bg-gray-50 opacity-60' : 'hover:bg-gray-50'}`}>
+                <tr key={s.id}
+                  className={`transition-colors cursor-pointer ${isInactive ? 'bg-gray-50 opacity-60 hover:opacity-80' : 'hover:bg-indigo-50/40'}`}
+                  onClick={() => setProfileTarget(s)}
+                >
                   <td className="px-4 py-3">
                     <span className="text-xs font-mono font-semibold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
                       {s.membership?.staff_number || '—'}
@@ -287,27 +291,31 @@ export default function StaffListPage() {
                       compact
                     />
                   </td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end gap-1">
+                  <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                    <div className="flex justify-end gap-1 items-center">
+                      <button type="button" title="View profile" onClick={() => setProfileTarget(s)}
+                        className="p-1.5 rounded hover:bg-indigo-50 text-indigo-300 hover:text-indigo-500">
+                        <ChevronRight size={14} />
+                      </button>
                       {can('can_manage_staff') && (
                         <>
-                          <button title="Edit staff member" onClick={() => setEditTarget(s)}
+                          <button type="button" title="Edit staff member" onClick={() => setEditTarget(s)}
                             className="p-1.5 rounded hover:bg-indigo-50 text-indigo-400">
                             <Pencil size={14} />
                           </button>
-                          <button title="Reset password" onClick={() => setResetTarget(s)}
+                          <button type="button" title="Reset password" onClick={() => setResetTarget(s)}
                             className="p-1.5 rounded hover:bg-amber-50 text-amber-400">
                             <KeyRound size={14} />
                           </button>
-                          {s.membership?.is_active !== false ? (
-                            <button title="Deactivate — blocks login" onClick={() => setDeactivateTarget(s)}
-                              className="p-1.5 rounded hover:bg-red-50 text-red-400">
-                              <PowerOff size={14} />
-                            </button>
-                          ) : (
-                            <button title="Reactivate — restore login" onClick={() => setReactivateTarget(s)}
+                          {s.membership?.is_active === false ? (
+                            <button type="button" title="Reactivate — restore login" onClick={() => setReactivateTarget(s)}
                               className="p-1.5 rounded hover:bg-green-50 text-green-500">
                               <RotateCcw size={14} />
+                            </button>
+                          ) : (
+                            <button type="button" title="Deactivate — blocks login" onClick={() => setDeactivateTarget(s)}
+                              className="p-1.5 rounded hover:bg-red-50 text-red-400">
+                              <PowerOff size={14} />
                             </button>
                           )}
                         </>
@@ -378,6 +386,15 @@ export default function StaffListPage() {
           </button>
         </div>
       </Modal>
+
+      {/* Staff profile drawer */}
+      {profileTarget && (
+        <StaffProfileDrawer
+          staff={profileTarget as unknown as StaffForProfile}
+          avail={availMap[profileTarget.id]}
+          onClose={() => setProfileTarget(null)}
+        />
+      )}
     </div>
   )
 }
