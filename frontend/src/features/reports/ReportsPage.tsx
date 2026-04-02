@@ -1286,13 +1286,13 @@ ${el.innerHTML}
       case 'supplier-statement':
         return <StatementView data={d as Parameters<typeof StatementView>[0]['data']} />
       case 'sales-by-customer-monthly':
-        return <MonthlyCrossTableView data={d as MonthlyCrossData} entityKey="customer" />
+        return <MonthlyCrossTableView data={d as unknown as MonthlyCrossData} entityKey="customer" />
       case 'sales-by-item-monthly':
-        return <MonthlyCrossTableView data={d as MonthlyCrossData} entityKey="item" />
+        return <MonthlyCrossTableView data={d as unknown as MonthlyCrossData} entityKey="item" />
       case 'purchase-by-supplier-monthly':
-        return <MonthlyCrossTableView data={d as MonthlyCrossData} entityKey="supplier" />
+        return <MonthlyCrossTableView data={d as unknown as MonthlyCrossData} entityKey="supplier" />
       case 'purchase-by-item-monthly':
-        return <MonthlyCrossTableView data={d as MonthlyCrossData} entityKey="item" />
+        return <MonthlyCrossTableView data={d as unknown as MonthlyCrossData} entityKey="item" />
     }
 
     // Generic table

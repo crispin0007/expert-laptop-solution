@@ -13,7 +13,7 @@ REMOTE_DIR="~/nexus-bms/frontend/dist"
 echo "==> Building frontend locally..."
 cd "$(dirname "$0")/frontend"
 npm ci --silent
-NODE_OPTIONS="--max-old-space-size=4096" npm run build
+NODE_OPTIONS="--max-old-space-size=4096" npx vite build
 
 echo "==> Syncing dist/ to ${VPS}:${REMOTE_DIR} ..."
 rsync -avz --delete dist/ "${VPS}:${REMOTE_DIR}/"

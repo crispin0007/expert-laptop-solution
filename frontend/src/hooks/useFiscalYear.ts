@@ -10,7 +10,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import apiClient from '../api/client';
-import { currentFiscalYear, FiscalYear, fiscalYearDateRange, adToIso } from '../utils/nepaliDate';
+import { currentFiscalYear, type FiscalYear, fiscalYearDateRange, adToIso } from '../utils/nepaliDate';
 
 interface ServerFiscalYear {
   fiscal_year: string;

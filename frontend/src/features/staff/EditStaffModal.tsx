@@ -24,7 +24,7 @@ interface StaffMember {
   email: string
   full_name: string
   phone: string
-  office_phone: string
+  office_phone?: string
   membership: StaffMembership | null
 }
 

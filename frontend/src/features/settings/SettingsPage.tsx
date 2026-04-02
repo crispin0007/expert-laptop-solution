@@ -551,9 +551,9 @@ export default function SettingsPage() {
       apiClient.put(NOTIFICATIONS.PREFERENCES, payload).then(r => r.data.data ?? r.data),
     // Optimistic update — toggle reflects instantly without waiting for the server
     onMutate: async (payload) => {
-      await qc.cancelQueries({ queryKey: ['notif-prefs'] })
-      const previous = qc.getQueryData<NotifPrefs>(['notif-prefs'])
-      qc.setQueryData<NotifPrefs>(['notif-prefs'], old =>
+      await queryClient.cancelQueries({ queryKey: ['notif-prefs'] })
+      const previous = queryClient.getQueryData<NotifPrefs>(['notif-prefs'])
+      queryClient.setQueryData<NotifPrefs>(['notif-prefs'], old =>
         old ? { ...old, ...payload } : old
       )
       return { previous }
@@ -563,22 +563,22 @@ export default function SettingsPage() {
     },
     onError: (_err, _payload, context) => {
       // Roll back to the value before the optimistic update
-      qc.setQueryData(['notif-prefs'], context?.previous)
+      queryClient.setQueryData(['notif-prefs'], context?.previous)
       toast.error('Could not save preferences.')
     },
     onSettled: () => {
-      qc.invalidateQueries({ queryKey: ['notif-prefs'] })
+      queryClient.invalidateQueries({ queryKey: ['notif-prefs'] })
     },
   })
 
   function toggleGlobal(channel: 'email_enabled' | 'push_enabled') {
-    const current = qc.getQueryData<NotifPrefs>(['notif-prefs'])
+    const current = queryClient.getQueryData<NotifPrefs>(['notif-prefs'])
     if (!current) return
     notifPrefsMutation.mutate({ [channel]: !current[channel] })
   }
 
   function toggleTypeOverride(key: string, channel: 'email' | 'push', current: boolean) {
-    const prefs = qc.getQueryData<NotifPrefs>(['notif-prefs'])
+    const prefs = queryClient.getQueryData<NotifPrefs>(['notif-prefs'])
     if (!prefs) return
     const overrides = { ...prefs.type_overrides }
     overrides[key] = { ...(overrides[key] ?? {}), [channel]: !current }
