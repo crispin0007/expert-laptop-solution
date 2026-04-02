@@ -26,7 +26,7 @@ import {
   // CoA + Quick Links icons
   Zap, Eye, EyeOff, Info, ListFilter, Wallet,
   // New tab icons
-  Clock, Users, Truck, UserCheck, ShoppingBag, AlignLeft,
+  Clock, Users, Truck, UserCheck, ShoppingBag,
   // 7-stubs tab icons
   ShoppingCart, ArrowDownLeft, ArrowUpRight, PackageCheck, Package, Link2, CircleDollarSign, Save,
 } from 'lucide-react'
@@ -369,7 +369,6 @@ const TABS = [
   { key: 'quick-payment',          label: 'Quick Payment',               icon: Zap             },
   { key: 'quick-receipt',          label: 'Quick Receipt',               icon: Zap             },
   { key: 'cheque-register',        label: 'Cheque Register',             icon: FileText        },
-  { key: 'journal-voucher',        label: 'Journal Voucher',             icon: AlignLeft       },
 ] as const
 
 // ─── Dashboard Tab ─────────────────────────────────────────────────────────
@@ -8676,7 +8675,6 @@ export default function AccountingPage() {
       case 'quick-payment':         return <QuickPaymentTab />
       case 'quick-receipt':         return <QuickReceiptTab />
       case 'cheque-register':       return <ChequeRegisterTab />
-      case 'journal-voucher':       return <JournalsTab />
       default:             return <DashboardTab />
     }
   }
