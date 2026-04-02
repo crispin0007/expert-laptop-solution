@@ -27,6 +27,8 @@ import {
   Zap, Eye, EyeOff, Info, ListFilter, Wallet,
   // New tab icons
   Clock, Users, Truck, UserCheck, ShoppingBag, AlignLeft,
+  // 7-stubs tab icons
+  ShoppingCart, ArrowDownLeft, ArrowUpRight, PackageCheck, Package, Link2, CircleDollarSign, Save,
 } from 'lucide-react'
 import DateDisplay from '../../components/DateDisplay'
 import NepaliDatePicker from '../../components/NepaliDatePicker'
@@ -219,6 +221,19 @@ interface RecurringJournal {
   is_active: boolean
   template_lines: Array<{ account_code: string; debit: string; credit: string; description: string }>
   last_run_at: string | null; created_at: string; updated_at: string
+}
+interface PurchaseOrderItem {
+  id: number; product: number; product_name: string
+  quantity_ordered: number; quantity_received: number; unit_cost: string
+  line_total: string; pending_quantity: number
+}
+interface PurchaseOrder {
+  id: number; po_number: string; supplier: number; supplier_name: string
+  status: string; expected_delivery: string | null; notes: string
+  total_amount: string; total_ordered: number; total_received: number
+  received_by_name: string | null; received_at: string | null
+  created_by_name: string | null; created_at: string; updated_at: string
+  items: PurchaseOrderItem[]
 }
 interface LedgerRow { date: string; entry_number: string; description: string; debit: string; credit: string; balance: string }
 interface LedgerReport {
@@ -1197,10 +1212,11 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
   // Load inventory suppliers for dropdown
   const { data: suppliers = [] } = useQuery<InventorySupplier[]>({
     queryKey: ['inventory-suppliers-select'],
-    queryFn: () => apiClient.get(`${INVENTORY.SUPPLIERS}?page_size=500&is_active=true`).then(r => {
-      const d = r.data
-      return d?.data?.results ?? d?.results ?? (Array.isArray(d) ? d : [])
-    }),
+    queryFn: () => apiClient.get(`${INVENTORY.SUPPLIERS}?page_size=500&is_active=true`).then(r => toPage<InventorySupplier>(r.data).results),
+  })
+  const { data: products = [] } = useQuery<InventoryProduct[]>({
+    queryKey: ['inventory-products'],
+    queryFn: () => apiClient.get(`${INVENTORY.PRODUCTS}?page_size=500`).then(r => toPage<InventoryProduct>(r.data).results),
   })
 
   // Live total preview
@@ -1223,8 +1239,17 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
       toast.error(e?.response?.data?.detail ?? 'Failed to create bill'),
   })
 
-  function setLine<K extends keyof LineItemDraft>(idx: number, key: K, val: string) {
+  function setLine<K extends keyof LineItemDraft>(idx: number, key: K, val: string | number | undefined) {
     setLines(ls => ls.map((l, i) => i === idx ? { ...l, [key]: val } : l))
+  }
+
+  function selectProduct(lineIdx: number, productId: number) {
+    const p = products.find(x => x.id === productId)
+    if (!p) return
+    setLines(ls => ls.map((l, i) => i === lineIdx
+      ? { ...l, product_id: p.id, description: p.name, unit_price: p.unit_price, line_type: 'product' as const }
+      : l
+    ))
   }
 
   function handleSupplierChange(e: React.ChangeEvent<HTMLSelectElement>) {
@@ -1253,7 +1278,7 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
       apply_vat: vatEnabled,
       line_items: lines
         .filter(l => l.description && l.unit_price)
-        .map(l => ({ description: l.description, qty: Number(l.qty), unit_price: l.unit_price, discount: l.discount || '0' })),
+        .map(l => ({ description: l.description, qty: Number(l.qty), unit_price: l.unit_price, discount: l.discount || '0', line_type: l.line_type || 'service' })),
     })
   }
 
@@ -1308,9 +1333,10 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
             <table className="w-full text-xs">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-3 py-2 text-left text-gray-500 font-medium">Description</th>
-                  <th className="px-2 py-2 text-right text-gray-500 font-medium w-16">Qty</th>
-                  <th className="px-2 py-2 text-right text-gray-500 font-medium w-28">Unit Price</th>
+                  <th className="px-3 py-2 text-left text-gray-500 font-medium">Description / Product</th>
+                  <th className="px-2 py-2 text-left text-gray-500 font-medium w-20">Type</th>
+                  <th className="px-2 py-2 text-right text-gray-500 font-medium w-14">Qty</th>
+                  <th className="px-2 py-2 text-right text-gray-500 font-medium w-24">Unit Price</th>
                   <th className="px-2 py-2 w-8" />
                 </tr>
               </thead>
@@ -1318,8 +1344,37 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
                 {lines.map((l, i) => (
                   <tr key={i}>
                     <td className="px-2 py-1.5">
-                      <input value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
-                        placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" />
+                      {l.line_type === 'product' ? (
+                        <select
+                          value={l.product_id ?? ''}
+                          onChange={e => e.target.value
+                            ? selectProduct(i, Number(e.target.value))
+                            : setLine(i, 'product_id', undefined)
+                          }
+                          className="w-full border-0 outline-none text-xs bg-transparent"
+                        >
+                          <option value="">— Select product —</option>
+                          {products.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}{p.sku ? ` (${p.sku})` : ''}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
+                          placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" />
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <select value={l.line_type} onChange={e => {
+                        const t = e.target.value as 'service' | 'product'
+                        setLines(ls => ls.map((ln, j) => j === i
+                          ? { ...ln, line_type: t, product_id: undefined, description: '', unit_price: '' }
+                          : ln
+                        ))
+                      }}
+                        className="w-full border-0 outline-none text-xs bg-transparent">
+                        <option value="service">Service</option>
+                        <option value="product">Product</option>
+                      </select>
                     </td>
                     <td className="px-2 py-1.5">
                       <input type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
@@ -1855,6 +1910,10 @@ function CreditNoteCreateModal({ onClose }: { onClose: () => void }) {
     queryKey: ['invoices-mini'],
     queryFn: () => apiClient.get(ACCOUNTING.INVOICES + '?page_size=200&status=issued').then(r => toPage<Invoice>(r.data)),
   })
+  const { data: products = [] } = useQuery<InventoryProduct[]>({
+    queryKey: ['inventory-products'],
+    queryFn: () => apiClient.get(`${INVENTORY.PRODUCTS}?page_size=500`).then(r => toPage<InventoryProduct>(r.data).results),
+  })
 
   const mutation = useMutation({
     mutationFn: (payload: unknown) => apiClient.post(ACCOUNTING.CREDIT_NOTES, payload),
@@ -1863,8 +1922,17 @@ function CreditNoteCreateModal({ onClose }: { onClose: () => void }) {
       toast.error(e?.response?.data?.detail ?? 'Failed to create credit note'),
   })
 
-  function setLine<K extends keyof LineItemDraft>(idx: number, key: K, val: string) {
+  function setLine<K extends keyof LineItemDraft>(idx: number, key: K, val: string | number | undefined) {
     setLines(ls => ls.map((l, i) => i === idx ? { ...l, [key]: val } : l))
+  }
+
+  function selectProduct(lineIdx: number, productId: number) {
+    const p = products.find(x => x.id === productId)
+    if (!p) return
+    setLines(ls => ls.map((l, i) => i === lineIdx
+      ? { ...l, product_id: p.id, description: p.name, unit_price: p.unit_price, line_type: 'product' as const }
+      : l
+    ))
   }
 
   function submit(e: React.FormEvent) {
@@ -1874,7 +1942,7 @@ function CreditNoteCreateModal({ onClose }: { onClose: () => void }) {
     mutation.mutate({
       invoice: invoiceId ? Number(invoiceId) : null,
       reason,
-      line_items: validLines.map(l => ({ description: l.description, qty: Number(l.qty), unit_price: l.unit_price, discount: l.discount || '0' })),
+      line_items: validLines.map(l => ({ description: l.description, qty: Number(l.qty), unit_price: l.unit_price, discount: l.discount || '0', line_type: l.line_type || 'service' })),
     })
   }
 
@@ -1909,9 +1977,10 @@ function CreditNoteCreateModal({ onClose }: { onClose: () => void }) {
             <table className="w-full text-xs">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-3 py-2 text-left text-gray-500 font-medium">Description</th>
-                  <th className="px-2 py-2 text-right text-gray-500 font-medium w-16">Qty</th>
-                  <th className="px-2 py-2 text-right text-gray-500 font-medium w-28">Unit Price</th>
+                  <th className="px-3 py-2 text-left text-gray-500 font-medium">Description / Product</th>
+                  <th className="px-2 py-2 text-left text-gray-500 font-medium w-20">Type</th>
+                  <th className="px-2 py-2 text-right text-gray-500 font-medium w-14">Qty</th>
+                  <th className="px-2 py-2 text-right text-gray-500 font-medium w-24">Unit Price</th>
                   <th className="px-2 py-2 w-8" />
                 </tr>
               </thead>
@@ -1919,8 +1988,37 @@ function CreditNoteCreateModal({ onClose }: { onClose: () => void }) {
                 {lines.map((l, i) => (
                   <tr key={i}>
                     <td className="px-2 py-1.5">
-                      <input value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
-                        placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" />
+                      {l.line_type === 'product' ? (
+                        <select
+                          value={l.product_id ?? ''}
+                          onChange={e => e.target.value
+                            ? selectProduct(i, Number(e.target.value))
+                            : setLine(i, 'product_id', undefined)
+                          }
+                          className="w-full border-0 outline-none text-xs bg-transparent"
+                        >
+                          <option value="">— Select product —</option>
+                          {products.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}{p.sku ? ` (${p.sku})` : ''}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
+                          placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" />
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <select value={l.line_type} onChange={e => {
+                        const t = e.target.value as 'service' | 'product'
+                        setLines(ls => ls.map((ln, j) => j === i
+                          ? { ...ln, line_type: t, product_id: undefined, description: '', unit_price: '' }
+                          : ln
+                        ))
+                      }}
+                        className="w-full border-0 outline-none text-xs bg-transparent">
+                        <option value="service">Service</option>
+                        <option value="product">Product</option>
+                      </select>
                     </td>
                     <td className="px-2 py-1.5">
                       <input type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
@@ -5226,6 +5324,14 @@ const QUO_STATUS: Record<string, string> = {
   expired: 'bg-yellow-100 text-yellow-700',
 }
 
+const PO_STATUS: Record<string, string> = {
+  draft:    'bg-gray-100 text-gray-600',
+  sent:     'bg-blue-100 text-blue-700',
+  partial:  'bg-yellow-100 text-yellow-700',
+  received: 'bg-emerald-100 text-emerald-700',
+  cancelled:'bg-red-100 text-red-500',
+}
+
 function QuotationsTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
@@ -5568,7 +5674,7 @@ function DebitNoteCreateModal({ onClose }: { onClose: () => void }) {
 
   const { data: bills } = useQuery<ApiPage<Bill>>({
     queryKey: ['bills-mini'],
-    queryFn: () => apiClient.get(ACCOUNTING.BILLS + '?page_size=200&status=approved').then(r => toPage<Bill>(r.data)),
+    queryFn: () => apiClient.get(`${ACCOUNTING.BILLS}?page_size=200&ordering=-created_at`).then(r => toPage<Bill>(r.data)),
   })
 
   const mutation = useMutation({
@@ -5601,7 +5707,7 @@ function DebitNoteCreateModal({ onClose }: { onClose: () => void }) {
           <label className="block text-xs font-medium text-gray-600 mb-1">Bill *</label>
           <select value={billId} onChange={e => setBillId(e.target.value)} required
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
-            <option value="">— Select approved bill —</option>
+            <option value="">— Select bill —</option>
             {bills?.results?.map(b => (
               <option key={b.id} value={b.id}>{b.bill_number} — {b.supplier_name}</option>
             ))}
@@ -7205,6 +7311,993 @@ function ComingSoonTab({ title, hint }: { title: string; hint?: string }) {
   )
 }
 
+// ─── Sales Orders Tab (accepted quotations awaiting fulfilment) ────────────
+
+function SalesOrdersTab() {
+  const qc = useQueryClient()
+  const { fyYear } = useFY()
+  const { data, isLoading } = useQuery<ApiPage<Quotation>>({
+    queryKey: ['quotations', 'accepted', fyYear],
+    queryFn: () => apiClient.get(addFyParam(`${ACCOUNTING.QUOTATIONS}?status=accepted`, fyYear)).then(r => toPage<Quotation>(r.data)),
+  })
+  const orders = data?.results ?? []
+
+  const mutateConvert = useMutation({
+    mutationFn: (id: number) => apiClient.post(ACCOUNTING.QUOTATION_CONVERT(id)),
+    onSuccess: () => { toast.success('Converted to invoice'); qc.invalidateQueries({ queryKey: ['quotations'] }); qc.invalidateQueries({ queryKey: ['invoices'] }) },
+    onError: (e: { response?: { data?: { detail?: string } } }) => toast.error(e?.response?.data?.detail ?? 'Convert failed'),
+  })
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-4">
+        {[
+          { label: 'Accepted Orders', value: orders.length,                                         icon: ShoppingCart,  bg: 'bg-blue-50',    color: 'text-blue-600'   },
+          { label: 'Total Value',      value: npr(orders.reduce((a, q) => a + Number(q.total), 0)), icon: TrendingUp,    bg: 'bg-green-50',   color: 'text-green-600'  },
+          { label: 'Pending Convert',  value: orders.filter(q => !q.converted_invoice).length,      icon: ArrowRightLeft, bg: 'bg-yellow-50', color: 'text-yellow-600' },
+        ].map(c => (
+          <div key={c.label} className={`${c.bg} rounded-xl p-4 flex items-center gap-3 border border-white`}>
+            <c.icon size={20} className={c.color} />
+            <div><p className="text-xs text-gray-500">{c.label}</p><p className={`text-lg font-bold ${c.color}`}>{c.value}</p></div>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-3 justify-between">
+        <p className="text-xs text-gray-400">Showing accepted quotations — create orders from the Quotations tab.</p>
+        <span className="text-sm text-gray-400">{orders.length} orders</span>
+      </div>
+      {isLoading ? <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-indigo-400" /></div> : (
+        orders.length === 0 ? (
+          <div className="text-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+            <ShoppingCart size={36} className="mx-auto text-gray-300 mb-3" />
+            <p className="text-sm text-gray-500 font-medium">No accepted orders</p>
+            <p className="text-xs text-gray-400 mt-1">Accept a quotation to see it here as a sales order.</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>{['Order #', 'Customer', 'Accepted', 'Total', 'Invoice', 'Actions'].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {orders.map(q => (
+                  <tr key={q.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3 font-mono font-semibold text-gray-700">{q.quotation_number}</td>
+                    <td className="px-4 py-3 text-gray-600">{q.customer_name || <span className="text-gray-400">—</span>}</td>
+                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{q.accepted_at ? fmt(q.accepted_at) : '—'}</td>
+                    <td className="px-4 py-3 font-semibold text-gray-800">{npr(q.total)}</td>
+                    <td className="px-4 py-3 text-xs">
+                      {q.converted_invoice_number
+                        ? <span className="text-emerald-700 font-medium">{q.converted_invoice_number}</span>
+                        : <span className="text-gray-400">Not yet invoiced</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      {!q.converted_invoice && (
+                        <button onClick={() => mutateConvert.mutate(q.id)} disabled={mutateConvert.isPending}
+                          className="px-3 py-1.5 text-xs bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 transition-colors disabled:opacity-50 whitespace-nowrap">
+                          Convert → Invoice
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
+// ─── Purchase Orders Tab ───────────────────────────────────────────────────
+
+function PurchaseOrderReceiveModal({ po, onClose }: { po: PurchaseOrder; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [quantities, setQuantities] = useState<Record<number, string>>(() =>
+    Object.fromEntries(po.items.map(i => [i.id, String(i.pending_quantity > 0 ? i.pending_quantity : 0)]))
+  )
+  const [notes, setNotes] = useState('')
+
+  const mutate = useMutation({
+    mutationFn: () => apiClient.post(INVENTORY.PURCHASE_ORDER_RECEIVE(po.id), {
+      lines: po.items.map(i => ({ item_id: i.id, quantity_received: Number(quantities[i.id] ?? 0) })),
+      notes,
+    }),
+    onSuccess: () => { toast.success('Stock received'); qc.invalidateQueries({ queryKey: ['purchase-orders'] }); onClose() },
+    onError: () => toast.error('Receive failed'),
+  })
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h2 className="font-semibold text-gray-900">Receive Stock — {po.po_number}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors"><X size={18} /></button>
+        </div>
+        <div className="px-6 py-4 space-y-3 max-h-[60vh] overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="text-xs text-gray-400 border-b border-gray-100">
+              <th className="pb-2 text-left">Product</th>
+              <th className="pb-2 text-right">Ordered</th>
+              <th className="pb-2 text-right">Received</th>
+              <th className="pb-2 text-right">Pending</th>
+              <th className="pb-2 text-right">Receive Now</th>
+            </tr></thead>
+            <tbody className="divide-y divide-gray-50">
+              {po.items.map(item => (
+                <tr key={item.id}>
+                  <td className="py-2 text-gray-700">{item.product_name}</td>
+                  <td className="py-2 text-right text-gray-500">{item.quantity_ordered}</td>
+                  <td className="py-2 text-right text-gray-500">{item.quantity_received}</td>
+                  <td className="py-2 text-right text-orange-600">{item.pending_quantity}</td>
+                  <td className="py-2 text-right">
+                    <input type="number" min={0} max={item.pending_quantity}
+                      value={quantities[item.id] ?? ''}
+                      onChange={e => setQuantities(q => ({ ...q, [item.id]: e.target.value }))}
+                      className="w-20 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:border-indigo-400"
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+            <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional notes"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+          </div>
+        </div>
+        <div className="px-6 py-4 border-t border-gray-100 flex gap-3 justify-end">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
+          <button onClick={() => mutate.mutate()} disabled={mutate.isPending}
+            className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center gap-2">
+            {mutate.isPending ? <Loader2 size={14} className="animate-spin" /> : <PackageCheck size={14} />} Confirm Receipt
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PurchaseOrderCreateModal({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient()
+  const { data: suppliers = [] } = useQuery<InventorySupplier[]>({
+    queryKey: ['inventory-suppliers'],
+    queryFn: () => apiClient.get(`${INVENTORY.SUPPLIERS}?page_size=200`).then(r => toPage<InventorySupplier>(r.data).results),
+  })
+  const { data: products = [] } = useQuery<InventoryProduct[]>({
+    queryKey: ['inventory-products'],
+    queryFn: () => apiClient.get(`${INVENTORY.PRODUCTS}?page_size=500`).then(r => toPage<InventoryProduct>(r.data).results),
+  })
+
+  const [supplierId, setSupplierId] = useState('')
+  const [expectedDelivery, setExpectedDelivery] = useState('')
+  const [notes, setNotes] = useState('')
+  const [items, setItems] = useState([{ product: '', qty: '1', unit_cost: '' }])
+
+  const addItem = () => setItems(prev => [...prev, { product: '', qty: '1', unit_cost: '' }])
+  const removeItem = (i: number) => setItems(prev => prev.filter((_, idx) => idx !== i))
+  const updateItem = (i: number, field: string, val: string) =>
+    setItems(prev => prev.map((it, idx) => idx === i ? { ...it, [field]: val } : it))
+
+  const mutate = useMutation({
+    mutationFn: () => apiClient.post(INVENTORY.PURCHASE_ORDERS, {
+      supplier: Number(supplierId),
+      expected_delivery: expectedDelivery || null,
+      notes,
+      items: items.filter(i => i.product).map(i => ({
+        product: Number(i.product),
+        quantity_ordered: Number(i.qty),
+        unit_cost: i.unit_cost || '0',
+      })),
+    }),
+    onSuccess: () => { toast.success('Purchase order created'); qc.invalidateQueries({ queryKey: ['purchase-orders'] }); onClose() },
+    onError: (e: { response?: { data?: { detail?: string } } }) =>
+      toast.error(e?.response?.data?.detail ?? 'Failed to create purchase order'),
+  })
+
+  const subtotal = items.reduce((a, i) => a + (Number(i.qty) * Number(i.unit_cost || 0)), 0)
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between shrink-0">
+          <h2 className="font-semibold text-gray-900">New Purchase Order</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors"><X size={18} /></button>
+        </div>
+        <div className="px-6 py-4 space-y-4 overflow-y-auto">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Supplier *</label>
+              <select value={supplierId} onChange={e => setSupplierId(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
+                <option value="">Select supplier…</option>
+                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Expected Delivery</label>
+              <input type="date" value={expectedDelivery} onChange={e => setExpectedDelivery(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+            <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional notes"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Line Items</span>
+              <button onClick={addItem} className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700 transition-colors">
+                <Plus size={12} /> Add line
+              </button>
+            </div>
+            <div className="space-y-2">
+              {items.map((item, i) => (
+                <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                  <div className="col-span-5">
+                    <select value={item.product} onChange={e => updateItem(i, 'product', e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-indigo-400">
+                      <option value="">Select product…</option>
+                      {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <input type="number" min={1} value={item.qty} onChange={e => updateItem(i, 'qty', e.target.value)} placeholder="Qty"
+                      className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-right focus:outline-none focus:border-indigo-400" />
+                  </div>
+                  <div className="col-span-3">
+                    <input type="number" min={0} step="0.01" value={item.unit_cost} onChange={e => updateItem(i, 'unit_cost', e.target.value)} placeholder="Unit cost"
+                      className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-right focus:outline-none focus:border-indigo-400" />
+                  </div>
+                  <div className="col-span-1 text-right text-xs text-gray-500 tabular-nums">
+                    {npr(Number(item.qty || 0) * Number(item.unit_cost || 0))}
+                  </div>
+                  <div className="col-span-1 text-right">
+                    {items.length > 1 && (
+                      <button onClick={() => removeItem(i)} className="text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 pt-3 border-t border-gray-100 text-right text-sm font-semibold text-gray-800">
+              Total: {npr(subtotal)}
+            </div>
+          </div>
+        </div>
+        <div className="px-6 py-4 border-t border-gray-100 flex gap-3 justify-end shrink-0">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
+          <button onClick={() => mutate.mutate()} disabled={mutate.isPending || !supplierId}
+            className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center gap-2">
+            {mutate.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Create PO
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PurchaseOrdersTab() {
+  const qc = useQueryClient()
+  const { can } = usePermissions()
+  const [statusFilter, setStatusFilter] = useState('')
+  const [showCreate, setShowCreate] = useState(false)
+  const [receiveFor, setReceiveFor] = useState<PurchaseOrder | null>(null)
+
+  const { data, isLoading } = useQuery<ApiPage<PurchaseOrder>>({
+    queryKey: ['purchase-orders', statusFilter],
+    queryFn: () => apiClient.get(`${INVENTORY.PURCHASE_ORDERS}?page_size=200${statusFilter ? `&status=${statusFilter}` : ''}`).then(r => toPage<PurchaseOrder>(r.data)),
+  })
+  const orders = data?.results ?? []
+
+  const mutateSend = useMutation({
+    mutationFn: (id: number) => apiClient.post(INVENTORY.PURCHASE_ORDER_SEND(id)),
+    onSuccess: () => { toast.success('PO sent to supplier'); qc.invalidateQueries({ queryKey: ['purchase-orders'] }) },
+    onError: () => toast.error('Action failed'),
+  })
+  const mutateCancel = useMutation({
+    mutationFn: (id: number) => apiClient.post(INVENTORY.PURCHASE_ORDER_CANCEL(id)),
+    onSuccess: () => { toast.success('PO cancelled'); qc.invalidateQueries({ queryKey: ['purchase-orders'] }) },
+    onError: () => toast.error('Action failed'),
+  })
+
+  return (
+    <div className="space-y-4">
+      {showCreate && <PurchaseOrderCreateModal onClose={() => setShowCreate(false)} />}
+      {receiveFor && <PurchaseOrderReceiveModal po={receiveFor} onClose={() => setReceiveFor(null)} />}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2">
+          {['', 'draft', 'sent', 'partial', 'received', 'cancelled'].map(s => (
+            <button key={s} onClick={() => setStatusFilter(s)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${statusFilter === s ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-200 text-gray-600 hover:border-indigo-400 hover:text-indigo-600'}`}>
+              {s === '' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-gray-400">{data?.count ?? 0} purchase orders</span>
+          {can('can_manage_accounting') && (
+            <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors">
+              <Plus size={14} /> New PO
+            </button>
+          )}
+        </div>
+      </div>
+
+      {isLoading ? <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-indigo-400" /></div> : (
+        orders.length === 0 ? (
+          <div className="text-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+            <Package size={36} className="mx-auto text-gray-300 mb-3" />
+            <p className="text-sm text-gray-500 font-medium">No purchase orders</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>{['PO #', 'Supplier', 'Items', 'Total', 'Exp. Delivery', 'Status', 'Actions'].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {orders.map(po => (
+                  <tr key={po.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3 font-mono font-semibold text-gray-700 whitespace-nowrap">{po.po_number}</td>
+                    <td className="px-4 py-3 text-gray-600">{po.supplier_name}</td>
+                    <td className="px-4 py-3 text-gray-500 text-center">{po.items?.length ?? 0}</td>
+                    <td className="px-4 py-3 font-semibold text-gray-800 tabular-nums">{npr(po.total_amount)}</td>
+                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{po.expected_delivery ? fmt(po.expected_delivery) : '—'}</td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-1 rounded-full text-xs font-semibold ${PO_STATUS[po.status] ?? 'bg-gray-100 text-gray-500'}`}>
+                        {po.status.charAt(0).toUpperCase() + po.status.slice(1)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {po.status === 'draft' && can('can_manage_accounting') && (
+                          <button onClick={() => mutateSend.mutate(po.id)} className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors">Send</button>
+                        )}
+                        {(po.status === 'sent' || po.status === 'partial') && can('can_manage_accounting') && (
+                          <button onClick={() => setReceiveFor(po)} className="px-2 py-1 text-xs bg-emerald-50 text-emerald-700 rounded-md hover:bg-emerald-100 transition-colors">Receive</button>
+                        )}
+                        {(po.status === 'draft' || po.status === 'sent') && can('can_manage_accounting') && (
+                          <button onClick={() => mutateCancel.mutate(po.id)} className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors">Cancel</button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
+// ─── Quick Payment Tab ──────────────────────────────────────────────────────
+
+function QuickPaymentTab() {
+  const qc = useQueryClient()
+  const today = new Date().toISOString().slice(0, 10)
+  const [date, setDate]             = useState(today)
+  const [method, setMethod]         = useState('cash')
+  const [amount, setAmount]         = useState('')
+  const [bankAccId, setBankAccId]   = useState('')
+  const [billId, setBillId]         = useState('')
+  const [reference, setReference]   = useState('')
+  const [notes, setNotes]           = useState('')
+
+  const { data: bankAccounts = [] } = useQuery<BankAccount[]>({
+    queryKey: ['bank-accounts'],
+    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS).then(r => toPage<BankAccount>(r.data).results),
+  })
+  const { data: openBills } = useQuery<ApiPage<Bill>>({
+    queryKey: ['bills', 'unpaid-quick'],
+    queryFn: () => apiClient.get(`${ACCOUNTING.BILLS}?status=approved&page_size=200`).then(r => toPage<Bill>(r.data)),
+  })
+  const { data: recentPayments } = useQuery<ApiPage<Payment>>({
+    queryKey: ['payments', 'outgoing-recent'],
+    queryFn: () => apiClient.get(`${ACCOUNTING.PAYMENTS}?type=outgoing&page_size=10`).then(r => toPage<Payment>(r.data)),
+  })
+
+  const mutate = useMutation({
+    mutationFn: () => apiClient.post(ACCOUNTING.PAYMENTS, {
+      type: 'outgoing', date, method, amount,
+      bank_account: bankAccId ? Number(bankAccId) : null,
+      bill: billId ? Number(billId) : null,
+      reference, notes,
+    }),
+    onSuccess: () => {
+      toast.success('Payment recorded')
+      setAmount(''); setReference(''); setNotes(''); setBillId('')
+      qc.invalidateQueries({ queryKey: ['payments'] })
+      qc.invalidateQueries({ queryKey: ['bills'] })
+    },
+    onError: () => toast.error('Failed to record payment'),
+  })
+
+  const needsBank = method === 'bank_transfer' || method === 'cheque'
+
+  return (
+    <div className="grid grid-cols-2 gap-6">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
+        <h3 className="font-semibold text-gray-900 flex items-center gap-2"><ArrowDownLeft size={16} className="text-red-500" /> Record Outbound Payment</h3>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Date *</label>
+            <input type="date" value={date} onChange={e => setDate(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Method *</label>
+            <select value={method} onChange={e => setMethod(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
+              <option value="cash">Cash</option>
+              <option value="bank_transfer">Bank Transfer</option>
+              <option value="cheque">Cheque</option>
+              <option value="esewa">eSewa</option>
+              <option value="khalti">Khalti</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Amount *</label>
+          <input type="number" min={0} step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+        </div>
+        {needsBank && (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Bank Account</label>
+            <select value={bankAccId} onChange={e => setBankAccId(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
+              <option value="">Select bank account…</option>
+              {bankAccounts.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </div>
+        )}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Link to Bill (optional)</label>
+          <select value={billId} onChange={e => setBillId(e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
+            <option value="">— No bill —</option>
+            {openBills?.results?.map(b => <option key={b.id} value={b.id}>{b.bill_number} — {b.supplier_name} ({npr(b.amount_due)} due)</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Reference</label>
+          <input value={reference} onChange={e => setReference(e.target.value)} placeholder="Cheque #, txn ref…"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Optional notes"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 resize-none" />
+        </div>
+        <button onClick={() => mutate.mutate()} disabled={mutate.isPending || !amount || !date}
+          className="w-full py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+          {mutate.isPending ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Record Payment
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        <h3 className="font-semibold text-gray-700 text-sm flex items-center gap-2"><Clock size={14} className="text-gray-400" /> Recent Outbound Payments</h3>
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-gray-50 border-b border-gray-100">
+              <tr>{['Date', 'Method', 'Bill', 'Amount'].map(h => (
+                <th key={h} className="px-3 py-2 text-left text-gray-400 font-medium">{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {(recentPayments?.results ?? []).length === 0 ? (
+                <tr><td colSpan={4} className="py-8 text-center text-gray-400">No recent payments</td></tr>
+              ) : recentPayments?.results?.map(p => (
+                <tr key={p.id} className="hover:bg-gray-50/60">
+                  <td className="px-3 py-2.5 text-gray-500"><DateDisplay value={p.date} /></td>
+                  <td className="px-3 py-2.5 capitalize text-gray-500">{(p.method ?? '').replace('_', ' ')}</td>
+                  <td className="px-3 py-2.5 text-gray-400">{p.bill_number || '—'}</td>
+                  <td className="px-3 py-2.5 font-semibold text-red-600 tabular-nums">{npr(p.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Quick Receipt Tab ──────────────────────────────────────────────────────
+
+function QuickReceiptTab() {
+  const qc = useQueryClient()
+  const today = new Date().toISOString().slice(0, 10)
+  const [date, setDate]           = useState(today)
+  const [method, setMethod]       = useState('cash')
+  const [amount, setAmount]       = useState('')
+  const [bankAccId, setBankAccId] = useState('')
+  const [invoiceId, setInvoiceId] = useState('')
+  const [reference, setReference] = useState('')
+  const [notes, setNotes]         = useState('')
+
+  const { data: bankAccounts = [] } = useQuery<BankAccount[]>({
+    queryKey: ['bank-accounts'],
+    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS).then(r => toPage<BankAccount>(r.data).results),
+  })
+  const { data: openInvoices } = useQuery<ApiPage<Invoice>>({
+    queryKey: ['invoices', 'open-quick'],
+    queryFn: () => apiClient.get(`${ACCOUNTING.INVOICES}?status=sent&page_size=200`).then(r => toPage<Invoice>(r.data)),
+  })
+  const { data: recentPayments } = useQuery<ApiPage<Payment>>({
+    queryKey: ['payments', 'incoming-recent'],
+    queryFn: () => apiClient.get(`${ACCOUNTING.PAYMENTS}?type=incoming&page_size=10`).then(r => toPage<Payment>(r.data)),
+  })
+
+  const mutate = useMutation({
+    mutationFn: () => apiClient.post(ACCOUNTING.PAYMENTS, {
+      type: 'incoming', date, method, amount,
+      bank_account: bankAccId ? Number(bankAccId) : null,
+      invoice: invoiceId ? Number(invoiceId) : null,
+      reference, notes,
+    }),
+    onSuccess: () => {
+      toast.success('Receipt recorded')
+      setAmount(''); setReference(''); setNotes(''); setInvoiceId('')
+      qc.invalidateQueries({ queryKey: ['payments'] })
+      qc.invalidateQueries({ queryKey: ['invoices'] })
+    },
+    onError: () => toast.error('Failed to record receipt'),
+  })
+
+  const needsBank = method === 'bank_transfer' || method === 'cheque'
+
+  return (
+    <div className="grid grid-cols-2 gap-6">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
+        <h3 className="font-semibold text-gray-900 flex items-center gap-2"><ArrowUpRight size={16} className="text-green-500" /> Record Inbound Receipt</h3>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Date *</label>
+            <input type="date" value={date} onChange={e => setDate(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Method *</label>
+            <select value={method} onChange={e => setMethod(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
+              <option value="cash">Cash</option>
+              <option value="bank_transfer">Bank Transfer</option>
+              <option value="cheque">Cheque</option>
+              <option value="esewa">eSewa</option>
+              <option value="khalti">Khalti</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Amount *</label>
+          <input type="number" min={0} step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+        </div>
+        {needsBank && (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Bank Account</label>
+            <select value={bankAccId} onChange={e => setBankAccId(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
+              <option value="">Select bank account…</option>
+              {bankAccounts.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </div>
+        )}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Link to Invoice (optional)</label>
+          <select value={invoiceId} onChange={e => setInvoiceId(e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
+            <option value="">— No invoice —</option>
+            {openInvoices?.results?.map(inv => <option key={inv.id} value={inv.id}>{inv.invoice_number} — {inv.customer_name} ({npr(inv.amount_due)} due)</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Reference</label>
+          <input value={reference} onChange={e => setReference(e.target.value)} placeholder="Cheque #, txn ref…"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Optional notes"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 resize-none" />
+        </div>
+        <button onClick={() => mutate.mutate()} disabled={mutate.isPending || !amount || !date}
+          className="w-full py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+          {mutate.isPending ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Record Receipt
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        <h3 className="font-semibold text-gray-700 text-sm flex items-center gap-2"><Clock size={14} className="text-gray-400" /> Recent Inbound Receipts</h3>
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-gray-50 border-b border-gray-100">
+              <tr>{['Date', 'Method', 'Invoice', 'Amount'].map(h => (
+                <th key={h} className="px-3 py-2 text-left text-gray-400 font-medium">{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {(recentPayments?.results ?? []).length === 0 ? (
+                <tr><td colSpan={4} className="py-8 text-center text-gray-400">No recent receipts</td></tr>
+              ) : recentPayments?.results?.map(p => (
+                <tr key={p.id} className="hover:bg-gray-50/60">
+                  <td className="px-3 py-2.5 text-gray-500"><DateDisplay value={p.date} /></td>
+                  <td className="px-3 py-2.5 capitalize text-gray-500">{(p.method ?? '').replace('_', ' ')}</td>
+                  <td className="px-3 py-2.5 text-gray-400">{p.invoice_number || '—'}</td>
+                  <td className="px-3 py-2.5 font-semibold text-green-600 tabular-nums">{npr(p.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Cash Transfers Tab ─────────────────────────────────────────────────────
+
+function CashTransfersTab() {
+  const qc = useQueryClient()
+  const today = new Date().toISOString().slice(0, 10)
+  const [date, setDate]         = useState(today)
+  const [fromAcc, setFromAcc]   = useState('')
+  const [toAcc, setToAcc]       = useState('')
+  const [amount, setAmount]     = useState('')
+  const [reference, setReference] = useState('')
+  const [recentJournals, setRecentJournals] = useState<JournalEntry[]>([])
+
+  const { data: bankAccounts = [], isLoading: loadingBanks } = useQuery<BankAccount[]>({
+    queryKey: ['bank-accounts'],
+    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS).then(r => r.data?.results ?? r.data),
+  })
+
+  // Load recent cash-transfer journals
+  const { data: journalPage } = useQuery<ApiPage<JournalEntry>>({
+    queryKey: ['journals', 'cash-transfer'],
+    queryFn: () => apiClient.get(`${ACCOUNTING.JOURNALS}?description=Cash+Transfer&page_size=10`).then(r => toPage<JournalEntry>(r.data)),
+  })
+  const fromBank  = bankAccounts.find(b => String(b.id) === fromAcc)
+  const toBank    = bankAccounts.find(b => String(b.id) === toAcc)
+
+  const mutate = useMutation({
+    mutationFn: () => {
+      if (!fromBank?.linked_account || !toBank?.linked_account) throw new Error('Bank accounts must have linked CoA accounts')
+      return apiClient.post(ACCOUNTING.JOURNALS, {
+        date,
+        description: `Cash Transfer: ${fromBank.name} → ${toBank.name}`,
+        reference,
+        lines: [
+          { account: toBank.linked_account,   debit: amount, credit: '0',    description: `Transfer in from ${fromBank.name}` },
+          { account: fromBank.linked_account, debit: '0',    credit: amount, description: `Transfer out to ${toBank.name}` },
+        ],
+      })
+    },
+    onSuccess: () => {
+      toast.success('Cash transfer recorded')
+      setAmount(''); setReference(''); setFromAcc(''); setToAcc('')
+      qc.invalidateQueries({ queryKey: ['journals', 'cash-transfer'] })
+      qc.invalidateQueries({ queryKey: ['bank-accounts'] })
+    },
+    onError: (e: { message?: string }) => toast.error(e?.message ?? 'Transfer failed'),
+  })
+
+  const fromOptions = bankAccounts.filter(b => String(b.id) !== toAcc)
+  const toOptions   = bankAccounts.filter(b => String(b.id) !== fromAcc)
+  const canSubmit   = fromAcc && toAcc && fromAcc !== toAcc && Number(amount) > 0
+
+  return (
+    <div className="grid grid-cols-2 gap-6">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
+        <h3 className="font-semibold text-gray-900 flex items-center gap-2"><ArrowRightLeft size={16} className="text-indigo-500" /> Internal Fund Transfer</h3>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Date *</label>
+          <input type="date" value={date} onChange={e => setDate(e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">From Account *</label>
+          <select value={fromAcc} onChange={e => setFromAcc(e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
+            <option value="">Select account…</option>
+            {fromOptions.map(b => <option key={b.id} value={b.id}>{b.name} ({b.currency})</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">To Account *</label>
+          <select value={toAcc} onChange={e => setToAcc(e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
+            <option value="">Select account…</option>
+            {toOptions.map(b => <option key={b.id} value={b.id}>{b.name} ({b.currency})</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Amount *</label>
+          <input type="number" min={0} step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Reference</label>
+          <input value={reference} onChange={e => setReference(e.target.value)} placeholder="Transfer reference"
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+        </div>
+        {fromBank && !fromBank.linked_account && (
+          <p className="text-xs text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">
+            "{fromBank.name}" has no linked CoA account. Link it in Bank Accounts settings before transferring.
+          </p>
+        )}
+        {toBank && !toBank.linked_account && (
+          <p className="text-xs text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">
+            "{toBank.name}" has no linked CoA account. Link it in Bank Accounts settings before transferring.
+          </p>
+        )}
+        <button onClick={() => mutate.mutate()} disabled={mutate.isPending || !canSubmit || loadingBanks}
+          className="w-full py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+          {mutate.isPending ? <Loader2 size={15} className="animate-spin" /> : <ArrowRightLeft size={15} />} Record Transfer
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        <h3 className="font-semibold text-gray-700 text-sm flex items-center gap-2"><Clock size={14} className="text-gray-400" /> Recent Transfers</h3>
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-gray-50 border-b border-gray-100">
+              <tr>{['Date', 'Description', 'Ref', 'Status'].map(h => (
+                <th key={h} className="px-3 py-2 text-left text-gray-400 font-medium">{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {(journalPage?.results ?? []).length === 0 ? (
+                <tr><td colSpan={4} className="py-8 text-center text-gray-400">No transfers yet</td></tr>
+              ) : journalPage?.results?.map(j => (
+                <tr key={j.id} className="hover:bg-gray-50/60">
+                  <td className="px-3 py-2.5 text-gray-500"><DateDisplay value={j.date} /></td>
+                  <td className="px-3 py-2.5 text-gray-600 max-w-[180px] truncate">{j.description}</td>
+                  <td className="px-3 py-2.5 text-gray-400 font-mono">{j.entry_number}</td>
+                  <td className="px-3 py-2.5"><Badge status={j.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Allocate Customer Payments Tab ────────────────────────────────────────
+
+function AllocateCustomerPaymentsTab() {
+  const qc = useQueryClient()
+  const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null)
+  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null)
+
+  const { data: unallocated, isLoading: loadingPay } = useQuery<ApiPage<Payment>>({
+    queryKey: ['payments', 'unallocated-incoming'],
+    queryFn: () => apiClient.get(`${ACCOUNTING.PAYMENTS}?type=incoming&invoice=null&page_size=100`).then(r => toPage<Payment>(r.data)),
+  })
+  const { data: openInvoices, isLoading: loadingInv } = useQuery<ApiPage<Invoice>>({
+    queryKey: ['invoices', 'open-allocate'],
+    queryFn: () => apiClient.get(`${ACCOUNTING.INVOICES}?status=sent&page_size=200`).then(r => toPage<Invoice>(r.data)),
+  })
+
+  const mutate = useMutation({
+    mutationFn: () => apiClient.post(ACCOUNTING.PAYMENT_ALLOCATE(selectedPayment!.id), { invoice: selectedInvoice!.id }),
+    onSuccess: () => {
+      toast.success(`Payment ${selectedPayment?.payment_number} allocated to ${selectedInvoice?.invoice_number}`)
+      setSelectedPayment(null); setSelectedInvoice(null)
+      qc.invalidateQueries({ queryKey: ['payments'] }); qc.invalidateQueries({ queryKey: ['invoices'] })
+    },
+    onError: () => toast.error('Allocation failed'),
+  })
+
+  const canAllocate = selectedPayment && selectedInvoice
+
+  return (
+    <div className="space-y-4">
+      {canAllocate && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-5 py-3.5 flex items-center justify-between">
+          <div className="text-sm text-indigo-800">
+            <span className="font-semibold">{selectedPayment.payment_number}</span> ({npr(selectedPayment.amount)})
+            <span className="mx-2 text-indigo-400">→</span>
+            <span className="font-semibold">{selectedInvoice.invoice_number}</span> ({selectedInvoice.customer_name}, {npr(selectedInvoice.amount_due)} due)
+          </div>
+          <button onClick={() => mutate.mutate()} disabled={mutate.isPending}
+            className="px-4 py-1.5 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center gap-2">
+            {mutate.isPending ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />} Allocate
+          </button>
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <h3 className="font-semibold text-sm text-gray-700 mb-2 flex items-center gap-2">
+            <CircleDollarSign size={14} className="text-green-500" /> Unallocated Receipts
+            <span className="text-xs text-gray-400 font-normal">(click to select)</span>
+          </h3>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            {loadingPay ? <div className="py-8 flex justify-center"><Loader2 size={20} className="animate-spin text-indigo-400" /></div> : (
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-100">
+                  <tr>{['Receipt #', 'Date', 'Amount'].map(h => (
+                    <th key={h} className="px-3 py-2.5 text-left text-xs text-gray-400 font-medium">{h}</th>
+                  ))}</tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {(unallocated?.results ?? []).length === 0 ? (
+                    <tr><td colSpan={3} className="py-8 text-center text-xs text-gray-400">No unallocated receipts</td></tr>
+                  ) : unallocated?.results?.map(p => (
+                    <tr key={p.id} onClick={() => setSelectedPayment(selectedPayment?.id === p.id ? null : p)}
+                      className={`cursor-pointer transition-colors ${selectedPayment?.id === p.id ? 'bg-indigo-50 ring-1 ring-indigo-300 ring-inset' : 'hover:bg-gray-50/60'}`}>
+                      <td className="px-3 py-2.5 font-mono text-xs text-indigo-600">{p.payment_number}</td>
+                      <td className="px-3 py-2.5 text-gray-500"><DateDisplay value={p.date} /></td>
+                      <td className="px-3 py-2.5 font-semibold text-green-700 tabular-nums">{npr(p.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <h3 className="font-semibold text-sm text-gray-700 mb-2 flex items-center gap-2">
+            <FileText size={14} className="text-blue-500" /> Open Invoices
+            <span className="text-xs text-gray-400 font-normal">(click to select)</span>
+          </h3>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            {loadingInv ? <div className="py-8 flex justify-center"><Loader2 size={20} className="animate-spin text-indigo-400" /></div> : (
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-100">
+                  <tr>{['Invoice #', 'Customer', 'Due'].map(h => (
+                    <th key={h} className="px-3 py-2.5 text-left text-xs text-gray-400 font-medium">{h}</th>
+                  ))}</tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {(openInvoices?.results ?? []).length === 0 ? (
+                    <tr><td colSpan={3} className="py-8 text-center text-xs text-gray-400">No open invoices</td></tr>
+                  ) : openInvoices?.results?.map(inv => (
+                    <tr key={inv.id} onClick={() => setSelectedInvoice(selectedInvoice?.id === inv.id ? null : inv)}
+                      className={`cursor-pointer transition-colors ${selectedInvoice?.id === inv.id ? 'bg-indigo-50 ring-1 ring-indigo-300 ring-inset' : 'hover:bg-gray-50/60'}`}>
+                      <td className="px-3 py-2.5 font-mono text-xs text-indigo-600">{inv.invoice_number}</td>
+                      <td className="px-3 py-2.5 text-gray-500 truncate max-w-[120px]">{inv.customer_name}</td>
+                      <td className="px-3 py-2.5 font-semibold text-blue-700 tabular-nums">{npr(inv.amount_due)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+      {!canAllocate && (
+        <p className="text-xs text-center text-gray-400 pt-2">Select one receipt and one invoice above, then click Allocate.</p>
+      )}
+    </div>
+  )
+}
+
+// ─── Allocate Supplier Payments Tab ────────────────────────────────────────
+
+function AllocateSupplierPaymentsTab() {
+  const qc = useQueryClient()
+  const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null)
+  const [selectedBill, setSelectedBill]       = useState<Bill | null>(null)
+
+  const { data: unallocated, isLoading: loadingPay } = useQuery<ApiPage<Payment>>({
+    queryKey: ['payments', 'unallocated-outgoing'],
+    queryFn: () => apiClient.get(`${ACCOUNTING.PAYMENTS}?type=outgoing&bill=null&page_size=100`).then(r => toPage<Payment>(r.data)),
+  })
+  const { data: openBills, isLoading: loadingBills } = useQuery<ApiPage<Bill>>({
+    queryKey: ['bills', 'open-allocate'],
+    queryFn: () => apiClient.get(`${ACCOUNTING.BILLS}?status=approved&page_size=200`).then(r => toPage<Bill>(r.data)),
+  })
+
+  const mutate = useMutation({
+    mutationFn: () => apiClient.post(ACCOUNTING.PAYMENT_ALLOCATE(selectedPayment!.id), { bill: selectedBill!.id }),
+    onSuccess: () => {
+      toast.success(`Payment ${selectedPayment?.payment_number} allocated to ${selectedBill?.bill_number}`)
+      setSelectedPayment(null); setSelectedBill(null)
+      qc.invalidateQueries({ queryKey: ['payments'] }); qc.invalidateQueries({ queryKey: ['bills'] })
+    },
+    onError: () => toast.error('Allocation failed'),
+  })
+
+  const canAllocate = selectedPayment && selectedBill
+
+  return (
+    <div className="space-y-4">
+      {canAllocate && (
+        <div className="bg-orange-50 border border-orange-200 rounded-xl px-5 py-3.5 flex items-center justify-between">
+          <div className="text-sm text-orange-800">
+            <span className="font-semibold">{selectedPayment.payment_number}</span> ({npr(selectedPayment.amount)})
+            <span className="mx-2 text-orange-400">→</span>
+            <span className="font-semibold">{selectedBill.bill_number}</span> ({selectedBill.supplier_name}, {npr(selectedBill.amount_due)} due)
+          </div>
+          <button onClick={() => mutate.mutate()} disabled={mutate.isPending}
+            className="px-4 py-1.5 bg-orange-600 text-white text-sm rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 flex items-center gap-2">
+            {mutate.isPending ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />} Allocate
+          </button>
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <h3 className="font-semibold text-sm text-gray-700 mb-2 flex items-center gap-2">
+            <CircleDollarSign size={14} className="text-orange-500" /> Unallocated Payments
+            <span className="text-xs text-gray-400 font-normal">(click to select)</span>
+          </h3>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            {loadingPay ? <div className="py-8 flex justify-center"><Loader2 size={20} className="animate-spin text-indigo-400" /></div> : (
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-100">
+                  <tr>{['Payment #', 'Date', 'Amount'].map(h => (
+                    <th key={h} className="px-3 py-2.5 text-left text-xs text-gray-400 font-medium">{h}</th>
+                  ))}</tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {(unallocated?.results ?? []).length === 0 ? (
+                    <tr><td colSpan={3} className="py-8 text-center text-xs text-gray-400">No unallocated payments</td></tr>
+                  ) : unallocated?.results?.map(p => (
+                    <tr key={p.id} onClick={() => setSelectedPayment(selectedPayment?.id === p.id ? null : p)}
+                      className={`cursor-pointer transition-colors ${selectedPayment?.id === p.id ? 'bg-orange-50 ring-1 ring-orange-300 ring-inset' : 'hover:bg-gray-50/60'}`}>
+                      <td className="px-3 py-2.5 font-mono text-xs text-indigo-600">{p.payment_number}</td>
+                      <td className="px-3 py-2.5 text-gray-500"><DateDisplay value={p.date} /></td>
+                      <td className="px-3 py-2.5 font-semibold text-red-700 tabular-nums">{npr(p.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <h3 className="font-semibold text-sm text-gray-700 mb-2 flex items-center gap-2">
+            <FileText size={14} className="text-orange-500" /> Outstanding Bills
+            <span className="text-xs text-gray-400 font-normal">(click to select)</span>
+          </h3>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            {loadingBills ? <div className="py-8 flex justify-center"><Loader2 size={20} className="animate-spin text-indigo-400" /></div> : (
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-100">
+                  <tr>{['Bill #', 'Supplier', 'Due'].map(h => (
+                    <th key={h} className="px-3 py-2.5 text-left text-xs text-gray-400 font-medium">{h}</th>
+                  ))}</tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {(openBills?.results ?? []).length === 0 ? (
+                    <tr><td colSpan={3} className="py-8 text-center text-xs text-gray-400">No outstanding bills</td></tr>
+                  ) : openBills?.results?.map(bill => (
+                    <tr key={bill.id} onClick={() => setSelectedBill(selectedBill?.id === bill.id ? null : bill)}
+                      className={`cursor-pointer transition-colors ${selectedBill?.id === bill.id ? 'bg-orange-50 ring-1 ring-orange-300 ring-inset' : 'hover:bg-gray-50/60'}`}>
+                      <td className="px-3 py-2.5 font-mono text-xs text-indigo-600">{bill.bill_number}</td>
+                      <td className="px-3 py-2.5 text-gray-500 truncate max-w-[120px]">{bill.supplier_name}</td>
+                      <td className="px-3 py-2.5 font-semibold text-orange-700 tabular-nums">{npr(bill.amount_due)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+      {!canAllocate && (
+        <p className="text-xs text-center text-gray-400 pt-2">Select one payment and one bill above, then click Allocate.</p>
+      )}
+    </div>
+  )
+}
+
 // ─── Supplier type (inventory) ─────────────────────────────────────────────
 
 interface InventorySupplier {
@@ -7212,24 +8305,77 @@ interface InventorySupplier {
   phone: string; city: string; is_active: boolean
 }
 
+// ─── Supplier Create Modal ─────────────────────────────────────────────────
+
+function SupplierCreateModal({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient()
+  const [name, setName]                   = useState('')
+  const [contactPerson, setContactPerson] = useState('')
+  const [email, setEmail]                 = useState('')
+  const [phone, setPhone]                 = useState('')
+  const [city, setCity]                   = useState('')
+
+  const mutation = useMutation({
+    mutationFn: () => apiClient.post(INVENTORY.SUPPLIERS, {
+      name, contact_person: contactPerson, email, phone, city, is_active: true,
+    }),
+    onSuccess: () => {
+      toast.success('Supplier added')
+      qc.invalidateQueries({ queryKey: ['inventory-suppliers'] })
+      qc.invalidateQueries({ queryKey: ['inventory-suppliers-select'] })
+      onClose()
+    },
+    onError: (e: { response?: { data?: { detail?: string } } }) =>
+      toast.error(e?.response?.data?.detail ?? 'Failed to add supplier'),
+  })
+
+  return (
+    <Modal title="New Supplier" onClose={onClose}>
+      <form onSubmit={e => { e.preventDefault(); mutation.mutate() }} className="space-y-4">
+        <Field label="Supplier Name *">
+          <input value={name} onChange={e => setName(e.target.value)} className={inputCls} required placeholder="Supplier / vendor name" />
+        </Field>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Contact Person">
+            <input value={contactPerson} onChange={e => setContactPerson(e.target.value)} className={inputCls} placeholder="Full name" />
+          </Field>
+          <Field label="Phone">
+            <input value={phone} onChange={e => setPhone(e.target.value)} className={inputCls} placeholder="Phone number" />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Email">
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} className={inputCls} placeholder="email@example.com" />
+          </Field>
+          <Field label="City">
+            <input value={city} onChange={e => setCity(e.target.value)} className={inputCls} placeholder="City" />
+          </Field>
+        </div>
+        <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">Cancel</button>
+          <button type="submit" disabled={mutation.isPending || !name.trim()}
+            className="px-5 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2">
+            {mutation.isPending && <Loader2 size={14} className="animate-spin" />}
+            Add Supplier
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 // ─── Suppliers Tab (Accounts Payable view) ──────────────────────────────────
 
 function SuppliersTab() {
   const { fyYear } = useFY()
+  const [showCreate, setShowCreate] = useState(false)
   const { data: suppliers = [], isLoading } = useQuery<InventorySupplier[]>({
     queryKey: ['inventory-suppliers'],
-    queryFn: () => apiClient.get(`${INVENTORY.SUPPLIERS}?page_size=500`).then(r => {
-      const d = r.data
-      if (Array.isArray(d)) return d
-      return d?.data?.results ?? d?.results ?? d?.data ?? []
-    }),
+    queryFn: () => apiClient.get(`${INVENTORY.SUPPLIERS}?page_size=500`).then(r => toPage<InventorySupplier>(r.data).results),
   })
   const { data: bills = [] } = useQuery<Bill[]>({
     queryKey: ['bills', 'all', fyYear],
-    queryFn: () => apiClient.get(addFyParam(`${ACCOUNTING.BILLS}?page_size=500`, fyYear)).then(r => {
-      const d = r.data
-      return d?.data?.results ?? d?.results ?? (Array.isArray(d) ? d : [])
-    }),
+    queryFn: () => apiClient.get(addFyParam(`${ACCOUNTING.BILLS}?page_size=500`, fyYear)).then(r => toPage<Bill>(r.data).results),
   })
 
   // Aggregate bills per supplier
@@ -7246,12 +8392,18 @@ function SuppliersTab() {
 
   return (
     <div className="space-y-4">
+      {showCreate && <SupplierCreateModal onClose={() => setShowCreate(false)} />}
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
         <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
           <h3 className="font-semibold text-sm text-gray-800 flex items-center gap-2">
             <Truck size={15} className="text-orange-500" /> Suppliers
           </h3>
-          <span className="text-xs text-gray-400">{suppliers.length} suppliers</span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-400">{suppliers.length} suppliers</span>
+            <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors">
+              <Plus size={14} /> New Supplier
+            </button>
+          </div>
         </div>
         {isLoading ? <div className="py-12"><Spinner /></div> : (
           <table className="w-full text-sm">
@@ -7262,7 +8414,7 @@ function SuppliersTab() {
             </thead>
             <tbody className="divide-y divide-gray-50">
               {supplierStats.length === 0 ? (
-                <tr><td colSpan={7} className="py-12 text-center text-sm text-gray-400">No suppliers yet. Add suppliers from Inventory → Suppliers.</td></tr>
+                <tr><td colSpan={7} className="py-12 text-center text-sm text-gray-400">No suppliers found.</td></tr>
               ) : supplierStats.map(s => (
                 <tr key={s.id} className="hover:bg-gray-50/60">
                   <td className="px-4 py-3 font-medium text-gray-800">{s.name}</td>
@@ -7441,10 +8593,13 @@ function SupplierPaymentsTab() {
         ))}
       </div>
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-        <div className="px-5 py-3 border-b border-gray-100">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
           <h3 className="font-semibold text-sm text-gray-800 flex items-center gap-2">
             <Truck size={14} className="text-orange-500" /> Supplier Payments
           </h3>
+          <a href="?tab=quick-payment" className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors">
+            <Plus size={14} /> Record Payment
+          </a>
         </div>
         {isLoading ? <div className="py-12"><Spinner /></div> : (
           <table className="w-full text-sm">
@@ -7508,18 +8663,18 @@ export default function AccountingPage() {
       case 'day-book':              return <DayBookTab />
       case 'expenses':              return <ExpensesTab />
       // Sales
-      case 'sales-orders':          return <ComingSoonTab title="Sales Orders" hint="Create and manage sales orders before converting to invoices." />
+      case 'sales-orders':          return <SalesOrdersTab />
       case 'customer-payments':     return <CustomerPaymentsTab />
-      case 'allocate-customer-payments': return <ComingSoonTab title="Allocate Customer Payments" hint="Match unallocated receipts against open invoices." />
+      case 'allocate-customer-payments': return <AllocateCustomerPaymentsTab />
       // Purchases
       case 'suppliers':             return <SuppliersTab />
-      case 'purchase-orders':       return <ComingSoonTab title="Purchase Orders" hint="Raise purchase orders and track fulfilment from suppliers." />
+      case 'purchase-orders':       return <PurchaseOrdersTab />
       case 'supplier-payments':     return <SupplierPaymentsTab />
-      case 'allocate-supplier-payments': return <ComingSoonTab title="Allocate Supplier Payments" hint="Match payments against outstanding bills." />
+      case 'allocate-supplier-payments': return <AllocateSupplierPaymentsTab />
       // Banking tools
-      case 'cash-transfers':        return <ComingSoonTab title="Cash Transfers" hint="Record internal fund transfers between accounts." />
-      case 'quick-payment':         return <ComingSoonTab title="Quick Payment" hint="Fast-track recording an outbound payment without a bill." />
-      case 'quick-receipt':         return <ComingSoonTab title="Quick Receipt" hint="Fast-track recording an inbound receipt without an invoice." />
+      case 'cash-transfers':        return <CashTransfersTab />
+      case 'quick-payment':         return <QuickPaymentTab />
+      case 'quick-receipt':         return <QuickReceiptTab />
       case 'cheque-register':       return <ChequeRegisterTab />
       case 'journal-voucher':       return <JournalsTab />
       default:             return <DashboardTab />
