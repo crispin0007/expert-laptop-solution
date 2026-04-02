@@ -5007,7 +5007,7 @@ ${el.innerHTML}
 
   const { data: reportData, isLoading, refetch } = useQuery<Record<string, unknown>>({
     queryKey: ['report', reportKey, dateFrom, dateTo],
-    queryFn: () => apiClient.get(report.endpoint + params).then(r => r.data),
+    queryFn: () => apiClient.get(report.endpoint + params).then(r => r.data?.data ?? r.data),
     enabled: false,
   })
 
@@ -6749,7 +6749,7 @@ function LedgerTab() {
 
   const { data: ledger, isLoading, isFetching } = useQuery<LedgerReport>({
     queryKey: ['ledger', accountCode, dateFrom, dateTo],
-    queryFn: () => apiClient.get(`${ACCOUNTING.REPORT_LEDGER}?account_code=${accountCode}&date_from=${dateFrom}&date_to=${dateTo}`).then(r => r.data),
+    queryFn: () => apiClient.get(`${ACCOUNTING.REPORT_LEDGER}?account_code=${accountCode}&date_from=${dateFrom}&date_to=${dateTo}`).then(r => r.data?.data ?? r.data),
     enabled: submitted && !!accountCode,
   })
 
@@ -6855,7 +6855,7 @@ function DayBookTab() {
 
   const { data: dayBook, isLoading, isFetching } = useQuery<DayBookReport>({
     queryKey: ['day-book', date],
-    queryFn: () => apiClient.get(`${ACCOUNTING.REPORT_DAY_BOOK}?date=${date}`).then(r => r.data),
+    queryFn: () => apiClient.get(`${ACCOUNTING.REPORT_DAY_BOOK}?date=${date}`).then(r => r.data?.data ?? r.data),
     enabled: submitted,
   })
 
