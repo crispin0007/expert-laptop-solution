@@ -6,7 +6,7 @@ from .views import (
     BillViewSet, PaymentViewSet, CreditNoteViewSet, ReportViewSet,
     QuotationViewSet, DebitNoteViewSet, TDSEntryViewSet,
     BankReconciliationViewSet, RecurringJournalViewSet,
-    StaffSalaryProfileViewSet,
+    StaffSalaryProfileViewSet, ExpenseViewSet,
     VATRemittanceView, TDSRemittanceView,
 )
 
@@ -45,6 +45,9 @@ router.register(r'recurring-journals', RecurringJournalViewSet, basename='recurr
 router.register(r'coins', CoinTransactionViewSet, basename='coin-transaction')
 router.register(r'payslips', PayslipViewSet, basename='payslip')
 router.register(r'salary-profiles', StaffSalaryProfileViewSet, basename='salary-profile')
+
+# Expenses
+router.register(r'expenses', ExpenseViewSet, basename='expense')
 
 urlpatterns = [
     path('', include(router.urls)),

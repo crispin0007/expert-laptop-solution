@@ -166,6 +166,16 @@ interface CoinTx {
   approved_by_name: string | null; created_at: string
 }
 interface Customer { id: number; name: string }
+interface Expense {
+  id: number; category: string; category_display: string; description: string
+  amount: string; date: string; account: number | null; account_name: string
+  receipt_url: string; notes: string; status: string; status_display: string
+  submitted_by: number; submitted_by_name: string
+  approved_by: number | null; approved_by_name: string | null; approved_at: string | null
+  rejected_by: number | null; rejected_by_name: string | null; rejected_at: string | null
+  rejection_note: string; is_recurring: boolean; recur_interval: number | null
+  next_recur_date: string | null; journal_entry: number | null; created_at: string
+}
 
 // ── New entity types ──────────────────────────────────────────────────────────
 interface Quotation {
@@ -325,6 +335,7 @@ const TABS = [
   { key: 'recurring-journals', label: 'Recurring Journals', icon: Repeat2         },
   { key: 'ledger',             label: 'Ledger',             icon: BookMarked      },
   { key: 'day-book',           label: 'Day Book',           icon: CalendarDays    },
+  { key: 'expenses',           label: 'Expenses',           icon: Receipt         },
 ] as const
 
 // ─── Dashboard Tab ─────────────────────────────────────────────────────────
@@ -420,6 +431,7 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
   const [customerId, setCustomerId] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
+  const [applyVat, setApplyVat] = useState(true)
   const [lines, setLines] = useState<LineItemDraft[]>([emptyLine()])
 
   const { data: customers } = useQuery<ApiPage<Customer>>({
@@ -469,6 +481,7 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
       customer: customerId ? Number(customerId) : null,
       due_date: dueDate || null,
       notes,
+      apply_vat: applyVat,
       line_items: lines
         .filter(l => l.description && l.unit_price)
         .map(l => ({ description: l.description, qty: Number(l.qty), unit_price: l.unit_price, discount: l.discount || '0', line_type: l.line_type || 'service' })),
@@ -481,6 +494,8 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
     const disc = gross * (Number(l.discount) / 100)
     return s + gross - disc
   }, 0)
+  const vatAmount = applyVat ? subtotal * 0.13 : 0
+  const total     = subtotal + vatAmount
 
   return (
     <Modal title="New Invoice" onClose={onClose}>
@@ -579,8 +594,23 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
               </tbody>
             </table>
           </div>
-          <div className="flex justify-end mt-2 text-sm text-gray-600">
-            Subtotal: <span className="font-semibold ml-2">{npr(subtotal)}</span>
+          {/* Totals + VAT toggle */}
+          <div className="mt-3 flex flex-col items-end gap-1 text-sm text-gray-600">
+            <div className="flex items-center gap-6">
+              <span>Subtotal</span>
+              <span className="font-semibold w-28 text-right">{npr(subtotal)}</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                <input type="checkbox" checked={applyVat} onChange={e => setApplyVat(e.target.checked)} className="rounded border-gray-300 text-indigo-600" />
+                <span className="text-xs text-gray-500">VAT 13%</span>
+              </label>
+              <span className={`w-28 text-right ${applyVat ? 'text-gray-700' : 'text-gray-300'}`}>+ {npr(vatAmount)}</span>
+            </div>
+            <div className="flex items-center gap-6 pt-1 border-t border-gray-200">
+              <span className="font-semibold text-gray-800">Total</span>
+              <span className="font-bold text-indigo-700 w-28 text-right">{npr(total)}</span>
+            </div>
           </div>
         </div>
 
@@ -5936,6 +5966,348 @@ function DayBookTab() {
   )
 }
 
+// ─── Expense Create/Edit Modal ───────────────────────────────────────────────
+
+const EXPENSE_CATEGORIES = [
+  { value: 'travel',          label: 'Travel' },
+  { value: 'meals',           label: 'Meals & Entertainment' },
+  { value: 'office_supplies', label: 'Office Supplies' },
+  { value: 'utilities',       label: 'Utilities' },
+  { value: 'maintenance',     label: 'Maintenance & Repairs' },
+  { value: 'marketing',       label: 'Marketing' },
+  { value: 'training',        label: 'Training' },
+  { value: 'other',           label: 'Other' },
+] as const
+
+interface ExpenseModalProps {
+  expense?: Expense | null
+  onClose: () => void
+}
+
+function ExpenseCreateModal({ expense, onClose }: ExpenseModalProps) {
+  const qc = useQueryClient()
+  const isEdit = !!expense
+  const [form, setForm] = useState({
+    category: expense?.category ?? 'other',
+    description: expense?.description ?? '',
+    amount: expense?.amount ?? '',
+    date: expense?.date ?? new Date().toISOString().slice(0, 10),
+    account: expense?.account?.toString() ?? '',
+    receipt_url: expense?.receipt_url ?? '',
+    notes: expense?.notes ?? '',
+    is_recurring: expense?.is_recurring ?? false,
+    recur_interval: expense?.recur_interval?.toString() ?? '',
+    next_recur_date: expense?.next_recur_date ?? '',
+  })
+
+  const { data: coaData } = useQuery({
+    queryKey: ['expense-coa'],
+    queryFn: () => apiClient.get(ACCOUNTING.ACCOUNTS + '?page_size=200&type=expense').then(r => r.data?.results ?? r.data?.data ?? []),
+  })
+
+  const mutate = useMutation({
+    mutationFn: (payload: Record<string, unknown>) =>
+      isEdit
+        ? apiClient.put(ACCOUNTING.EXPENSE_DETAIL(expense!.id), payload)
+        : apiClient.post(ACCOUNTING.EXPENSES, payload),
+    onSuccess: () => {
+      toast.success(isEdit ? 'Expense updated' : 'Expense created')
+      qc.invalidateQueries({ queryKey: ['expenses'] })
+      onClose()
+    },
+    onError: (e: { response?: { data?: { detail?: string } } }) =>
+      toast.error(e?.response?.data?.detail ?? 'Save failed'),
+  })
+
+  function handleSubmit(ev: React.FormEvent) {
+    ev.preventDefault()
+    const payload: Record<string, unknown> = {
+      category: form.category,
+      description: form.description,
+      amount: form.amount,
+      date: form.date,
+      notes: form.notes,
+      receipt_url: form.receipt_url,
+      is_recurring: form.is_recurring,
+    }
+    if (form.account) payload.account = Number(form.account)
+    if (form.is_recurring) {
+      if (form.recur_interval) payload.recur_interval = Number(form.recur_interval)
+      if (form.next_recur_date) payload.next_recur_date = form.next_recur_date
+    }
+    mutate.mutate(payload)
+  }
+
+  const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+    setForm(p => ({ ...p, [k]: e.target.value }))
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-y-auto max-h-[92vh]">
+        <div className="px-6 pt-6 pb-4 border-b border-gray-100 flex items-center justify-between">
+          <h2 className="text-base font-bold text-gray-900">{isEdit ? 'Edit Expense' : 'New Expense'}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors"><X size={18} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Category</label>
+              <select value={form.category} onChange={set('category')} required className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                {EXPENSE_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Amount</label>
+              <input type="number" step="0.01" min="0.01" value={form.amount} onChange={set('amount')} required className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="0.00" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1">Description</label>
+            <input type="text" value={form.description} onChange={set('description')} required maxLength={300} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="What was this expense for?" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Date</label>
+              <input type="date" value={form.date} onChange={set('date')} required className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Expense Account (optional)</label>
+              <select value={form.account} onChange={set('account')} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="">Auto-select</option>
+                {(coaData ?? []).map((a: Account) => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1">Receipt URL (optional)</label>
+            <input type="url" value={form.receipt_url} onChange={set('receipt_url')} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="https://..." />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1">Notes (optional)</label>
+            <textarea value={form.notes} onChange={set('notes')} rows={2} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none" placeholder="Additional notes..." />
+          </div>
+          <div className="flex items-center gap-2">
+            <input type="checkbox" id="is_recurring" checked={form.is_recurring} onChange={e => setForm(p => ({ ...p, is_recurring: e.target.checked }))} className="rounded border-gray-300 text-indigo-600" />
+            <label htmlFor="is_recurring" className="text-sm text-gray-700">Recurring expense</label>
+          </div>
+          {form.is_recurring && (
+            <div className="grid grid-cols-2 gap-4 pl-6 border-l-2 border-indigo-100">
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Repeat every (days)</label>
+                <input type="number" min="1" value={form.recur_interval} onChange={set('recur_interval')} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="30" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">First recurrence date</label>
+                <input type="date" value={form.next_recur_date} onChange={set('next_recur_date')} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              </div>
+            </div>
+          )}
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 border border-gray-200 rounded-lg py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
+            <button type="submit" disabled={mutate.isPending} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2 text-sm font-semibold transition-colors disabled:opacity-50">
+              {mutate.isPending ? 'Saving...' : isEdit ? 'Update' : 'Create Expense'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ─── Expenses Tab ─────────────────────────────────────────────────────────────
+
+const EXPENSE_STATUS_COLORS: Record<string, string> = {
+  draft:    'bg-gray-100 text-gray-600',
+  approved: 'bg-blue-100 text-blue-700',
+  posted:   'bg-emerald-100 text-emerald-700',
+  rejected: 'bg-red-100 text-red-700',
+}
+
+function ExpensesTab() {
+  const qc = useQueryClient()
+  const confirm = useConfirm()
+  const { can } = usePermissions()
+  const [statusFilter, setStatusFilter] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [showCreate, setShowCreate] = useState(false)
+  const [editExpense, setEditExpense] = useState<Expense | null>(null)
+  const [rejectTarget, setRejectTarget] = useState<Expense | null>(null)
+  const [rejectNote, setRejectNote] = useState('')
+
+  const { data, isLoading } = useQuery<{ results: Expense[]; count: number }>({
+    queryKey: ['expenses', statusFilter, categoryFilter, dateFrom, dateTo],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (statusFilter)   params.set('status', statusFilter)
+      if (categoryFilter) params.set('category', categoryFilter)
+      if (dateFrom)       params.set('date_from', dateFrom)
+      if (dateTo)         params.set('date_to', dateTo)
+      const qs = params.toString()
+      return apiClient.get(ACCOUNTING.EXPENSES + (qs ? `?${qs}` : '')).then(r => r.data?.data ?? r.data)
+    },
+  })
+
+  const mutateApprove = useMutation({
+    mutationFn: (id: number) => apiClient.post(ACCOUNTING.EXPENSE_APPROVE(id)),
+    onSuccess: () => { toast.success('Expense approved'); qc.invalidateQueries({ queryKey: ['expenses'] }) },
+    onError: (e: { response?: { data?: { detail?: string } } }) => toast.error(e?.response?.data?.detail ?? 'Failed'),
+  })
+  const mutateReject = useMutation({
+    mutationFn: ({ id, note }: { id: number; note: string }) => apiClient.post(ACCOUNTING.EXPENSE_REJECT(id), { note }),
+    onSuccess: () => { toast.success('Expense rejected'); qc.invalidateQueries({ queryKey: ['expenses'] }); setRejectTarget(null); setRejectNote('') },
+    onError: (e: { response?: { data?: { detail?: string } } }) => toast.error(e?.response?.data?.detail ?? 'Failed'),
+  })
+  const mutatePost = useMutation({
+    mutationFn: (id: number) => apiClient.post(ACCOUNTING.EXPENSE_POST(id)),
+    onSuccess: () => { toast.success('Expense posted to ledger'); qc.invalidateQueries({ queryKey: ['expenses'] }) },
+    onError: (e: { response?: { data?: { detail?: string } } }) => toast.error(e?.response?.data?.detail ?? 'Failed'),
+  })
+  const mutateDelete = useMutation({
+    mutationFn: (id: number) => apiClient.delete(ACCOUNTING.EXPENSE_DETAIL(id)),
+    onSuccess: () => { toast.success('Expense deleted'); qc.invalidateQueries({ queryKey: ['expenses'] }) },
+    onError: (e: { response?: { data?: { detail?: string } } }) => toast.error(e?.response?.data?.detail ?? 'Failed'),
+  })
+
+  const expenses = data?.results ?? []
+  const totalDraft    = expenses.filter(e => e.status === 'draft').reduce((s, e) => s + Number(e.amount), 0)
+  const totalApproved = expenses.filter(e => e.status === 'approved').reduce((s, e) => s + Number(e.amount), 0)
+  const totalPosted   = expenses.filter(e => e.status === 'posted').reduce((s, e) => s + Number(e.amount), 0)
+
+  return (
+    <div className="space-y-5">
+      {showCreate && <ExpenseCreateModal onClose={() => setShowCreate(false)} />}
+      {editExpense && <ExpenseCreateModal expense={editExpense} onClose={() => setEditExpense(null)} />}
+
+      {/* Reject modal */}
+      {rejectTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <h2 className="text-base font-bold text-gray-900">Reject Expense</h2>
+            <p className="text-sm text-gray-600">Reason for rejecting <strong>{rejectTarget.description}</strong></p>
+            <textarea value={rejectNote} onChange={e => setRejectNote(e.target.value)} rows={3} placeholder="Rejection reason..." className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 resize-none" />
+            <div className="flex gap-3">
+              <button onClick={() => { setRejectTarget(null); setRejectNote('') }} className="flex-1 border border-gray-200 rounded-lg py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+              <button onClick={() => mutateReject.mutate({ id: rejectTarget.id, note: rejectNote })} disabled={mutateReject.isPending} className="flex-1 bg-red-600 hover:bg-red-700 text-white rounded-lg py-2 text-sm font-semibold disabled:opacity-50">Reject</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+          <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Draft</p>
+          <p className="text-2xl font-bold text-gray-700 mt-1">{npr(totalDraft)}</p>
+        </div>
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+          <p className="text-xs text-blue-700 font-semibold uppercase tracking-wide">Approved — Pending Post</p>
+          <p className="text-2xl font-bold text-blue-800 mt-1">{npr(totalApproved)}</p>
+        </div>
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+          <p className="text-xs text-emerald-700 font-semibold uppercase tracking-wide">Posted to Ledger</p>
+          <p className="text-2xl font-bold text-emerald-800 mt-1">{npr(totalPosted)}</p>
+        </div>
+      </div>
+
+      {/* Filter bar + action */}
+      <div className="flex flex-wrap items-center gap-3">
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          <option value="">All Status</option>
+          <option value="draft">Draft</option>
+          <option value="approved">Approved</option>
+          <option value="posted">Posted</option>
+          <option value="rejected">Rejected</option>
+        </select>
+        <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          <option value="">All Categories</option>
+          {EXPENSE_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+        </select>
+        <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} title="From date" className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} title="To date" className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        <span className="text-sm text-gray-400 ml-auto">{data?.count ?? expenses.length} expenses</span>
+        <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
+          <Plus size={15} /> New Expense
+        </button>
+      </div>
+
+      {/* Table */}
+      {isLoading ? (
+        <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-indigo-400" /></div>
+      ) : expenses.length === 0 ? (
+        <div className="text-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+          <Receipt size={36} className="mx-auto text-gray-300 mb-3" />
+          <p className="text-sm text-gray-500 font-medium">No expenses found</p>
+          <p className="text-xs text-gray-400 mt-1">Record internal operating expenses here — travel, office supplies, utilities, etc.</p>
+          <button onClick={() => setShowCreate(true)} className="mt-4 inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
+            <Plus size={15} /> Add First Expense
+          </button>
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  {['Category', 'Description', 'Amount', 'Date', 'Status', 'Submitted By', 'Account', 'Actions'].map(h => (
+                    <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {expenses.map(exp => (
+                  <tr key={exp.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-0.5 rounded-full">{exp.category_display || exp.category}</span>
+                    </td>
+                    <td className="px-4 py-3 max-w-xs">
+                      <p className="truncate font-medium text-gray-800">{exp.description}</p>
+                      {exp.is_recurring && <p className="text-xs text-indigo-500 mt-0.5">Recurring every {exp.recur_interval}d</p>}
+                      {exp.receipt_url && <a href={exp.receipt_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline">Receipt</a>}
+                    </td>
+                    <td className="px-4 py-3 font-semibold text-gray-800 whitespace-nowrap">{npr(exp.amount)}</td>
+                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{exp.date}</td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-1 rounded-full text-xs font-semibold ${EXPENSE_STATUS_COLORS[exp.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                        {exp.status_display || exp.status}
+                      </span>
+                      {exp.status === 'rejected' && exp.rejection_note && (
+                        <p className="text-xs text-red-500 mt-0.5 max-w-xs truncate" title={exp.rejection_note}>{exp.rejection_note}</p>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{exp.submitted_by_name}</td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">{exp.account_name || '—'}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-1 items-center flex-wrap">
+                        {(exp.status === 'draft' || exp.status === 'rejected') && (
+                          <button onClick={() => setEditExpense(exp)} title="Edit" className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"><Pencil size={12} /></button>
+                        )}
+                        {exp.status === 'draft' && can('can_manage_accounting') && (
+                          <button onClick={() => mutateApprove.mutate(exp.id)} disabled={mutateApprove.isPending} title="Approve" className="p-1 text-gray-400 hover:text-emerald-600 rounded transition-colors"><CheckCircle size={14} /></button>
+                        )}
+                        {(exp.status === 'draft' || exp.status === 'approved') && can('can_manage_accounting') && (
+                          <button onClick={() => setRejectTarget(exp)} title="Reject" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><XCircle size={14} /></button>
+                        )}
+                        {exp.status === 'approved' && can('can_manage_accounting') && (
+                          <button onClick={() => confirm({ title: 'Post to Ledger', message: `Post expense "${exp.description}" (${npr(exp.amount)}) to the double-entry ledger?`, confirmLabel: 'Post', variant: 'default' as const }).then(ok => { if (ok) mutatePost.mutate(exp.id) })} disabled={mutatePost.isPending} title="Post to Ledger" className="px-2 py-0.5 text-xs bg-emerald-50 text-emerald-700 rounded-md hover:bg-emerald-100 transition-colors disabled:opacity-50 whitespace-nowrap">Post</button>
+                        )}
+                        {(exp.status === 'draft' || exp.status === 'rejected') && can('can_manage_accounting') && (
+                          <button onClick={() => confirm({ title: 'Delete Expense', message: `Delete expense "${exp.description}"?`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDelete.mutate(exp.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={12} /></button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main Page ──────────────────────────────────────────────────────────────
 
 export default function AccountingPage() {
@@ -5967,6 +6339,7 @@ export default function AccountingPage() {
       case 'recurring-journals':    return <RecurringJournalsTab />
       case 'ledger':                return <LedgerTab />
       case 'day-book':              return <DayBookTab />
+      case 'expenses':              return <ExpensesTab />
       default:             return <DashboardTab />
     }
   }

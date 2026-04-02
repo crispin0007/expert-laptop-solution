@@ -1572,3 +1572,110 @@ class TDSRemittanceView(TenantMixin, viewsets.ViewSet):
 
         from .serializers import JournalEntrySerializer
         return ApiResponse.created(data={'journal_entry': JournalEntrySerializer(entry).data})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Expenses  (internal operating expenses)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ExpenseViewSet(NexusViewSet):
+    """
+    Internal operating expense management (travel, office supplies, utilities, etc.).
+    Distinct from Bills which are supplier invoices.
+
+    POST /expenses/                 — create draft expense
+    PUT  /expenses/{id}/            — update draft expense
+    DELETE /expenses/{id}/          — delete draft expense
+    POST /expenses/{id}/approve/    — approve (manager+)
+    POST /expenses/{id}/reject/     — reject (manager+), body: { "note": "..." }
+    POST /expenses/{id}/post/       — post approved expense to double-entry ledger (admin+)
+    """
+
+    from accounting.models import Expense as _Expense
+    queryset         = _Expense.objects.none()
+    required_module  = 'accounting'
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='accounting.view_invoices')()]
+        if self.action in ('create', 'update', 'partial_update'):
+            return [permissions.IsAuthenticated(), make_role_permission(*STAFF_ROLES, permission_key='accounting.manage_invoices')()]
+        if self.action in ('approve', 'reject'):
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.manage_invoices')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
+
+    def _get_service(self):
+        from accounting.services.expense_service import ExpenseService
+        return ExpenseService(tenant=self.tenant, user=self.request.user)
+
+    def get_queryset(self):
+        from accounting.models import Expense
+        self.ensure_tenant()
+        params = self.request.query_params
+        svc = self._get_service()
+        return svc.list(
+            status=params.get('status'),
+            category=params.get('category'),
+            date_from=params.get('date_from'),
+            date_to=params.get('date_to'),
+        )
+
+    def get_serializer_class(self):
+        from accounting.serializers import ExpenseSerializer, ExpenseWriteSerializer
+        if self.action in ('create', 'update', 'partial_update'):
+            return ExpenseWriteSerializer
+        return ExpenseSerializer
+
+    def create(self, request, *args, **kwargs):
+        from accounting.serializers import ExpenseSerializer, ExpenseWriteSerializer
+        self.ensure_tenant()
+        serializer = ExpenseWriteSerializer(
+            data=request.data, context=self.get_serializer_context()
+        )
+        serializer.is_valid(raise_exception=True)
+        expense = self._get_service().create(serializer.validated_data)
+        return ApiResponse.created(data=ExpenseSerializer(expense).data)
+
+    def update(self, request, *args, **kwargs):
+        from accounting.serializers import ExpenseSerializer, ExpenseWriteSerializer
+        partial  = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = ExpenseWriteSerializer(
+            instance, data=request.data, partial=partial,
+            context=self.get_serializer_context(),
+        )
+        serializer.is_valid(raise_exception=True)
+        expense = self._get_service().update(instance, serializer.validated_data)
+        return ApiResponse.success(data=ExpenseSerializer(expense).data)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self._get_service().delete(instance)
+        return ApiResponse.no_content()
+
+    @action(detail=True, methods=['post'], url_path='approve')
+    def approve(self, request, pk=None):
+        """POST /expenses/{id}/approve/ — manager approves a draft expense."""
+        expense = self.get_object()
+        expense = self._get_service().approve(expense)
+        from accounting.serializers import ExpenseSerializer
+        return ApiResponse.success(data=ExpenseSerializer(expense).data)
+
+    @action(detail=True, methods=['post'], url_path='reject')
+    def reject(self, request, pk=None):
+        """POST /expenses/{id}/reject/ — reject with optional note."""
+        expense = self.get_object()
+        expense = self._get_service().reject(expense, note=request.data.get('note', ''))
+        from accounting.serializers import ExpenseSerializer
+        return ApiResponse.success(data=ExpenseSerializer(expense).data)
+
+    @action(detail=True, methods=['post'], url_path='post')
+    def post_expense(self, request, pk=None):
+        """POST /expenses/{id}/post/ — post approved expense to double-entry ledger."""
+        expense = self.get_object()
+        try:
+            expense = self._get_service().post(expense)
+        except (ConflictError, AppValidationError):
+            raise
+        from accounting.serializers import ExpenseSerializer
+        return ApiResponse.success(data=ExpenseSerializer(expense).data)

@@ -223,6 +223,13 @@ export const ACCOUNTING = {
   RECURRING_JOURNAL_DETAIL: (id: number) => `/accounting/recurring-journals/${id}/`,
   RECURRING_JOURNAL_RUN: (id: number) => `/accounting/recurring-journals/${id}/run/`,
 
+  // ── Expenses ──────────────────────────────────────────────────────────────
+  EXPENSES: '/accounting/expenses/',
+  EXPENSE_DETAIL: (id: number) => `/accounting/expenses/${id}/`,
+  EXPENSE_APPROVE: (id: number) => `/accounting/expenses/${id}/approve/`,
+  EXPENSE_REJECT: (id: number) => `/accounting/expenses/${id}/reject/`,
+  EXPENSE_POST: (id: number) => `/accounting/expenses/${id}/post/`,
+
   // ── Account Ledger + Day Book (report-style) ──────────────────────────────
   REPORT_LEDGER: '/accounting/reports/ledger/',
   REPORT_DAY_BOOK: '/accounting/reports/day-book/',
@@ -297,6 +304,7 @@ export const INVENTORY = {
   REPORT_ABC: '/inventory/reports/abc-analysis/',
   REPORT_FORECAST: '/inventory/reports/forecast/',
   REPORT_EXPORT_CSV: '/inventory/reports/export-csv/',
+  REPORT_TOP_SELLING: '/inventory/reports/top-selling/',
   // CSV Import
   PRODUCT_IMPORT_CSV: '/inventory/products/import-csv/',
   // Auto-Reorder
@@ -316,6 +324,15 @@ export const INVENTORY = {
   SERIAL_NUMBER_DETAIL: (id: number) => `/inventory/serial-numbers/${id}/`,
   SERIAL_NUMBER_MARK_USED: (id: number) => `/inventory/serial-numbers/${id}/mark-used/`,
   SERIAL_NUMBER_MARK_RETURNED: (id: number) => `/inventory/serial-numbers/${id}/mark-returned/`,
+  // Product Bundles
+  PRODUCT_BUNDLES: '/inventory/product-bundles/',
+  PRODUCT_BUNDLE_DETAIL: (id: number) => `/inventory/product-bundles/${id}/`,
+  // Supplier Payments
+  SUPPLIER_PAYMENTS: '/inventory/supplier-payments/',
+  SUPPLIER_PAYMENT_DETAIL: (id: number) => `/inventory/supplier-payments/${id}/`,
+  SUPPLIER_PAYMENT_SUMMARY: '/inventory/supplier-payments/summary/',
+  // Purchase Order PDF
+  PO_PDF: (id: number) => `/inventory/purchase-orders/${id}/pdf/`,
 } as const
 
 export const CMS = {
@@ -352,4 +369,12 @@ export const CMS = {
   PUBLIC_PAGE:     (subdomain: string, slug: string) => `/cms/public/${subdomain}/pages/${slug}/`,
   PUBLIC_BLOG:     (subdomain: string) => `/cms/public/${subdomain}/blog/`,
   PUBLIC_POST:     (subdomain: string, slug: string) => `/cms/public/${subdomain}/blog/${slug}/`,
+
+  // Inquiries
+  INQUIRIES:          '/cms/inquiries/',
+  INQUIRY_DETAIL:     (id: number) => `/cms/inquiries/${id}/`,
+  INQUIRY_CONVERT:    (id: number) => `/cms/inquiries/${id}/convert/`,
+
+  // Analytics
+  ANALYTICS:          '/cms/analytics/',
 } as const

@@ -88,6 +88,7 @@ class BankAccount(TenantModel):
     name            = models.CharField(max_length=120)
     bank_name       = models.CharField(max_length=120, blank=True)
     account_number  = models.CharField(max_length=64, blank=True)
+    branch          = models.CharField(max_length=120, blank=True, help_text='Bank branch name')
     currency        = models.CharField(max_length=8, default='NPR')
     opening_balance = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     # Link to the Cash/Bank asset account in Chart of Accounts
@@ -317,12 +318,24 @@ class Payslip(TenantModel):
     gross_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     base_salary  = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     bonus        = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    allowances   = models.JSONField(
+                     default=list,
+                     help_text='List of {"label": str, "amount": str} allowance line items',
+                   )
     tds_amount   = models.DecimalField(max_digits=14, decimal_places=2, default=0,
                      help_text='Tax Deducted at Source computed from salary profile tds_rate')
     deductions   = models.DecimalField(max_digits=14, decimal_places=2, default=0,
                      help_text='Other deductions (advances, damages, etc.)')
     net_pay      = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     status       = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    approved_by  = models.ForeignKey(
+                     settings.AUTH_USER_MODEL,
+                     null=True, blank=True,
+                     on_delete=models.SET_NULL,
+                     related_name='approved_payslips',
+                     help_text='Manager/Admin who approved this payslip',
+                   )
+    approved_at  = models.DateTimeField(null=True, blank=True)
     issued_at    = models.DateTimeField(null=True, blank=True)
     paid_at      = models.DateTimeField(null=True, blank=True)
     # Payment info snapshotted when mark_paid is called
@@ -884,6 +897,107 @@ class BankReconciliationLine(models.Model):
 # ─────────────────────────────────────────────────────────────────────────────
 # Recurring Journal Templates
 # ─────────────────────────────────────────────────────────────────────────────
+
+class Expense(TenantModel):
+    """
+    Internal operating expense (e.g. travel, office supplies, utilities).
+    Distinct from Bill (which is a supplier invoice for goods/services purchased).
+    Supports receipt_url upload, category tagging, approval workflow, and
+    automatic journal posting to the linked expense Account.
+    """
+
+    STATUS_DRAFT    = 'draft'
+    STATUS_APPROVED = 'approved'
+    STATUS_POSTED   = 'posted'
+    STATUS_REJECTED = 'rejected'
+
+    STATUS_CHOICES = [
+        (STATUS_DRAFT,    'Draft'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_POSTED,   'Posted to Ledger'),
+        (STATUS_REJECTED, 'Rejected'),
+    ]
+
+    CATEGORY_TRAVEL       = 'travel'
+    CATEGORY_MEALS        = 'meals'
+    CATEGORY_OFFICE       = 'office_supplies'
+    CATEGORY_UTILITIES    = 'utilities'
+    CATEGORY_MAINTENANCE  = 'maintenance'
+    CATEGORY_MARKETING    = 'marketing'
+    CATEGORY_TRAINING     = 'training'
+    CATEGORY_OTHER        = 'other'
+
+    CATEGORY_CHOICES = [
+        (CATEGORY_TRAVEL,      'Travel'),
+        (CATEGORY_MEALS,       'Meals & Entertainment'),
+        (CATEGORY_OFFICE,      'Office Supplies'),
+        (CATEGORY_UTILITIES,   'Utilities'),
+        (CATEGORY_MAINTENANCE, 'Maintenance & Repairs'),
+        (CATEGORY_MARKETING,   'Marketing & Advertising'),
+        (CATEGORY_TRAINING,    'Training & Development'),
+        (CATEGORY_OTHER,       'Other'),
+    ]
+
+    category        = models.CharField(max_length=32, choices=CATEGORY_CHOICES, default=CATEGORY_OTHER, db_index=True)
+    description     = models.CharField(max_length=500)
+    amount          = models.DecimalField(max_digits=14, decimal_places=2)
+    date            = models.DateField()
+    account         = models.ForeignKey(
+                        Account, null=True, blank=True,
+                        on_delete=models.SET_NULL,
+                        related_name='expenses',
+                        help_text='Expense account in CoA to post this to',
+                      )
+    receipt_url     = models.CharField(max_length=500, blank=True, help_text='S3/MinIO URL of uploaded receipt')
+    notes           = models.TextField(blank=True)
+    status          = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_DRAFT, db_index=True)
+    submitted_by    = models.ForeignKey(
+                        settings.AUTH_USER_MODEL,
+                        null=True, blank=True,
+                        on_delete=models.SET_NULL,
+                        related_name='submitted_expenses',
+                      )
+    approved_by     = models.ForeignKey(
+                        settings.AUTH_USER_MODEL,
+                        null=True, blank=True,
+                        on_delete=models.SET_NULL,
+                        related_name='approved_expenses',
+                      )
+    approved_at     = models.DateTimeField(null=True, blank=True)
+    rejected_by     = models.ForeignKey(
+                        settings.AUTH_USER_MODEL,
+                        null=True, blank=True,
+                        on_delete=models.SET_NULL,
+                        related_name='rejected_expenses',
+                      )
+    rejected_at     = models.DateTimeField(null=True, blank=True)
+    rejection_note  = models.TextField(blank=True)
+    journal_entry   = models.OneToOneField(
+                        JournalEntry, null=True, blank=True,
+                        on_delete=models.SET_NULL,
+                        related_name='expense',
+                        help_text='Set when expense is posted to ledger',
+                      )
+    # Recurring support
+    is_recurring    = models.BooleanField(default=False)
+    recur_interval  = models.CharField(
+                        max_length=16, blank=True,
+                        choices=[('monthly', 'Monthly'), ('weekly', 'Weekly'), ('yearly', 'Yearly')],
+                        help_text='Repeat interval for recurring expenses',
+                      )
+    next_recur_date = models.DateField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-date', '-created_at']
+        indexes = [
+            models.Index(fields=['tenant', 'status'],   name='acc_expense_tenant_status_idx'),
+            models.Index(fields=['tenant', 'date'],     name='acc_expense_tenant_date_idx'),
+            models.Index(fields=['tenant', 'category'], name='acc_expense_tenant_cat_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.get_category_display()} – {self.amount} ({self.date})"
+
 
 class RecurringJournal(TenantModel):
     """

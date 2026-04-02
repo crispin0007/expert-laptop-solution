@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import CoinTransaction, Payslip, Invoice
+from .models import CoinTransaction, Payslip, Invoice, Expense
 
 
 @admin.register(CoinTransaction)
@@ -20,3 +20,10 @@ class InvoiceAdmin(admin.ModelAdmin):
     list_display = ('invoice_number', 'customer', 'total', 'status', 'due_date', 'created_at')
     list_filter = ('status',)
     search_fields = ('invoice_number',)
+
+
+@admin.register(Expense)
+class ExpenseAdmin(admin.ModelAdmin):
+    list_display = ('description', 'category', 'amount', 'date', 'status', 'submitted_by', 'approved_by')
+    list_filter = ('status', 'category')
+    search_fields = ('description',)

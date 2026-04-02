@@ -6,7 +6,7 @@ from .models import (
     Bill, Payment, CreditNote,
     Quotation, DebitNote, TDSEntry,
     BankReconciliation, BankReconciliationLine, RecurringJournal,
-    StaffSalaryProfile,
+    StaffSalaryProfile, Expense,
 )
 
 
@@ -406,6 +406,7 @@ class InvoiceSerializer(NepaliModelSerializer):
     amount_due                = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
     payment_received_by_name  = serializers.SerializerMethodField()
     finance_reviewed_by_name  = serializers.SerializerMethodField()
+    apply_vat                 = serializers.BooleanField(default=True, write_only=True, required=False)
 
     class Meta:
         model = Invoice
@@ -419,6 +420,7 @@ class InvoiceSerializer(NepaliModelSerializer):
             'status', 'due_date', 'paid_at',
             'bill_address', 'payment_terms', 'reference',
             'notes', 'created_at', 'updated_at',
+            'apply_vat',
             # Billing workflow fields
             'finance_status',
             'payment_received', 'payment_method',
@@ -563,4 +565,75 @@ class RecurringJournalSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         )
         read_only_fields = ('last_run_at', 'created_at', 'updated_at')
+
+
+# ─── Expenses ─────────────────────────────────────────────────────────────────
+
+class ExpenseSerializer(serializers.ModelSerializer):
+    """Read serializer — full detail."""
+    submitted_by_name = serializers.CharField(source='submitted_by.get_full_name', default='', read_only=True)
+    approved_by_name  = serializers.CharField(source='approved_by.get_full_name',  default='', read_only=True)
+    rejected_by_name  = serializers.CharField(source='rejected_by.get_full_name',  default='', read_only=True)
+    account_name      = serializers.CharField(source='account.name', default='',   read_only=True)
+    category_display  = serializers.CharField(source='get_category_display',        read_only=True)
+    status_display    = serializers.CharField(source='get_status_display',          read_only=True)
+
+    class Meta:
+        model  = Expense
+        fields = (
+            'id', 'category', 'category_display', 'description',
+            'amount', 'date', 'account', 'account_name',
+            'receipt_url', 'notes', 'status', 'status_display',
+            'submitted_by', 'submitted_by_name',
+            'approved_by', 'approved_by_name', 'approved_at',
+            'rejected_by', 'rejected_by_name', 'rejected_at', 'rejection_note',
+            'is_recurring', 'recur_interval', 'next_recur_date',
+            'journal_entry', 'created_at', 'updated_at',
+        )
+        read_only_fields = (
+            'submitted_by', 'approved_by', 'approved_at',
+            'rejected_by', 'rejected_at',
+            'journal_entry', 'created_at', 'updated_at',
+        )
+
+
+class ExpenseListSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for list views and mobile."""
+    category_display = serializers.CharField(source='get_category_display', read_only=True)
+    status_display   = serializers.CharField(source='get_status_display',   read_only=True)
+
+    class Meta:
+        model  = Expense
+        fields = (
+            'id', 'category', 'category_display', 'description',
+            'amount', 'date', 'status', 'status_display', 'receipt_url',
+            'created_at',
+        )
+
+
+class ExpenseWriteSerializer(serializers.ModelSerializer):
+    """Write serializer — create and update."""
+    class Meta:
+        model  = Expense
+        fields = (
+            'category', 'description', 'amount', 'date',
+            'account', 'receipt_url', 'notes',
+            'is_recurring', 'recur_interval', 'next_recur_date',
+        )
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError('Amount must be greater than zero.')
+        return value
+
+    def validate(self, attrs):
+        if attrs.get('is_recurring') and not attrs.get('recur_interval'):
+            raise serializers.ValidationError(
+                {'recur_interval': 'recur_interval is required when is_recurring is True.'}
+            )
+        if attrs.get('is_recurring') and not attrs.get('next_recur_date'):
+            raise serializers.ValidationError(
+                {'next_recur_date': 'next_recur_date is required when is_recurring is True.'}
+            )
+        return attrs
 
