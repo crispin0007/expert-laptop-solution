@@ -45,6 +45,7 @@ import {
   Pencil,
   FileImage,
   Wallet,
+  AlignLeft,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { useTenantStore } from '../store/tenantStore'
@@ -396,32 +397,45 @@ function SidebarContent({
               <NavSection label="Accounting" icon={Receipt} basePath="/accounting" collapsed={collapsed}>
                 <SubNavItem to="/accounting" label="Dashboard" icon={<LayoutDashboard size={13} />} />
 
-                <NavSubSection label="Sales" icon={<Receipt size={11} />} matchTabs={['invoices','credit-notes','finance-review','quotations']}>
-                  <SubNavItem to="/accounting?tab=invoices"      label="Invoices"       icon={<Receipt      size={13} />} />
-                  <SubNavItem to="/accounting?tab=credit-notes"  label="Credit Notes"   icon={<RotateCcw    size={13} />} />
-                  <SubNavItem to="/accounting?tab=finance-review" label="Finance Review" icon={<ShieldCheck  size={13} />} />
-                  <SubNavItem to="/accounting?tab=quotations"    label="Quotations"     icon={<FileQuestion size={13} />} />
+                <NavSubSection label="Sales" icon={<Receipt size={11} />} matchTabs={['invoices','credit-notes','finance-review','quotations','sales-orders','customer-payments','allocate-customer-payments']}>
+                  <SubNavItem to="/accounting?tab=quotations"               label="Quotations"               icon={<FileQuestion  size={13} />} />
+                  <SubNavItem to="/accounting?tab=sales-orders"             label="Sales Orders"             icon={<ClipboardList size={13} />} />
+                  <SubNavItem to="/accounting?tab=invoices"                 label="Invoices"                 icon={<Receipt       size={13} />} />
+                  <SubNavItem to="/accounting?tab=credit-notes"             label="Credit Notes"             icon={<RotateCcw     size={13} />} />
+                  <SubNavItem to="/accounting?tab=customer-payments"        label="Customer Payments"        icon={<CreditCard    size={13} />} />
+                  <SubNavItem to="/customers"                               label="Customers"                icon={<Users         size={13} />} />
+                  <SubNavItem to="/accounting?tab=allocate-customer-payments" label="Allocate Payments"     icon={<ArrowLeftRight size={13} />} />
+                  <SubNavItem to="/accounting?tab=finance-review"           label="Finance Review"           icon={<ShieldCheck   size={13} />} />
                 </NavSubSection>
 
-                <NavSubSection label="Purchases" icon={<ShoppingCart size={11} />} matchTabs={['bills','debit-notes','tds','expenses']}>
-                  <SubNavItem to="/accounting?tab=bills"        label="Bills"          icon={<FileText size={13} />} />
-                  <SubNavItem to="/accounting?tab=debit-notes"  label="Debit Notes"    icon={<FileText size={13} />} />
-                  <SubNavItem to="/accounting?tab=expenses"     label="Expenses"       icon={<Wallet   size={13} />} />
-                  <SubNavItem to="/accounting?tab=tds"          label="TDS / WHT"      icon={<Percent  size={13} />} />
+                <NavSubSection label="Purchases" icon={<ShoppingCart size={11} />} matchTabs={['bills','debit-notes','tds','expenses','purchase-orders','suppliers','supplier-payments','allocate-supplier-payments']}>
+                  <SubNavItem to="/accounting?tab=purchase-orders"          label="Purchase Orders"          icon={<Package       size={13} />} />
+                  <SubNavItem to="/accounting?tab=bills"                    label="Purchase Bills"           icon={<FileText      size={13} />} />
+                  <SubNavItem to="/accounting?tab=expenses"                 label="Expenses"                 icon={<Wallet        size={13} />} />
+                  <SubNavItem to="/accounting?tab=debit-notes"              label="Debit Notes"              icon={<FileText      size={13} />} />
+                  <SubNavItem to="/accounting?tab=supplier-payments"        label="Supplier Payments"        icon={<CreditCard    size={13} />} />
+                  <SubNavItem to="/accounting?tab=suppliers"                label="Suppliers"                icon={<Truck         size={13} />} />
+                  <SubNavItem to="/accounting?tab=allocate-supplier-payments" label="Allocate Payments"     icon={<ArrowRightLeft size={13} />} />
+                  <SubNavItem to="/accounting?tab=tds"                      label="TDS / WHT"                icon={<Percent       size={13} />} />
                 </NavSubSection>
 
-                <NavSubSection label="Banking" icon={<Building2 size={11} />} matchTabs={['payments','banks','bank-reconciliation']}>
-                  <SubNavItem to="/accounting?tab=payments"           label="Payments"         icon={<CreditCard    size={13} />} />
-                  <SubNavItem to="/accounting?tab=banks"              label="Bank Accounts"    icon={<Building2     size={13} />} />
-                  <SubNavItem to="/accounting?tab=bank-reconciliation" label="Reconciliation"  icon={<ArrowRightLeft size={13} />} />
+                <NavSubSection label="Banking" icon={<Building2 size={11} />} matchTabs={['payments','banks','bank-reconciliation','cash-transfers','quick-payment','quick-receipt','cheque-register']}>
+                  <SubNavItem to="/accounting?tab=quick-receipt"        label="Quick Receipt"      icon={<Receipt       size={13} />} />
+                  <SubNavItem to="/accounting?tab=quick-payment"        label="Quick Payment"      icon={<CreditCard    size={13} />} />
+                  <SubNavItem to="/accounting?tab=payments"             label="All Payments"        icon={<ArrowLeftRight size={13} />} />
+                  <SubNavItem to="/accounting?tab=cash-transfers"       label="Cash Transfers"     icon={<ArrowRightLeft size={13} />} />
+                  <SubNavItem to="/accounting?tab=cheque-register"      label="Cheque Register"    icon={<CheckSquare   size={13} />} />
+                  <SubNavItem to="/accounting?tab=banks"                label="Bank Accounts"      icon={<Building2     size={13} />} />
+                  <SubNavItem to="/accounting?tab=bank-reconciliation"  label="Reconciliation"     icon={<ArrowRightLeft size={13} />} />
                 </NavSubSection>
 
-                <NavSubSection label="Ledger" icon={<BookOpen size={11} />} matchTabs={['journals','accounts','recurring-journals','ledger','day-book']}>
-                  <SubNavItem to="/accounting?tab=journals"          label="Journal Entries"    icon={<BookOpen    size={13} />} />
-                  <SubNavItem to="/accounting?tab=accounts"          label="Chart of Accounts"  icon={<Layers      size={13} />} />
-                  <SubNavItem to="/accounting?tab=recurring-journals" label="Recurring Journals" icon={<Repeat2     size={13} />} />
-                  <SubNavItem to="/accounting?tab=ledger"            label="Ledger"             icon={<BookMarked  size={13} />} />
-                  <SubNavItem to="/accounting?tab=day-book"          label="Day Book"           icon={<CalendarDays size={13} />} />
+                <NavSubSection label="Ledger" icon={<BookOpen size={11} />} matchTabs={['journals','accounts','recurring-journals','ledger','day-book','journal-voucher']}>
+                  <SubNavItem to="/accounting?tab=journal-voucher"      label="Journal Voucher"    icon={<AlignLeft     size={13} />} />
+                  <SubNavItem to="/accounting?tab=journals"             label="Journal Entries"    icon={<BookOpen      size={13} />} />
+                  <SubNavItem to="/accounting?tab=accounts"             label="Chart of Accounts"  icon={<Layers        size={13} />} />
+                  <SubNavItem to="/accounting?tab=recurring-journals"   label="Recurring Journals" icon={<Repeat2       size={13} />} />
+                  <SubNavItem to="/accounting?tab=ledger"               label="Ledger"             icon={<BookMarked    size={13} />} />
+                  <SubNavItem to="/accounting?tab=day-book"             label="Day Book"           icon={<CalendarDays  size={13} />} />
                 </NavSubSection>
 
                 <NavSubSection label="Payroll" icon={<Coins size={11} />} matchTabs={['payslips']}>

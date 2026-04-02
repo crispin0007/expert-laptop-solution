@@ -25,6 +25,8 @@ import {
   ArrowRightLeft, ChevronDown, Search, CheckSquare2, Play, Power, Pencil,
   // CoA + Quick Links icons
   Zap, Eye, EyeOff, Info, ListFilter, Wallet,
+  // New tab icons
+  Clock, Users, Truck, UserCheck, ShoppingBag, AlignLeft,
 } from 'lucide-react'
 import DateDisplay from '../../components/DateDisplay'
 import NepaliDatePicker from '../../components/NepaliDatePicker'
@@ -337,7 +339,22 @@ const TABS = [
   { key: 'recurring-journals', label: 'Recurring Journals', icon: Repeat2         },
   { key: 'ledger',             label: 'Ledger',             icon: BookMarked      },
   { key: 'day-book',           label: 'Day Book',           icon: CalendarDays    },
-  { key: 'expenses',           label: 'Expenses',           icon: Receipt         },
+  { key: 'expenses',               label: 'Expenses',                    icon: Wallet          },
+  // Sales sub-tabs
+  { key: 'sales-orders',           label: 'Sales Orders',                icon: ShoppingBag     },
+  { key: 'customer-payments',      label: 'Customer Payments',           icon: CreditCard      },
+  { key: 'allocate-customer-payments', label: 'Allocate Customer Payments', icon: ArrowLeftRight },
+  // Purchase sub-tabs
+  { key: 'purchase-orders',        label: 'Purchase Orders',             icon: Truck           },
+  { key: 'suppliers',              label: 'Suppliers',                   icon: Truck           },
+  { key: 'supplier-payments',      label: 'Supplier Payments',           icon: CreditCard      },
+  { key: 'allocate-supplier-payments', label: 'Allocate Supplier Payments', icon: ArrowRightLeft },
+  // Banking / Ledger tools
+  { key: 'cash-transfers',         label: 'Cash Transfers',              icon: ArrowLeftRight  },
+  { key: 'quick-payment',          label: 'Quick Payment',               icon: Zap             },
+  { key: 'quick-receipt',          label: 'Quick Receipt',               icon: Zap             },
+  { key: 'cheque-register',        label: 'Cheque Register',             icon: FileText        },
+  { key: 'journal-voucher',        label: 'Journal Voucher',             icon: AlignLeft       },
 ] as const
 
 // ─── Dashboard Tab ─────────────────────────────────────────────────────────
@@ -1171,9 +1188,29 @@ function InvoicesTab() {
 
 function BillCreateModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
+  const [supplierId,   setSupplierId]   = useState<number | null>(null)
   const [supplierName, setSupplierName] = useState('')
-  const [dueDate, setDueDate] = useState('')
+  const [dueDate,      setDueDate]      = useState('')
+  const [vatEnabled,   setVatEnabled]   = useState(true)
   const [lines, setLines] = useState<LineItemDraft[]>([emptyLine()])
+
+  // Load inventory suppliers for dropdown
+  const { data: suppliers = [] } = useQuery<InventorySupplier[]>({
+    queryKey: ['inventory-suppliers-select'],
+    queryFn: () => apiClient.get(`${INVENTORY.SUPPLIERS}?page_size=500&is_active=true`).then(r => {
+      const d = r.data
+      return d?.data?.results ?? d?.results ?? (Array.isArray(d) ? d : [])
+    }),
+  })
+
+  // Live total preview
+  const subtotal = lines.reduce((acc, l) => {
+    const qty   = Number(l.qty) || 0
+    const price = Number(l.unit_price) || 0
+    return acc + qty * price
+  }, 0)
+  const vatAmt = vatEnabled ? subtotal * 0.13 : 0
+  const total  = subtotal + vatAmt
 
   const mutation = useMutation({
     mutationFn: (payload: unknown) => apiClient.post(ACCOUNTING.BILLS, payload),
@@ -1190,12 +1227,30 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
     setLines(ls => ls.map((l, i) => i === idx ? { ...l, [key]: val } : l))
   }
 
+  function handleSupplierChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const val = e.target.value
+    if (val === '__custom__') {
+      setSupplierId(null)
+      setSupplierName('')
+    } else if (val) {
+      const id  = Number(val)
+      const sup = suppliers.find(s => s.id === id)
+      setSupplierId(id)
+      setSupplierName(sup?.name ?? '')
+    } else {
+      setSupplierId(null)
+      setSupplierName('')
+    }
+  }
+
   function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!supplierName.trim()) { toast.error('Supplier name is required'); return }
     mutation.mutate({
+      supplier: supplierId || null,
       supplier_name: supplierName,
       due_date: dueDate || null,
+      apply_vat: vatEnabled,
       line_items: lines
         .filter(l => l.description && l.unit_price)
         .map(l => ({ description: l.description, qty: Number(l.qty), unit_price: l.unit_price, discount: l.discount || '0' })),
@@ -1206,9 +1261,35 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
     <Modal title="New Bill" onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Supplier Name *">
-            <input value={supplierName} onChange={e => setSupplierName(e.target.value)}
-              placeholder="Supplier / vendor name" className={inputCls} required />
+          {/* Supplier select */}
+          <Field label="Supplier *">
+            {suppliers.length > 0 ? (
+              <div className="space-y-1.5">
+                <select
+                  value={supplierId !== null ? String(supplierId) : (supplierName ? '__custom__' : '')}
+                  onChange={handleSupplierChange}
+                  className={inputCls}
+                >
+                  <option value="">— Select supplier —</option>
+                  {suppliers.map(s => (
+                    <option key={s.id} value={String(s.id)}>{s.name}</option>
+                  ))}
+                  <option value="__custom__">+ Enter manually</option>
+                </select>
+                {supplierId === null && (
+                  <input
+                    value={supplierName}
+                    onChange={e => setSupplierName(e.target.value)}
+                    placeholder="Supplier / vendor name"
+                    className={inputCls}
+                    required
+                  />
+                )}
+              </div>
+            ) : (
+              <input value={supplierName} onChange={e => setSupplierName(e.target.value)}
+                placeholder="Supplier / vendor name" className={inputCls} required />
+            )}
           </Field>
           <Field label="Due Date">
             <NepaliDatePicker value={dueDate} onChange={setDueDate} />
@@ -1260,6 +1341,33 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+
+        {/* Totals + VAT toggle */}
+        <div className="bg-gray-50 rounded-lg px-4 py-3 space-y-1.5 text-sm">
+          <div className="flex items-center justify-between text-gray-600">
+            <span>Subtotal</span>
+            <span className="font-medium tabular-nums">{npr(subtotal)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <button
+                type="button"
+                onClick={() => setVatEnabled(v => !v)}
+                className={`relative inline-flex h-4 w-8 items-center rounded-full transition-colors ${vatEnabled ? 'bg-indigo-600' : 'bg-gray-300'}`}
+              >
+                <span className={`inline-block h-3 w-3 rounded-full bg-white shadow transition-transform ${vatEnabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+              </button>
+              <span className="text-xs text-gray-600">VAT 13%</span>
+            </label>
+            {vatEnabled && (
+              <span className="text-orange-600 font-medium tabular-nums">{npr(vatAmt)}</span>
+            )}
+          </div>
+          <div className="flex items-center justify-between border-t border-gray-200 pt-1.5 font-semibold text-gray-800">
+            <span>Total</span>
+            <span className="tabular-nums">{npr(total)}</span>
           </div>
         </div>
 
@@ -2801,6 +2909,27 @@ function AccountsTab() {
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-colors">
           <Download size={13} /> Export CSV
         </button>
+
+        {/* New Group / Heading */}
+        <div className="relative group">
+          <button
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition-colors">
+            <Plus size={13} /> New Group
+          </button>
+          {/* Dropdown: pick which type of group to create */}
+          <div className="absolute right-0 top-full mt-1 w-44 bg-white border border-gray-200 rounded-xl shadow-lg opacity-0 invisible group-focus-within:opacity-100 group-focus-within:visible group-hover:opacity-100 group-hover:visible transition-all z-20">
+            {typeOrder.map(([type, label, cls]) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => openRoot(type)}
+                className={`w-full text-left px-4 py-2 text-xs font-medium hover:bg-gray-50 first:rounded-t-xl last:rounded-b-xl ${cls.split(' ')[0]}`}
+              >
+                {label} Group
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* ── Legend ────────────────────────────────────────────────────── */}
@@ -6550,6 +6679,288 @@ function ExpensesTab() {
   )
 }
 
+// ─── Shared "Coming Soon" stub ─────────────────────────────────────────────
+
+function ComingSoonTab({ title, hint }: { title: string; hint?: string }) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 py-24 flex flex-col items-center gap-3 shadow-sm">
+      <Clock size={40} className="text-gray-200" />
+      <p className="text-base font-semibold text-gray-500">{title}</p>
+      <p className="text-sm text-gray-400">{hint ?? 'This feature is coming in a future update.'}</p>
+    </div>
+  )
+}
+
+// ─── Supplier type (inventory) ─────────────────────────────────────────────
+
+interface InventorySupplier {
+  id: number; name: string; contact_person: string; email: string
+  phone: string; city: string; is_active: boolean
+}
+
+// ─── Suppliers Tab (Accounts Payable view) ──────────────────────────────────
+
+function SuppliersTab() {
+  const { fyYear } = useFY()
+  const { data: suppliers = [], isLoading } = useQuery<InventorySupplier[]>({
+    queryKey: ['inventory-suppliers'],
+    queryFn: () => apiClient.get(`${INVENTORY.SUPPLIERS}?page_size=500`).then(r => {
+      const d = r.data
+      if (Array.isArray(d)) return d
+      return d?.data?.results ?? d?.results ?? d?.data ?? []
+    }),
+  })
+  const { data: bills = [] } = useQuery<Bill[]>({
+    queryKey: ['bills', 'all', fyYear],
+    queryFn: () => apiClient.get(addFyParam(`${ACCOUNTING.BILLS}?page_size=500`, fyYear)).then(r => {
+      const d = r.data
+      return d?.data?.results ?? d?.results ?? (Array.isArray(d) ? d : [])
+    }),
+  })
+
+  // Aggregate bills per supplier
+  const supplierStats = suppliers.map(s => {
+    const sb = bills.filter(b => b.supplier === s.id)
+    const total = sb.reduce((acc, b) => acc + Number(b.total ?? 0), 0)
+    const unpaid = sb.filter(b => ['draft', 'approved'].includes(b.status))
+    const unpaidTotal = unpaid.reduce((acc, b) => acc + Number(b.amount_due ?? 0), 0)
+    return { ...s, billCount: sb.length, total, unpaidTotal }
+  }).filter(s => s.billCount > 0 || s.is_active)
+
+  const statusBadge = (active: boolean) =>
+    active ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-400'
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <h3 className="font-semibold text-sm text-gray-800 flex items-center gap-2">
+            <Truck size={15} className="text-orange-500" /> Suppliers
+          </h3>
+          <span className="text-xs text-gray-400">{suppliers.length} suppliers</span>
+        </div>
+        {isLoading ? <div className="py-12"><Spinner /></div> : (
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-100">
+              <tr>{['Supplier', 'Contact', 'City', 'Bills', 'Total Billed', 'Outstanding', 'Status'].map(h => (
+                <th key={h} className="px-4 py-2.5 text-left text-xs text-gray-500 font-medium">{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {supplierStats.length === 0 ? (
+                <tr><td colSpan={7} className="py-12 text-center text-sm text-gray-400">No suppliers yet. Add suppliers from Inventory → Suppliers.</td></tr>
+              ) : supplierStats.map(s => (
+                <tr key={s.id} className="hover:bg-gray-50/60">
+                  <td className="px-4 py-3 font-medium text-gray-800">{s.name}</td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">{s.contact_person || s.email || '—'}</td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">{s.city || '—'}</td>
+                  <td className="px-4 py-3 text-gray-600 tabular-nums">{s.billCount}</td>
+                  <td className="px-4 py-3 font-medium text-gray-800 tabular-nums">{npr(s.total)}</td>
+                  <td className="px-4 py-3 tabular-nums">
+                    <span className={s.unpaidTotal > 0 ? 'text-orange-600 font-semibold' : 'text-gray-400'}>
+                      {npr(s.unpaidTotal)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusBadge(s.is_active)}`}>
+                      {s.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Cheque Register Tab ────────────────────────────────────────────────────
+
+function ChequeRegisterTab() {
+  const { fyYear } = useFY()
+  const { data, isLoading } = useQuery<ApiPage<Payment>>({
+    queryKey: ['payments', 'cheque', fyYear],
+    queryFn: () => apiClient.get(addFyParam(`${ACCOUNTING.PAYMENTS}?method=cheque&page_size=200`, fyYear)).then(r => toPage<Payment>(r.data)),
+  })
+  const payments = data?.results ?? []
+  const totalIn  = payments.filter(p => p.type === 'incoming').reduce((a, p) => a + Number(p.amount), 0)
+  const totalOut = payments.filter(p => p.type === 'outgoing').reduce((a, p) => a + Number(p.amount), 0)
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-4">
+        {[
+          { label: 'Total Cheques', value: payments.length,  icon: FileText,   bg: 'bg-indigo-50', color: 'text-indigo-600' },
+          { label: 'Receipts',      value: npr(totalIn),      icon: TrendingUp,  bg: 'bg-green-50',  color: 'text-green-600'  },
+          { label: 'Payments',      value: npr(totalOut),     icon: TrendingDown, bg: 'bg-red-50',   color: 'text-red-600'    },
+        ].map(c => (
+          <div key={c.label} className={`${c.bg} rounded-xl p-4 flex items-center gap-3 border border-white`}>
+            <c.icon size={20} className={c.color} />
+            <div><p className="text-xs text-gray-500">{c.label}</p><p className={`text-lg font-bold ${c.color}`}>{c.value}</p></div>
+          </div>
+        ))}
+      </div>
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+        <div className="px-5 py-3 border-b border-gray-100">
+          <h3 className="font-semibold text-sm text-gray-800 flex items-center gap-2">
+            <FileText size={14} className="text-indigo-500" /> Cheque Register
+          </h3>
+        </div>
+        {isLoading ? <div className="py-12"><Spinner /></div> : (
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-100">
+              <tr>{['Chq/Ref #', 'Date', 'Direction', 'Invoice/Bill', 'Amount', 'Bank', 'Notes'].map(h => (
+                <th key={h} className="px-4 py-2.5 text-left text-xs text-gray-500 font-medium">{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {payments.length === 0 ? (
+                <tr><td colSpan={7} className="py-12 text-center text-sm text-gray-400">No cheque payments found.</td></tr>
+              ) : payments.map(p => (
+                <tr key={p.id} className="hover:bg-gray-50/60">
+                  <td className="px-4 py-3 font-mono text-xs text-indigo-600">{p.reference || p.payment_number}</td>
+                  <td className="px-4 py-3 text-gray-600"><DateDisplay value={p.date} /></td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${p.type === 'incoming' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                      {p.type === 'incoming' ? 'Receipt' : 'Payment'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-500">{p.invoice_number || p.bill_number || '—'}</td>
+                  <td className="px-4 py-3 font-medium text-gray-800 tabular-nums">{npr(p.amount)}</td>
+                  <td className="px-4 py-3 text-xs text-gray-500">{p.bank_account_name || '—'}</td>
+                  <td className="px-4 py-3 text-xs text-gray-400 truncate max-w-xs">{p.notes || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Customer Payments Tab ─────────────────────────────────────────────────
+
+function CustomerPaymentsTab() {
+  const { fyYear } = useFY()
+  const { data, isLoading } = useQuery<ApiPage<Payment>>({
+    queryKey: ['payments', 'incoming', fyYear],
+    queryFn: () => apiClient.get(addFyParam(`${ACCOUNTING.PAYMENTS}?type=incoming&page_size=200`, fyYear)).then(r => toPage<Payment>(r.data)),
+  })
+  const payments = data?.results ?? []
+  const total = payments.reduce((a, p) => a + Number(p.amount), 0)
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-4">
+        {[
+          { label: 'Total Receipts',  value: payments.length,   icon: Users,       bg: 'bg-blue-50',  color: 'text-blue-600'  },
+          { label: 'Total Received',  value: npr(total),         icon: TrendingUp,  bg: 'bg-green-50', color: 'text-green-600' },
+          { label: 'This FY',         value: `FY ${fyYear}`,     icon: CalendarDays, bg: 'bg-gray-50', color: 'text-gray-600'  },
+        ].map(c => (
+          <div key={c.label} className={`${c.bg} rounded-xl p-4 flex items-center gap-3 border border-white`}>
+            <c.icon size={20} className={c.color} />
+            <div><p className="text-xs text-gray-500">{c.label}</p><p className={`text-lg font-bold ${c.color}`}>{c.value}</p></div>
+          </div>
+        ))}
+      </div>
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+        <div className="px-5 py-3 border-b border-gray-100">
+          <h3 className="font-semibold text-sm text-gray-800 flex items-center gap-2">
+            <Users size={14} className="text-blue-500" /> Customer Payments (Receipts)
+          </h3>
+        </div>
+        {isLoading ? <div className="py-12"><Spinner /></div> : (
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-100">
+              <tr>{['Receipt #', 'Date', 'Invoice', 'Method', 'Amount', 'Bank', 'Ref'].map(h => (
+                <th key={h} className="px-4 py-2.5 text-left text-xs text-gray-500 font-medium">{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {payments.length === 0 ? (
+                <tr><td colSpan={7} className="py-12 text-center text-sm text-gray-400">No customer payments found for this period.</td></tr>
+              ) : payments.map(p => (
+                <tr key={p.id} className="hover:bg-gray-50/60">
+                  <td className="px-4 py-3 font-mono text-xs text-indigo-600">{p.payment_number}</td>
+                  <td className="px-4 py-3 text-gray-600"><DateDisplay value={p.date} /></td>
+                  <td className="px-4 py-3 text-xs text-gray-500">{p.invoice_number || '—'}</td>
+                  <td className="px-4 py-3 text-xs capitalize text-gray-500">{(p.method ?? '').replace('_', ' ')}</td>
+                  <td className="px-4 py-3 font-semibold text-green-700 tabular-nums">{npr(p.amount)}</td>
+                  <td className="px-4 py-3 text-xs text-gray-500">{p.bank_account_name || '—'}</td>
+                  <td className="px-4 py-3 text-xs text-gray-400">{p.reference || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Supplier Payments Tab ─────────────────────────────────────────────────
+
+function SupplierPaymentsTab() {
+  const { fyYear } = useFY()
+  const { data, isLoading } = useQuery<ApiPage<Payment>>({
+    queryKey: ['payments', 'outgoing', fyYear],
+    queryFn: () => apiClient.get(addFyParam(`${ACCOUNTING.PAYMENTS}?type=outgoing&page_size=200`, fyYear)).then(r => toPage<Payment>(r.data)),
+  })
+  const payments = data?.results ?? []
+  const total = payments.reduce((a, p) => a + Number(p.amount), 0)
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-4">
+        {[
+          { label: 'Payments Made',  value: payments.length,    icon: Truck,       bg: 'bg-orange-50', color: 'text-orange-600' },
+          { label: 'Total Paid Out', value: npr(total),          icon: TrendingDown, bg: 'bg-red-50',  color: 'text-red-600'    },
+          { label: 'This FY',        value: `FY ${fyYear}`,      icon: CalendarDays, bg: 'bg-gray-50', color: 'text-gray-600'   },
+        ].map(c => (
+          <div key={c.label} className={`${c.bg} rounded-xl p-4 flex items-center gap-3 border border-white`}>
+            <c.icon size={20} className={c.color} />
+            <div><p className="text-xs text-gray-500">{c.label}</p><p className={`text-lg font-bold ${c.color}`}>{c.value}</p></div>
+          </div>
+        ))}
+      </div>
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+        <div className="px-5 py-3 border-b border-gray-100">
+          <h3 className="font-semibold text-sm text-gray-800 flex items-center gap-2">
+            <Truck size={14} className="text-orange-500" /> Supplier Payments
+          </h3>
+        </div>
+        {isLoading ? <div className="py-12"><Spinner /></div> : (
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-100">
+              <tr>{['Payment #', 'Date', 'Bill', 'Method', 'Amount', 'Bank', 'Ref'].map(h => (
+                <th key={h} className="px-4 py-2.5 text-left text-xs text-gray-500 font-medium">{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {payments.length === 0 ? (
+                <tr><td colSpan={7} className="py-12 text-center text-sm text-gray-400">No supplier payments found for this period.</td></tr>
+              ) : payments.map(p => (
+                <tr key={p.id} className="hover:bg-gray-50/60">
+                  <td className="px-4 py-3 font-mono text-xs text-indigo-600">{p.payment_number}</td>
+                  <td className="px-4 py-3 text-gray-600"><DateDisplay value={p.date} /></td>
+                  <td className="px-4 py-3 text-xs text-gray-500">{p.bill_number || '—'}</td>
+                  <td className="px-4 py-3 text-xs capitalize text-gray-500">{(p.method ?? '').replace('_', ' ')}</td>
+                  <td className="px-4 py-3 font-semibold text-red-700 tabular-nums">{npr(p.amount)}</td>
+                  <td className="px-4 py-3 text-xs text-gray-500">{p.bank_account_name || '—'}</td>
+                  <td className="px-4 py-3 text-xs text-gray-400">{p.reference || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Page ──────────────────────────────────────────────────────────────
 
 export default function AccountingPage() {
@@ -6582,6 +6993,21 @@ export default function AccountingPage() {
       case 'ledger':                return <LedgerTab />
       case 'day-book':              return <DayBookTab />
       case 'expenses':              return <ExpensesTab />
+      // Sales
+      case 'sales-orders':          return <ComingSoonTab title="Sales Orders" hint="Create and manage sales orders before converting to invoices." />
+      case 'customer-payments':     return <CustomerPaymentsTab />
+      case 'allocate-customer-payments': return <ComingSoonTab title="Allocate Customer Payments" hint="Match unallocated receipts against open invoices." />
+      // Purchases
+      case 'suppliers':             return <SuppliersTab />
+      case 'purchase-orders':       return <ComingSoonTab title="Purchase Orders" hint="Raise purchase orders and track fulfilment from suppliers." />
+      case 'supplier-payments':     return <SupplierPaymentsTab />
+      case 'allocate-supplier-payments': return <ComingSoonTab title="Allocate Supplier Payments" hint="Match payments against outstanding bills." />
+      // Banking tools
+      case 'cash-transfers':        return <ComingSoonTab title="Cash Transfers" hint="Record internal fund transfers between accounts." />
+      case 'quick-payment':         return <ComingSoonTab title="Quick Payment" hint="Fast-track recording an outbound payment without a bill." />
+      case 'quick-receipt':         return <ComingSoonTab title="Quick Receipt" hint="Fast-track recording an inbound receipt without an invoice." />
+      case 'cheque-register':       return <ChequeRegisterTab />
+      case 'journal-voucher':       return <JournalsTab />
       default:             return <DashboardTab />
     }
   }

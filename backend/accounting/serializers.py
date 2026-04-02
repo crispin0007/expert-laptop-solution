@@ -144,6 +144,8 @@ class BillSerializer(NepaliModelSerializer):
     amount_paid      = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
     amount_due       = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
 
+    apply_vat = serializers.BooleanField(default=True, write_only=True, required=False)
+
     class Meta:
         model  = Bill
         fields = (
@@ -151,7 +153,7 @@ class BillSerializer(NepaliModelSerializer):
             'line_items', 'subtotal', 'discount', 'vat_rate', 'vat_amount', 'total',
             'status', 'due_date', 'reference', 'notes',
             'approved_at', 'paid_at', 'amount_paid', 'amount_due',
-            'created_at', 'updated_at',
+            'created_at', 'updated_at', 'apply_vat',
         )
         read_only_fields = (
             'bill_number', 'vat_rate', 'vat_amount', 'subtotal', 'total',

@@ -27,9 +27,9 @@ class BillService:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _compute_totals(self, line_items, discount=Decimal('0')) -> dict:
+    def _compute_totals(self, line_items, discount=Decimal('0'), apply_vat=True) -> dict:
         vat_rate = (
-            self.tenant.vat_rate if self.tenant and self.tenant.vat_enabled
+            self.tenant.vat_rate if self.tenant and self.tenant.vat_enabled and apply_vat
             else Decimal('0')
         )
         subtotal, vat_amount, total = compute_invoice_totals(line_items, discount, vat_rate)
@@ -57,9 +57,10 @@ class BillService:
     @transaction.atomic
     def create(self, validated_data: dict):
         from accounting.models import Bill
+        apply_vat  = validated_data.pop('apply_vat', True)
         line_items = validated_data.get('line_items', [])
         discount   = validated_data.get('discount', Decimal('0'))
-        totals     = self._compute_totals(line_items, discount)
+        totals     = self._compute_totals(line_items, discount, apply_vat=apply_vat)
         bill = Bill.objects.create(
             tenant=self.tenant,
             created_by=self.user,
@@ -87,9 +88,10 @@ class BillService:
             raise ConflictError(
                 'Only draft bills can be edited. Ask an admin to override.'
             )
+        apply_vat  = validated_data.pop('apply_vat', True)
         line_items = validated_data.get('line_items', instance.line_items)
         discount   = validated_data.get('discount', instance.discount)
-        totals     = self._compute_totals(line_items, discount)
+        totals     = self._compute_totals(line_items, discount, apply_vat=apply_vat)
         for field, value in validated_data.items():
             setattr(instance, field, value)
         for field, value in totals.items():
