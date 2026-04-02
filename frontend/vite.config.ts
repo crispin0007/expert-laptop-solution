@@ -19,7 +19,7 @@ export default defineConfig({
         manualChunks: {
           'vendor-react':   ['react', 'react-dom', 'react-router-dom'],
           'vendor-query':   ['@tanstack/react-query'],
-          'vendor-ui':      ['lucide-react', 'react-hot-toast', 'date-fns'],
+          'vendor-ui':      ['lucide-react', 'react-hot-toast'],
           'vendor-axios':   ['axios'],
         },
       },
