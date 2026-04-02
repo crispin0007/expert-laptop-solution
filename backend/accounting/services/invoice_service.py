@@ -175,10 +175,10 @@ class InvoiceService:
 
     # ── Compute helpers ───────────────────────────────────────────────────────
 
-    def _compute_totals_kwargs(self, line_items, discount=Decimal('0')) -> dict:
+    def _compute_totals_kwargs(self, line_items, discount=Decimal('0'), apply_vat=True) -> dict:
         """Return dict of subtotal/vat_rate/vat_amount/total ready to save."""
         t = self.tenant
-        vat_rate = t.vat_rate if t and t.vat_enabled else Decimal('0')
+        vat_rate = (t.vat_rate if t and t.vat_enabled else Decimal('0')) if apply_vat else Decimal('0')
         subtotal, vat_amount, total = compute_invoice_totals(
             line_items, discount, vat_rate
         )
@@ -197,7 +197,8 @@ class InvoiceService:
         from accounting.models import Invoice
         line_items = validated_data.get('line_items', [])
         discount = validated_data.get('discount', Decimal('0'))
-        totals = self._compute_totals_kwargs(line_items, discount)
+        apply_vat = validated_data.pop('apply_vat', True)
+        totals = self._compute_totals_kwargs(line_items, discount, apply_vat=apply_vat)
         instance = Invoice.objects.create(
             tenant=self.tenant,
             created_by=self.user,
