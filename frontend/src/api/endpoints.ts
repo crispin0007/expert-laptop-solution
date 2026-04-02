@@ -117,6 +117,7 @@ export const ACCOUNTING = {
   ACCOUNTS: '/accounting/accounts/',
   ACCOUNT_DETAIL: (id: number) => `/accounting/accounts/${id}/`,
   ACCOUNTS_TRIAL_BALANCE: '/accounting/accounts/trial-balance/',
+  ACCOUNT_GROUPS: '/accounting/account-groups/',
 
   // ── Bank Accounts ────────────────────────────────────────────────────────
   BANK_ACCOUNTS: '/accounting/bank-accounts/',

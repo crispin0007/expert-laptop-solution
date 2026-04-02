@@ -150,8 +150,38 @@ const REPORTS: ReportMeta[] = [
 // ─── Typed data shapes ────────────────────────────────────────────────────────
 
 interface RptAccount { code: string; name: string; balance: string | number }
-interface PLReport   { date_from: string; date_to: string; revenue: RptAccount[]; total_revenue: string | number; expenses: RptAccount[]; total_expenses: string | number; net_profit: string | number }
-interface BSReport   { as_of_date: string; assets: RptAccount[]; total_assets: string | number; liabilities: RptAccount[]; total_liabilities: string | number; equity: RptAccount[]; total_equity: string | number; balanced: boolean }
+// New Tally-style P&L with Gross Profit section
+interface PLReport {
+  date_from: string; date_to: string
+  // Gross section
+  sales: RptAccount[]; direct_income: RptAccount[]
+  gross_revenue: string | number
+  purchases: RptAccount[]; direct_expenses: RptAccount[]
+  total_direct_cost: string | number
+  gross_profit: string | number
+  // Net section
+  indirect_expenses: RptAccount[]; indirect_income: RptAccount[]
+  total_indirect_exp: string | number; total_indirect_inc: string | number
+  net_profit: string | number
+}
+// New Tally-style Balance Sheet with sections
+interface BSReport {
+  as_of_date: string; as_of_date_bs?: string
+  // Assets
+  fixed_assets: RptAccount[]; total_fixed_assets: string | number
+  investments: RptAccount[]; total_investments: string | number
+  current_assets: RptAccount[]; total_current_assets: string | number
+  total_assets: string | number
+  // Capital
+  capital: RptAccount[]; total_capital: string | number
+  // Loans
+  bank_od: RptAccount[]; loans: RptAccount[]; total_loans: string | number
+  // Current Liabilities
+  current_liabilities: RptAccount[]; total_current_liabilities: string | number
+  total_liabilities: string | number
+  total_equity_and_liabilities: string | number
+  balanced: boolean
+}
 interface TBRow      { code: string; name: string; debit: string | number; credit: string | number }
 interface TBReport   { date_from: string; date_to: string; accounts: TBRow[]; total_debit: string | number; total_credit: string | number; balanced: boolean }
 interface AgedItem   { id: number; invoice_number?: string; bill_number?: string; customer?: string; supplier?: string; due_date: string; amount_due: number }
@@ -214,20 +244,72 @@ function RptDateBadge({ label }: { label: string }) {
 // ─── Profit & Loss ───────────────────────────────────────────────────────────
 
 function PLReportView({ data }: { data: PLReport }) {
+  const gp  = parseFloat(String(data.gross_profit))
   const net = parseFloat(String(data.net_profit))
   const isProfit = net >= 0
+
+  function emptyNote(msg: string) {
+    return <p className="px-8 py-2 text-xs text-gray-400 italic">{msg}</p>
+  }
+
   return (
     <div className="divide-y divide-gray-100">
-      <RptSection title="Income / Revenue">
-        {data.revenue?.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
-        {!data.revenue?.length && <p className="px-8 py-2 text-xs text-gray-400 italic">No revenue accounts with activity.</p>}
-        <RptTotal label="Total Revenue" amount={data.total_revenue} />
+      {/* ── Gross Revenue ───────────────────────────────────────────── */}
+      <RptSection title="Sales / Revenue">
+        {data.sales?.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
+        {!data.sales?.length && emptyNote('No sales accounts with activity.')}
       </RptSection>
-      <RptSection title="Expenses">
-        {data.expenses?.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
-        {!data.expenses?.length && <p className="px-8 py-2 text-xs text-gray-400 italic">No expense accounts with activity.</p>}
-        <RptTotal label="Total Expenses" amount={data.total_expenses} />
-      </RptSection>
+      {data.direct_income?.length > 0 && (
+        <RptSection title="Direct Income">
+          {data.direct_income.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
+        </RptSection>
+      )}
+      <RptTotal label="Gross Revenue" amount={data.gross_revenue} />
+
+      {/* ── Direct Costs ────────────────────────────────────────────── */}
+      {(data.purchases?.length > 0 || data.direct_expenses?.length > 0) && (
+        <>
+          {data.purchases?.length > 0 && (
+            <RptSection title="Purchases / COGS">
+              {data.purchases.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
+            </RptSection>
+          )}
+          {data.direct_expenses?.length > 0 && (
+            <RptSection title="Direct Expenses">
+              {data.direct_expenses.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
+            </RptSection>
+          )}
+          <RptTotal label="Total Direct Costs" amount={data.total_direct_cost} />
+        </>
+      )}
+
+      {/* ── Gross Profit ────────────────────────────────────────────── */}
+      <div className={`flex items-center justify-between px-4 py-2.5 border-t-2 ${gp >= 0 ? 'border-emerald-400 bg-emerald-50' : 'border-red-400 bg-red-50'}`}>
+        <span className={`text-sm font-bold uppercase tracking-wide ${gp >= 0 ? 'text-emerald-800' : 'text-red-800'}`}>
+          {gp >= 0 ? 'Gross Profit' : 'Gross Loss'}
+        </span>
+        <span className={`text-sm font-bold tabular-nums ${gp >= 0 ? 'text-emerald-800' : 'text-red-800'}`}>
+          {npr(Math.abs(gp).toFixed(2))}
+        </span>
+      </div>
+
+      {/* ── Indirect Expenses ───────────────────────────────────────── */}
+      {data.indirect_expenses?.length > 0 && (
+        <RptSection title="Indirect Expenses (Overhead)">
+          {data.indirect_expenses.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
+          <RptTotal label="Total Indirect Expenses" amount={data.total_indirect_exp} />
+        </RptSection>
+      )}
+
+      {/* ── Indirect / Other Income ─────────────────────────────────── */}
+      {data.indirect_income?.length > 0 && (
+        <RptSection title="Other Income">
+          {data.indirect_income.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
+          <RptTotal label="Total Other Income" amount={data.total_indirect_inc} />
+        </RptSection>
+      )}
+
+      {/* ── Net Profit ──────────────────────────────────────────────── */}
       <RptGrandTotal
         label={isProfit ? 'Net Profit' : 'Net Loss'}
         amount={Math.abs(net).toFixed(2)}
@@ -240,43 +322,76 @@ function PLReportView({ data }: { data: PLReport }) {
 // ─── Balance Sheet ────────────────────────────────────────────────────────────
 
 function BSReportView({ data }: { data: BSReport }) {
+  function emptyNote(msg: string) {
+    return <p className="px-8 py-2 text-xs text-gray-400 italic">{msg}</p>
+  }
+  function sectionRows(items: RptAccount[]) {
+    return items?.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)
+  }
+
   return (
     <div>
       {data.balanced === false && (
         <div className="mx-4 mt-4 px-4 py-2 bg-gray-50 border border-gray-300 rounded flex items-center gap-2 text-sm text-gray-700">
-          <AlertCircle size={14} className="shrink-0" /> Out of balance — Assets ≠ Liabilities + Equity. Check posted journal entries.
+          <AlertCircle size={14} className="shrink-0" /> Out of balance — Assets ≠ Capital + Liabilities. Check posted journal entries.
         </div>
       )}
       <div className="grid grid-cols-2 divide-x divide-gray-200 mt-4">
-        <div>
-          <RptSection title="Liabilities">
-            {data.liabilities?.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
-            {!data.liabilities?.length && <p className="px-8 py-2 text-xs text-gray-400 italic">None</p>}
-            <RptTotal label="Total Liabilities" amount={data.total_liabilities} />
+
+        {/* ── LEFT — Capital & Liabilities ─────────────────────────── */}
+        <div className="space-y-2">
+          <RptSection title="Capital Account">
+            {sectionRows(data.capital)}
+            {!data.capital?.length && emptyNote('None')}
+            <RptTotal label="Total Capital" amount={data.total_capital} />
           </RptSection>
-          <div className="mt-2">
-            <RptSection title="Capital / Equity">
-              {data.equity?.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
-              {!data.equity?.length && <p className="px-8 py-2 text-xs text-gray-400 italic">None</p>}
-              <RptTotal label="Total Equity" amount={data.total_equity} />
+
+          {((data.bank_od?.length ?? 0) + (data.loans?.length ?? 0)) > 0 && (
+            <RptSection title="Loans &amp; Borrowings">
+              {sectionRows(data.bank_od)}
+              {sectionRows(data.loans)}
+              <RptTotal label="Total Loans" amount={data.total_loans} />
             </RptSection>
-          </div>
+          )}
+
+          <RptSection title="Current Liabilities">
+            {sectionRows(data.current_liabilities)}
+            {!data.current_liabilities?.length && emptyNote('None')}
+            <RptTotal label="Total Current Liabilities" amount={data.total_current_liabilities} />
+          </RptSection>
+
           <RptGrandTotal
-            label="Total Liabilities + Equity"
-            amount={String(parseFloat(String(data.total_liabilities)) + parseFloat(String(data.total_equity)))}
+            label="Total Capital + Liabilities"
+            amount={data.total_equity_and_liabilities}
+            note={data.balanced ? '(Balanced ✓)' : undefined}
           />
         </div>
-        <div>
-          <RptSection title="Assets">
-            {data.assets?.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
-            {!data.assets?.length && <p className="px-8 py-2 text-xs text-gray-400 italic">None</p>}
+
+        {/* ── RIGHT — Assets ───────────────────────────────────────── */}
+        <div className="space-y-2">
+          {data.fixed_assets?.length > 0 && (
+            <RptSection title="Fixed Assets">
+              {sectionRows(data.fixed_assets)}
+              <RptTotal label="Total Fixed Assets" amount={data.total_fixed_assets} />
+            </RptSection>
+          )}
+          {data.investments?.length > 0 && (
+            <RptSection title="Investments">
+              {sectionRows(data.investments)}
+              <RptTotal label="Total Investments" amount={data.total_investments} />
+            </RptSection>
+          )}
+          <RptSection title="Current Assets">
+            {sectionRows(data.current_assets)}
+            {!data.current_assets?.length && emptyNote('None')}
+            <RptTotal label="Total Current Assets" amount={data.total_current_assets} />
           </RptSection>
           <RptGrandTotal
             label="Total Assets"
             amount={data.total_assets}
-            note={data.balanced ? '(Balanced ✓)' : undefined}
           />
         </div>
+
       </div>
     </div>
   )
@@ -798,21 +913,31 @@ function toCSV(key: ReportType, data: Record<string, unknown>): string {
     case 'pl': {
       const d = data as unknown as PLReport
       row('Section', 'Code', 'Account', 'Amount')
-      d.revenue?.forEach(r => row('Revenue', r.code, r.name, r.balance))
-      row('', '', 'Total Revenue', d.total_revenue)
-      d.expenses?.forEach(r => row('Expenses', r.code, r.name, r.balance))
-      row('', '', 'Total Expenses', d.total_expenses)
+      d.sales?.forEach(r => row('Sales', r.code, r.name, r.balance))
+      d.direct_income?.forEach(r => row('Direct Income', r.code, r.name, r.balance))
+      row('', '', 'Gross Revenue', d.gross_revenue)
+      d.purchases?.forEach(r => row('Purchases', r.code, r.name, r.balance))
+      d.direct_expenses?.forEach(r => row('Direct Expenses', r.code, r.name, r.balance))
+      row('', '', 'Total Direct Costs', d.total_direct_cost)
+      row('', '', 'Gross Profit', d.gross_profit)
+      d.indirect_expenses?.forEach(r => row('Indirect Expenses', r.code, r.name, r.balance))
+      d.indirect_income?.forEach(r => row('Other Income', r.code, r.name, r.balance))
       row('', '', 'Net Profit/Loss', d.net_profit)
       break
     }
     case 'balance-sheet': {
       const d = data as unknown as BSReport
       row('Section', 'Code', 'Account', 'Amount')
-      d.liabilities?.forEach(r => row('Liabilities', r.code, r.name, r.balance))
+      d.capital?.forEach(r => row('Capital', r.code, r.name, r.balance))
+      row('', '', 'Total Capital', d.total_capital)
+      d.bank_od?.forEach(r => row('Bank OD', r.code, r.name, r.balance))
+      d.loans?.forEach(r => row('Loans', r.code, r.name, r.balance))
+      row('', '', 'Total Loans', d.total_loans)
+      d.current_liabilities?.forEach(r => row('Current Liabilities', r.code, r.name, r.balance))
       row('', '', 'Total Liabilities', d.total_liabilities)
-      d.equity?.forEach(r => row('Equity', r.code, r.name, r.balance))
-      row('', '', 'Total Equity', d.total_equity)
-      d.assets?.forEach(r => row('Assets', r.code, r.name, r.balance))
+      d.fixed_assets?.forEach(r => row('Fixed Assets', r.code, r.name, r.balance))
+      d.investments?.forEach(r => row('Investments', r.code, r.name, r.balance))
+      d.current_assets?.forEach(r => row('Current Assets', r.code, r.name, r.balance))
       row('', '', 'Total Assets', d.total_assets)
       break
     }

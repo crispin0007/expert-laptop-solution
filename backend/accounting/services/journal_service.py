@@ -32,6 +32,48 @@ def _get_account(tenant, code):
         )
 
 
+def _get_account_by_group(tenant, group_slug, fallback_code=None):
+    """
+    Look up the preferred active account for a given AccountGroup slug.
+
+    Resolution order:
+      1. Account matching fallback_code within the group (exact code preference)
+      2. Active system account in the group (is_system=True first — most stable)
+      3. Any other active account in the group
+      4. Exact code lookup via _get_account(tenant, fallback_code) if provided
+
+    The code-within-group preference (step 1) is critical when multiple accounts
+    share a group (e.g. 4100 Service Revenue and 4200 Product Revenue are both
+    in 'sales_accounts'). Passing fallback_code='4200' returns the right account.
+
+    This lets tenants rename or add accounts without breaking automated journals —
+    the journal engine finds accounts by role (group slug), not by hardcoded code.
+
+    Raises ValueError if no matching account is found anywhere.
+    """
+    from accounting.models import Account
+    qs = Account.objects.filter(
+        tenant=tenant,
+        group__slug=group_slug,
+        is_active=True,
+    )
+    # Prefer the account whose code matches fallback_code (handles shared-group accounts)
+    if fallback_code:
+        exact = qs.filter(code=fallback_code).first()
+        if exact:
+            return exact
+    # Otherwise take the best system account in the group
+    account = qs.order_by('-is_system', 'code').first()
+    if account:
+        return account
+    if fallback_code:
+        return _get_account(tenant, fallback_code)
+    raise ValueError(
+        f"No active account in group '{group_slug}' for tenant {tenant.slug}. "
+        "Seed the chart of accounts or assign an account to this group."
+    )
+
+
 def _make_entry(tenant, created_by, date, description, reference_type, reference_id, lines):
     """
     Create a JournalEntry + JournalLines and immediately post it.
@@ -112,10 +154,10 @@ def create_invoice_journal(invoice, created_by=None):
     always balances, regardless of document-level discounts or rounding.
     """
     tenant   = invoice.tenant
-    ar       = _get_account(tenant, '1200')
-    svc_rev  = _get_account(tenant, '4100')
-    prod_rev = _get_account(tenant, '4200')
-    vat_pay  = _get_account(tenant, '2200')
+    ar       = _get_account_by_group(tenant, 'sundry_debtors',   '1200')
+    svc_rev  = _get_account_by_group(tenant, 'sales_accounts',   '4100')
+    prod_rev = _get_account_by_group(tenant, 'sales_accounts',   '4200')
+    vat_pay  = _get_account_by_group(tenant, 'duties_taxes_vat', '2200')
 
     service_total, product_total = _split_revenue(invoice.line_items, invoice.subtotal)
 
@@ -149,10 +191,10 @@ def reverse_invoice_journal(invoice, created_by=None):
       Cr  Accounts Receivable 1200 (total)
     """
     tenant   = invoice.tenant
-    ar       = _get_account(tenant, '1200')
-    svc_rev  = _get_account(tenant, '4100')
-    prod_rev = _get_account(tenant, '4200')
-    vat_pay  = _get_account(tenant, '2200')
+    ar       = _get_account_by_group(tenant, 'sundry_debtors',   '1200')
+    svc_rev  = _get_account_by_group(tenant, 'sales_accounts',   '4100')
+    prod_rev = _get_account_by_group(tenant, 'sales_accounts',   '4200')
+    vat_pay  = _get_account_by_group(tenant, 'duties_taxes_vat', '2200')
 
     service_total, product_total = _split_revenue(invoice.line_items, invoice.subtotal)
 
@@ -190,9 +232,9 @@ def create_bill_journal(bill, created_by=None):
     If a specific expense account is needed, create it under 5300 and journal manually.
     """
     tenant  = bill.tenant
-    expense = _get_account(tenant, '5300')   # Other Expenses — NOT 5100 COGS
-    ap      = _get_account(tenant, '2100')
-    vat_pay = _get_account(tenant, '2200')
+    expense = _get_account_by_group(tenant, 'indirect_expense',  '5300')  # Other Expenses — NOT 5100 COGS
+    ap      = _get_account_by_group(tenant, 'sundry_creditors',  '2100')
+    vat_pay = _get_account_by_group(tenant, 'duties_taxes_vat',  '2200')
 
     lines = [
         (expense, bill.subtotal, Decimal('0'), f"Expense – {bill.bill_number}"),
@@ -236,10 +278,10 @@ def create_payment_journal(payment, created_by=None):
     if payment.bank_account and payment.bank_account.linked_account:
         cash_acc = payment.bank_account.linked_account
     else:
-        cash_acc = _get_account(tenant, '1100')   # fallback: Cash
+        cash_acc = _get_account_by_group(tenant, 'cash_in_hand', '1100')  # fallback: Cash
 
     if payment.type == 'incoming':
-        ar = _get_account(tenant, '1200')
+        ar = _get_account_by_group(tenant, 'sundry_debtors', '1200')
         lines = [
             (cash_acc, payment.amount, Decimal('0'), f"Receipt – {payment.payment_number}"),
             (ar,       Decimal('0'),   payment.amount, f"Clear AR – {payment.payment_number}"),
@@ -247,7 +289,7 @@ def create_payment_journal(payment, created_by=None):
         desc = f"Payment received {payment.payment_number}"
     elif payment.bill_id:
         # Outgoing: supplier bill payment — clears Accounts Payable
-        ap = _get_account(tenant, '2100')
+        ap = _get_account_by_group(tenant, 'sundry_creditors', '2100')
         lines = [
             (ap,       payment.amount, Decimal('0'), f"Clear AP – {payment.payment_number}"),
             (cash_acc, Decimal('0'),   payment.amount, f"Payment sent – {payment.payment_number}"),
@@ -255,7 +297,7 @@ def create_payment_journal(payment, created_by=None):
         desc = f"Bill payment sent {payment.payment_number}"
     else:
         # Outgoing: salary / direct cash payment — no AP to clear
-        salary = _get_account(tenant, '5200')
+        salary = _get_account_by_group(tenant, 'indirect_expense', '5200')
         lines = [
             (salary,   payment.amount, Decimal('0'), f"Salary – {payment.notes or payment.reference or payment.payment_number}"),
             (cash_acc, Decimal('0'),   payment.amount, f"Paid – {payment.payment_number}"),
@@ -279,10 +321,10 @@ def create_credit_note_journal(credit_note, created_by=None):
       Cr  Accounts Receivable 1200 (total      — customer owes us less)
     """
     tenant   = credit_note.tenant
-    ar       = _get_account(tenant, '1200')
-    svc_rev  = _get_account(tenant, '4100')
-    prod_rev = _get_account(tenant, '4200')
-    vat_pay  = _get_account(tenant, '2200')
+    ar       = _get_account_by_group(tenant, 'sundry_debtors',   '1200')
+    svc_rev  = _get_account_by_group(tenant, 'sales_accounts',   '4100')
+    prod_rev = _get_account_by_group(tenant, 'sales_accounts',   '4200')
+    vat_pay  = _get_account_by_group(tenant, 'duties_taxes_vat', '2200')
 
     service_total, product_total = _split_revenue(
         credit_note.line_items, credit_note.subtotal
@@ -319,10 +361,10 @@ def reverse_credit_note_journal(credit_note, created_by=None):
       Cr  VAT Payable          2200  (vat_amount — restore the VAT liability)
     """
     tenant   = credit_note.tenant
-    ar       = _get_account(tenant, '1200')
-    svc_rev  = _get_account(tenant, '4100')
-    prod_rev = _get_account(tenant, '4200')
-    vat_pay  = _get_account(tenant, '2200')
+    ar       = _get_account_by_group(tenant, 'sundry_debtors',   '1200')
+    svc_rev  = _get_account_by_group(tenant, 'sales_accounts',   '4100')
+    prod_rev = _get_account_by_group(tenant, 'sales_accounts',   '4200')
+    vat_pay  = _get_account_by_group(tenant, 'duties_taxes_vat', '2200')
 
     service_total, product_total = _split_revenue(
         credit_note.line_items, credit_note.subtotal
@@ -358,9 +400,9 @@ def reverse_debit_note_journal(debit_note, created_by=None):
       Cr  Accounts Payable 2100 (restore what we owe the supplier)
     """
     t = debit_note.tenant
-    ap_acc      = _get_account(t, '2100')
-    expense_acc = _get_account(t, '5300')
-    vat_acc     = _get_account(t, '2200')
+    ap_acc      = _get_account_by_group(t, 'sundry_creditors',  '2100')
+    expense_acc = _get_account_by_group(t, 'indirect_expense',  '5300')
+    vat_acc     = _get_account_by_group(t, 'duties_taxes_vat',  '2200')
 
     lines = [
         (expense_acc, debit_note.subtotal, Decimal('0'),   'VOID DN – Expense restore'),
@@ -398,13 +440,13 @@ def create_payslip_journal(payslip, created_by=None):
     its signal (handle_payment_created) skips the journal when reference starts with 'PAYSLIP-'.
     """
     tenant   = payslip.tenant
-    salary   = _get_account(tenant, '5200')
+    salary   = _get_account_by_group(tenant, 'indirect_expense', '5200')
 
     # Use the bank account linked to the payslip if one was selected
     if payslip.bank_account and payslip.bank_account.linked_account:
         cash_acc = payslip.bank_account.linked_account
     else:
-        cash_acc = _get_account(tenant, '1100')
+        cash_acc = _get_account_by_group(tenant, 'cash_in_hand', '1100')
 
     net_pay   = payslip.net_pay   or Decimal('0')
     tds_amnt  = payslip.tds_amount or Decimal('0')
@@ -418,7 +460,7 @@ def create_payslip_journal(payslip, created_by=None):
         (cash_acc, Decimal('0'),   net_pay,      f"Net pay – {payslip.staff} {payslip.period_start}"),
     ]
     if tds_amnt > Decimal('0'):
-        tds_acc = _get_account(tenant, '2300')   # TDS Payable (liability to IRD)
+        tds_acc = _get_account_by_group(tenant, 'duties_taxes_tds', '2300')  # TDS Payable (liability to IRD)
         lines.append(
             (tds_acc, Decimal('0'), tds_amnt, f"TDS withheld – {payslip.staff} {payslip.period_start}")
         )
@@ -464,8 +506,8 @@ def create_cogs_journal(invoice, created_by=None):
     if total_cost <= Decimal('0'):
         return None
 
-    cogs_acc = _get_account(tenant, '5100')
-    inv_acc  = _get_account(tenant, '1300')
+    cogs_acc = _get_account_by_group(tenant, 'purchase_accounts', '5100')
+    inv_acc  = _get_account_by_group(tenant, 'stock_in_hand',      '1300')
     lines = [
         (cogs_acc, total_cost,       Decimal('0'), f"COGS – {invoice.invoice_number}"),
         (inv_acc,  Decimal('0'),     total_cost,   f"Inventory out – {invoice.invoice_number}"),
@@ -489,8 +531,8 @@ def record_vat_remittance(tenant, amount, period, created_by=None):
     """
     if not amount or amount <= Decimal('0'):
         raise ValueError('VAT remittance amount must be > 0.')
-    vat_acc  = _get_account(tenant, '2200')
-    cash_acc = _get_account(tenant, '1100')
+    vat_acc  = _get_account_by_group(tenant, 'duties_taxes_vat', '2200')
+    cash_acc = _get_account_by_group(tenant, 'cash_in_hand',      '1100')
     return _make_entry(
         tenant, created_by, timezone.localdate(),
         f"VAT remittance to IRD – {period}",
@@ -513,8 +555,8 @@ def record_tds_remittance(tenant, amount, period, created_by=None):
     """
     if not amount or amount <= Decimal('0'):
         raise ValueError('TDS remittance amount must be > 0.')
-    tds_acc  = _get_account(tenant, '2300')
-    cash_acc = _get_account(tenant, '1100')
+    tds_acc  = _get_account_by_group(tenant, 'duties_taxes_tds', '2300')
+    cash_acc = _get_account_by_group(tenant, 'cash_in_hand',      '1100')
     return _make_entry(
         tenant, created_by, timezone.localdate(),
         f"TDS deposit to IRD – {period}",
@@ -527,6 +569,55 @@ def record_tds_remittance(tenant, amount, period, created_by=None):
 
 
 # ─── Default Chart of Accounts seed ──────────────────────────────────────────
+
+# Tally-style primary groups for Nepal SME accounting.
+# (slug, name, type, report_section, affects_gross_profit, normal_balance, order)
+DEFAULT_GROUPS = [
+    # ── Balance Sheet: Assets ────────────────────────────────────────────────
+    ('fixed_assets',          'Fixed Assets',           'asset',     'bs_fixed_assets',       False, 'debit',  10),
+    ('investments',           'Investments',            'asset',     'bs_investments',         False, 'debit',  20),
+    ('stock_in_hand',         'Stock / Inventory',      'asset',     'bs_current_assets',      True,  'debit',  30),
+    ('sundry_debtors',        'Sundry Debtors',         'asset',     'bs_current_assets',      False, 'debit',  40),
+    ('bank_accounts',         'Bank Accounts',          'asset',     'bs_current_assets',      False, 'debit',  50),
+    ('cash_in_hand',          'Cash in Hand',           'asset',     'bs_current_assets',      False, 'debit',  60),
+    ('loans_advances_asset',  'Loans & Advances (Asset)', 'asset',   'bs_current_assets',      False, 'debit',  70),
+    ('other_current_assets',  'Other Current Assets',   'asset',     'bs_current_assets',      False, 'debit',  80),
+    # ── Balance Sheet: Equity ────────────────────────────────────────────────
+    ('capital_account',       'Capital Account',        'equity',    'bs_capital',             False, 'credit', 100),
+    ('reserves_surplus',      'Reserves & Surplus',     'equity',    'bs_capital',             False, 'credit', 110),
+    # ── Balance Sheet: Liabilities ────────────────────────────────────────────
+    ('bank_od',               'Bank OD Accounts',       'liability', 'bs_loans',               False, 'credit', 120),
+    ('loans_liability',       'Loans (Liability)',       'liability', 'bs_loans',               False, 'credit', 130),
+    ('sundry_creditors',      'Sundry Creditors',       'liability', 'bs_current_liabilities',  False, 'credit', 140),
+    ('duties_taxes_vat',      'Duties & Taxes (VAT)',   'liability', 'bs_current_liabilities',  False, 'credit', 150),
+    ('duties_taxes_tds',      'Duties & Taxes (TDS)',   'liability', 'bs_current_liabilities',  False, 'credit', 160),
+    ('current_liabilities',   'Other Current Liabilities', 'liability', 'bs_current_liabilities', False, 'credit', 170),
+    # ── P&L: Gross Profit section ────────────────────────────────────────────
+    ('sales_accounts',        'Sales / Revenue',        'revenue',   'pnl_gross',              True,  'credit', 200),
+    ('direct_income',         'Direct Income',          'revenue',   'pnl_gross',              True,  'credit', 210),
+    ('purchase_accounts',     'Purchases / COGS',       'expense',   'pnl_gross',              True,  'debit',  220),
+    ('direct_expense',        'Direct Expenses',        'expense',   'pnl_gross',              True,  'debit',  230),
+    # ── P&L: Net Profit section ──────────────────────────────────────────────
+    ('indirect_income',       'Indirect Income',        'revenue',   'pnl_net',                False, 'credit', 300),
+    ('indirect_expense',      'Indirect Expenses',      'expense',   'pnl_net',                False, 'debit',  310),
+]
+
+# Maps system account code → AccountGroup slug (for automatic assignment during seed)
+ACCOUNT_CODE_TO_GROUP = {
+    '1100': 'cash_in_hand',
+    '1200': 'sundry_debtors',
+    '1300': 'stock_in_hand',
+    '2100': 'sundry_creditors',
+    '2200': 'duties_taxes_vat',
+    '2300': 'duties_taxes_tds',
+    '3100': 'reserves_surplus',
+    '4100': 'sales_accounts',
+    '4200': 'sales_accounts',
+    '5100': 'purchase_accounts',
+    '5200': 'indirect_expense',
+    '5300': 'indirect_expense',
+    # Parent header accounts (1000, 2000, …) intentionally omitted — never posted to
+}
 
 DEFAULT_ACCOUNTS = [
     # (code, name, type, parent_code, is_system)
@@ -550,17 +641,52 @@ DEFAULT_ACCOUNTS = [
 ]
 
 
+def seed_account_groups(tenant, created_by=None):
+    """
+    Create the default AccountGroups for a tenant.
+    Safe to call multiple times — uses get_or_create.
+    Returns a dict of slug → AccountGroup.
+    """
+    from accounting.models import AccountGroup
+
+    group_map = {}
+    for slug, name, acct_type, report_section, affects_gp, normal_balance, order in DEFAULT_GROUPS:
+        group, _ = AccountGroup.objects.get_or_create(
+            tenant=tenant,
+            slug=slug,
+            defaults={
+                'name':                name,
+                'type':                acct_type,
+                'report_section':      report_section,
+                'affects_gross_profit': affects_gp,
+                'normal_balance':      normal_balance,
+                'order':               order,
+                'is_system':           True,
+                'created_by':          created_by,
+            },
+        )
+        group_map[slug] = group
+    return group_map
+
+
 def seed_chart_of_accounts(tenant, created_by=None):
     """
     Create the default Chart of Accounts for a tenant.
     Safe to call multiple times — uses get_or_create.
+
+    Groups are seeded first so that each account can be linked to its group
+    immediately, enabling automated journal routing via group slug from day 1.
     """
     from accounting.models import Account
+
+    # Seed groups first — accounts reference them
+    group_map = seed_account_groups(tenant, created_by)
 
     created_map = {}   # code → Account instance
 
     for code, name, acct_type, parent_code, is_system in DEFAULT_ACCOUNTS:
         parent = created_map.get(parent_code) if parent_code else None
+        group  = group_map.get(ACCOUNT_CODE_TO_GROUP.get(code))  # None for header accounts
         account, _ = Account.objects.get_or_create(
             tenant=tenant,
             code=code,
@@ -568,10 +694,15 @@ def seed_chart_of_accounts(tenant, created_by=None):
                 'name':      name,
                 'type':      acct_type,
                 'parent':    parent,
+                'group':     group,
                 'is_system': is_system,
                 'created_by': created_by,
             },
         )
+        # Patch group on existing (pre-migration) seeded accounts that lack it
+        if account.group_id is None and group is not None:
+            account.group = group
+            account.save(update_fields=['group'])
         created_map[code] = account
 
     return created_map
@@ -591,9 +722,9 @@ def create_debit_note_journal(debit_note, created_by=None):
     from accounting.models import Account
     t = debit_note.tenant
 
-    ap_acc      = _get_account(t, '2100')  # Accounts Payable
-    expense_acc = _get_account(t, '5300')  # Other Expenses (or use a lookup)
-    vat_acc     = _get_account(t, '2200')  # VAT Payable
+    ap_acc      = _get_account_by_group(t, 'sundry_creditors', '2100')
+    expense_acc = _get_account_by_group(t, 'indirect_expense', '5300')
+    vat_acc     = _get_account_by_group(t, 'duties_taxes_vat', '2200')
 
     lines = [
         (ap_acc,      debit_note.total,       Decimal('0'),       'Debit Note – AP reversal'),

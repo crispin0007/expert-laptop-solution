@@ -149,6 +149,11 @@ interface Account {
   id: number; code: string; name: string; type: string
   is_system: boolean; is_active: boolean; parent: number | null
   balance: string; description: string; opening_balance: string
+  group: number | null; group_name: string | null; group_slug: string | null
+}
+interface AccountGroup {
+  id: number; slug: string; name: string; type: string
+  report_section: string; normal_balance: string; is_system: boolean
 }
 interface BankAccount {
   id: number; name: string; bank_name: string; account_number: string
@@ -2768,8 +2773,16 @@ function InlineAddRow({
   const [code,        setCode]        = useState(state.suggestedCode)
   const [description, setDescription] = useState('')
   const [openingBal,  setOpeningBal]  = useState('0')
+  const [groupId,     setGroupId]     = useState<number | ''>('')
   const nameRef = useRef<HTMLInputElement>(null)
   useEffect(() => { nameRef.current?.focus() }, [])
+
+  const { data: groups = [] } = useQuery<AccountGroup[]>({
+    queryKey: ['account-groups', state.type],
+    queryFn: () => apiClient.get(ACCOUNTING.ACCOUNT_GROUPS + `?type=${state.type}`).then(r =>
+      Array.isArray(r.data) ? r.data : (r.data?.data ?? r.data?.results ?? [])
+    ),
+  })
 
   const typeColors: Record<string, string> = {
     asset: 'text-blue-600 bg-blue-50', liability: 'text-orange-600 bg-orange-50',
@@ -2784,17 +2797,19 @@ function InlineAddRow({
       qc.invalidateQueries({ queryKey: ['accounts'] })
       onSave()
     },
-    onError: (e: { response?: { data?: { detail?: string; code?: string[] } } }) =>
-      toast.error(e?.response?.data?.detail ?? e?.response?.data?.code?.[0] ?? 'Failed to create account'),
+    onError: (e: { response?: { data?: { detail?: string; code?: string[]; group?: string[] } } }) =>
+      toast.error(e?.response?.data?.detail ?? e?.response?.data?.group?.[0] ?? e?.response?.data?.code?.[0] ?? 'Failed to create account'),
   })
 
   function submit(e?: React.FormEvent) {
     e?.preventDefault()
     if (!name.trim()) { nameRef.current?.focus(); return }
+    if (!groupId) { toast.error('Please select an account group.'); return }
     mutation.mutate({
       code: code.trim(), name: name.trim(), type: state.type, parent: state.parentId,
       description: description.trim(),
       opening_balance: openingBal || '0',
+      group: groupId,
     })
   }
 
@@ -2825,6 +2840,19 @@ function InlineAddRow({
               {state.type}
             </span>
           </div>
+          {/* Group selector — required for new accounts */}
+          <select
+            value={groupId}
+            onChange={e => setGroupId(e.target.value ? Number(e.target.value) : '')}
+            className={`w-full text-xs border rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400 ${
+              !groupId ? 'border-indigo-300 text-gray-400' : 'border-indigo-200 text-gray-700'
+            }`}
+          >
+            <option value="">— Select group (required) —</option>
+            {groups.map(g => (
+              <option key={g.id} value={g.id}>{g.name}</option>
+            ))}
+          </select>
           <input
             value={description} onChange={e => setDescription(e.target.value)}
             className="w-full text-xs border border-indigo-100 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-300 text-gray-500"
@@ -3042,6 +3070,9 @@ function AccountsTab() {
                           )}
                           {!a.is_active && (
                             <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">inactive</span>
+                          )}
+                          {a.group_name && (
+                            <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded hidden xl:inline">{a.group_name}</span>
                           )}
                         </div>
                         {a.description && (
