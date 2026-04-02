@@ -393,6 +393,13 @@ class Invoice(TenantModel):
     ]
 
     invoice_number = models.CharField(max_length=32, blank=True, db_index=True)
+
+    # IRD Nepal compliance — buyer PAN for B2B tax invoices
+    buyer_pan = models.CharField(
+        max_length=9, blank=True,
+        help_text='Buyer PAN number (9 digits) for B2B tax invoices — required by IRD for CBMS reporting.',
+    )
+
     customer = models.ForeignKey(
         'customers.Customer',
         null=True, blank=True,

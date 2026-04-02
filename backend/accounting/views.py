@@ -1459,6 +1459,23 @@ class InvoiceViewSet(NexusViewSet):
             fiscal_year_end=fy_end,
         )
 
+    def destroy(self, request, *args, **kwargs):
+        """
+        Hard-delete is blocked once an invoice has been issued, paid, or voided.
+        IRD Nepal compliance: sequential invoice numbers must have no gaps in the audit trail.
+        Only draft invoices can be deleted; all others must be voided instead.
+        """
+        inv = self.get_object()
+        if inv.status != Invoice.STATUS_DRAFT:
+            from core.exceptions import ConflictError
+            raise ConflictError(
+                f'Invoice {inv.invoice_number} is {inv.status!r} and cannot be deleted. '
+                'Use Void to cancel an issued invoice — this preserves the audit trail '
+                'as required by IRD Nepal.'
+            )
+        inv.delete()
+        return ApiResponse.no_content()
+
     # ── Custom actions ────────────────────────────────────────────────────────
 
     @action(detail=True, methods=['post'], url_path='issue')

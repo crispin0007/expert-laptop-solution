@@ -2,6 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  {# ── IRD Nepal Tax Invoice Template ────────────────────────────────────── #}
+  {# Required fields per VAT Act 2052 / CBMS directives:                     #}
+  {#   - "कर बिल" / "Tax Invoice" label                                      #}
+  {#   - Seller PAN + VAT Reg Number                                          #}
+  {#   - Buyer PAN (B2B transactions)                                         #}
+  {#   - Invoice date in BS (Bikram Sambat)                                   #}
+  {#   - Fiscal year label (e.g. 2081/082)                                    #}
+  {#   - Taxable amount + VAT (13%) shown separately                          #}
+  {#   - Sequential invoice number (no gaps)                                  #}
+  {#   - QR stub (CBMS integration — placeholder until credentials issued)    #}
   <style>
     /* ── Reset ────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -183,19 +193,90 @@
     }
     .footer-box p { font-size: 8.5pt; line-height: 1.6; color: #374151; }
 
+    /* ── IRD compliance banner ────────────────────────────── */
+    .ird-banner {
+      text-align: center;
+      border: 2px solid #1e40af;
+      border-radius: 6px;
+      padding: 6px 12px;
+      margin-bottom: 16px;
+      background: #eff6ff;
+    }
+    .ird-banner .tax-invoice-label {
+      font-size: 14pt;
+      font-weight: 800;
+      color: #1e40af;
+      letter-spacing: 1px;
+    }
+    .ird-banner .tax-invoice-np {
+      font-size: 11pt;
+      font-weight: 700;
+      color: #1e40af;
+      margin-left: 10px;
+    }
+    .ird-banner .fy-label {
+      font-size: 8pt;
+      color: #374151;
+      margin-top: 2px;
+    }
+
+    /* ── PAN / Reg row ───────────────────────────────────── */
+    .reg-row {
+      display: flex;
+      gap: 12px;
+      background: #f3f4f6;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      padding: 5px 14px;
+      margin-bottom: 14px;
+      font-size: 8pt;
+    }
+    .reg-row span { color: #6b7280; }
+    .reg-row strong { color: #111827; margin-left: 4px; }
+    .reg-row .sep { color: #d1d5db; margin: 0 6px; }
+
+    /* ── QR stub ─────────────────────────────────────────── */
+    .qr-stub {
+      display: inline-block;
+      width: 64px;
+      height: 64px;
+      border: 2px dashed #d1d5db;
+      border-radius: 4px;
+      text-align: center;
+      font-size: 6pt;
+      color: #9ca3af;
+      padding-top: 20px;
+      vertical-align: middle;
+    }
+
     /* ── Legal footer ─────────────────────────────────────── */
     .legal {
       border-top: 1px solid #e5e7eb;
       padding-top: 10px;
-      text-align: center;
       font-size: 7.5pt;
       color: #9ca3af;
       line-height: 1.5;
     }
+    .legal .ird-note {
+      font-weight: 600;
+      color: #6b7280;
+    }
   </style>
 </head>
 <body>
+{% load nepali_date_tags %}
 <div class="page">
+
+  <!-- ── IRD TAX INVOICE BANNER ──────────────────────────── -->
+  <div class="ird-banner">
+    <span class="tax-invoice-label">TAX INVOICE</span>
+    <span class="tax-invoice-np">/ कर बिल</span>
+    <div class="fy-label">
+      Fiscal Year / आर्थिक वर्ष:
+      <strong>{{ invoice.created_at|fiscal_year_label }}</strong>
+    </div>
+  </div>
+  <!-- /IRD BANNER -->
 
   <!-- ── HEADER ──────────────────────────────────────────── -->
   <div class="header">
@@ -207,15 +288,19 @@
     </div>
 
     <div class="invoice-meta">
-      <div class="invoice-label">Invoice</div>
+      <div class="invoice-label">Invoice / बिल</div>
       <table>
         <tr>
           <td>Invoice #</td>
           <td>{{ invoice.invoice_number }}</td>
         </tr>
         <tr>
-          <td>Date</td>
+          <td>Date (AD)</td>
           <td>{{ invoice.created_at|date:"d M Y" }}</td>
+        </tr>
+        <tr>
+          <td>Date (BS)</td>
+          <td><strong>{{ invoice.created_at|date_to_bs }}</strong></td>
         </tr>
         {% if invoice.due_date %}
         <tr>
@@ -240,24 +325,44 @@
   </div>
   <!-- /HEADER -->
 
+  <!-- ── PAN / VAT REG ROW ───────────────────────────────── -->
+  <div class="reg-row">
+    {% if tenant.pan_number %}
+      <span>Seller PAN:</span><strong>{{ tenant.pan_number }}</strong>
+      {% if tenant.vat_reg_number or invoice.buyer_pan %}<span class="sep">|</span>{% endif %}
+    {% endif %}
+    {% if tenant.vat_reg_number %}
+      <span>VAT Reg No:</span><strong>{{ tenant.vat_reg_number }}</strong>
+      {% if invoice.buyer_pan %}<span class="sep">|</span>{% endif %}
+    {% endif %}
+    {% if invoice.buyer_pan %}
+      <span>Buyer PAN:</span><strong>{{ invoice.buyer_pan }}</strong>
+    {% endif %}
+    {% if not tenant.pan_number and not tenant.vat_reg_number %}
+      <span style="color:#dc2626;">⚠ PAN / VAT registration number not configured — required for IRD compliance. Set in Settings → Business Profile.</span>
+    {% endif %}
+  </div>
+  <!-- /PAN ROW -->
+
   <!-- ── ADDRESSES ───────────────────────────────────────── -->
   <div class="addresses">
     <div class="address-box">
-      <div class="label">From</div>
+      <div class="label">From / बिक्रेता</div>
       <p class="name">{{ tenant.name }}</p>
       {% if tenant.email %}<p>{{ tenant.email }}</p>{% endif %}
       {% if tenant.phone %}<p>{{ tenant.phone }}</p>{% endif %}
       {% if tenant.address %}<p>{{ tenant.address }}</p>{% endif %}
-      {% if tenant.pan_number %}<p>PAN: {{ tenant.pan_number }}</p>{% endif %}
+      {% if tenant.pan_number %}<p style="font-size:8pt;color:#374151;">PAN: <strong>{{ tenant.pan_number }}</strong></p>{% endif %}
     </div>
 
     <div class="address-box">
-      <div class="label">Bill To</div>
+      <div class="label">Bill To / खरिदकर्ता</div>
       {% if invoice.customer %}
         <p class="name">{{ invoice.customer.name }}</p>
         {% if invoice.customer.email %}<p>{{ invoice.customer.email }}</p>{% endif %}
         {% if invoice.customer.phone %}<p>{{ invoice.customer.phone }}</p>{% endif %}
         {% if invoice.customer.address %}<p>{{ invoice.customer.address }}</p>{% endif %}
+        {% if invoice.buyer_pan %}<p style="font-size:8pt;color:#374151;">PAN: <strong>{{ invoice.buyer_pan }}</strong></p>{% endif %}
       {% elif invoice.bill_address %}
         <p>{{ invoice.bill_address }}</p>
       {% else %}
@@ -316,9 +421,13 @@
         <td>- NPR {{ invoice.discount|floatformat:2 }}</td>
       </tr>
       {% endif %}
-      {% if invoice.vat_enabled and invoice.vat_amount %}
+      {% if invoice.vat_amount %}
       <tr>
-        <td>VAT ({{ invoice.vat_rate }}%)</td>
+        <td>Taxable Amount / करयोग्य रकम</td>
+        <td>NPR {{ invoice.subtotal|floatformat:2 }}</td>
+      </tr>
+      <tr>
+        <td>VAT 13% / मूल्य अभिवृद्धि कर</td>
         <td>NPR {{ invoice.vat_amount|floatformat:2 }}</td>
       </tr>
       {% endif %}
@@ -363,14 +472,22 @@
   <!-- /FOOTER -->
 
   <!-- ── LEGAL ─────────────────────────────────────────────── -->
-  <div class="legal">
-    <p>
-      Thank you for your business.
+  <div class="legal" style="display:flex;justify-content:space-between;align-items:flex-start;">
+    <div style="flex:1">
+      <p class="ird-note">This is a computer-generated Tax Invoice / यो कम्प्युटरबाट निर्मित कर बिल हो।</p>
       {% if tenant.vat_enabled %}
-      This invoice includes {{ invoice.vat_rate }}% VAT as required by the Government of Nepal.
+      <p style="margin-top:4px;">VAT charged at 13% as per VAT Act 2052 of Nepal.</p>
       {% endif %}
-    </p>
-    <p style="margin-top:4px;">{{ tenant.name }} &bull; {{ tenant.subdomain }}.nexusbms.com</p>
+      {% if tenant.pan_number %}
+      <p style="margin-top:2px;">Seller PAN: {{ tenant.pan_number }}{% if tenant.vat_reg_number %} &bull; VAT Reg: {{ tenant.vat_reg_number }}{% endif %}</p>
+      {% endif %}
+      <p style="margin-top:4px;">{{ tenant.name }}{% if tenant.address %} &bull; {{ tenant.address }}{% endif %}</p>
+    </div>
+    {# QR stub — CBMS QR will be generated here once IRD credentials are issued #}
+    <div style="text-align:center;margin-left:16px">
+      <div class="qr-stub">CBMS<br>QR</div>
+      <p style="font-size:6pt;color:#9ca3af;margin-top:3px;">CBMS Pending</p>
+    </div>
   </div>
 
 </div>

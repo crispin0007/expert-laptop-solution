@@ -81,6 +81,7 @@ class TenantSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'slug', 'name', 'plan', 'plan_id', 'logo', 'currency',
             'vat_enabled', 'vat_rate', 'coin_to_money_rate',
+            'pan_number', 'vat_reg_number',
             'custom_domain', 'active_modules',
             'is_active', 'is_deleted', 'created_at', 'member_count',
         )

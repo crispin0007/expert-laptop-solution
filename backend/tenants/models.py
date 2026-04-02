@@ -144,6 +144,16 @@ class Tenant(models.Model):
         help_text='Send SLA breach warning this many minutes before the deadline.',
     )
 
+    # IRD Nepal compliance — tax registration details
+    pan_number = models.CharField(
+        max_length=9, blank=True,
+        help_text='9-digit PAN number issued by IRD Nepal. Printed on all tax invoices.',
+    )
+    vat_reg_number = models.CharField(
+        max_length=20, blank=True,
+        help_text='VAT registration number issued by IRD Nepal (if registered for VAT). Printed on tax invoices.',
+    )
+
     # VAT — Nepal default 13%
     vat_rate = models.DecimalField(
         max_digits=5,

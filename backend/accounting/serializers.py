@@ -418,6 +418,7 @@ class InvoiceSerializer(NepaliModelSerializer):
             'customer', 'customer_name',
             'ticket', 'ticket_number',
             'project', 'project_name',
+            'buyer_pan',
             'line_items', 'subtotal', 'discount', 'vat_rate',
             'vat_amount', 'total', 'amount_paid', 'amount_due',
             'status', 'due_date', 'paid_at',
