@@ -127,7 +127,7 @@ interface Payment {
   reference: string; notes: string; created_by_name: string; created_at: string
 }
 interface CreditNote {
-  id: number; credit_note_number: string; invoice: number | null
+  id: number; credit_note_number: string; invoice: number | null; invoice_number: string
   line_items: unknown[]; subtotal: string; total: string
   reason: string; status: string; issued_at: string | null; created_at: string
 }
@@ -1388,6 +1388,7 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
 
 function BillEditModal({ bill, onClose }: { bill: Bill; onClose: () => void }) {
   const qc = useQueryClient()
+  const [supplierId, setSupplierId] = useState<string>(bill.supplier ? String(bill.supplier) : '__custom__')
   const [supplierName, setSupplierName] = useState(bill.supplier_name ?? '')
   const [dueDate, setDueDate]           = useState(bill.due_date ?? '')
   const [lines, setLines]               = useState<LineItemDraft[]>(() =>
@@ -1401,6 +1402,11 @@ function BillEditModal({ bill, onClose }: { bill: Bill; onClose: () => void }) {
         }))
       : [emptyLine()]
   )
+
+  const { data: suppliers } = useQuery<ApiPage<InventorySupplier>>({
+    queryKey: ['inv-suppliers-mini'],
+    queryFn: () => apiClient.get(INVENTORY.SUPPLIERS + '?page_size=500&is_active=true').then(r => toPage<InventorySupplier>(r.data)),
+  })
 
   const mutation = useMutation({
     mutationFn: (payload: unknown) => apiClient.patch(ACCOUNTING.BILL_DETAIL(bill.id), payload),
@@ -1419,9 +1425,13 @@ function BillEditModal({ bill, onClose }: { bill: Bill; onClose: () => void }) {
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
-    if (!supplierName.trim()) { toast.error('Supplier name is required'); return }
+    const resolvedName = supplierId !== '__custom__'
+      ? (suppliers?.results?.find(s => String(s.id) === supplierId)?.name ?? supplierName)
+      : supplierName
+    if (!resolvedName.trim()) { toast.error('Supplier name is required'); return }
     mutation.mutate({
-      supplier_name: supplierName,
+      supplier: supplierId !== '__custom__' ? Number(supplierId) : null,
+      supplier_name: resolvedName,
       due_date: dueDate || null,
       line_items: lines
         .filter(l => l.description && l.unit_price)
@@ -1443,10 +1453,21 @@ function BillEditModal({ bill, onClose }: { bill: Bill; onClose: () => void }) {
           </div>
         )}
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Supplier Name *">
-            <input value={supplierName} onChange={e => setSupplierName(e.target.value)}
-              placeholder="Supplier / vendor name" className={inputCls} required />
+          <Field label="Supplier">
+            <select value={supplierId} onChange={e => {
+              setSupplierId(e.target.value)
+              if (e.target.value !== '__custom__') setSupplierName('')
+            }} className={inputCls}>
+              <option value="__custom__">— Enter manually —</option>
+              {suppliers?.results?.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
           </Field>
+          {supplierId === '__custom__' && (
+            <Field label="Supplier Name *">
+              <input value={supplierName} onChange={e => setSupplierName(e.target.value)}
+                placeholder="Supplier / vendor name" className={inputCls} required />
+            </Field>
+          )}
           <Field label="Due Date">
             <NepaliDatePicker value={dueDate} onChange={setDueDate} />
           </Field>
@@ -1706,8 +1727,8 @@ function PaymentsTab() {
                   <td className="px-4 py-3"><Badge status={p.type} /></td>
                   <td className="px-4 py-3 text-gray-600 text-xs capitalize">{p.method.replace('_', ' ')}</td>
                   <td className="px-4 py-3 font-medium text-gray-800">{npr(p.amount)}</td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">{p.invoice ?? '—'}</td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">{p.bill ?? '—'}</td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">{p.invoice_number ?? '—'}</td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">{p.bill_number ?? '—'}</td>
                   <td className="px-4 py-3">
                     {can('can_manage_accounting') && (
                       <button onClick={() => confirm({ title: 'Delete Payment', message: `Delete payment ${p.payment_number}? The linked journal entry will NOT be auto-reversed — post a manual reversing entry if needed.`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDeletePayment.mutate(p.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
@@ -1734,6 +1755,7 @@ function CreditNotesTab() {
   const { can } = usePermissions()
   const { fyYear } = useFY()
   const [editCn, setEditCn] = useState<CreditNote | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
   const { data, isLoading } = useQuery<ApiPage<CreditNote>>({
     queryKey: ['credit-notes', fyYear],
     queryFn: () => apiClient.get(addFyParam(ACCOUNTING.CREDIT_NOTES, fyYear)).then(r => toPage<CreditNote>(r.data)),
@@ -1758,6 +1780,16 @@ function CreditNotesTab() {
   return (
     <div>
       {editCn && <CreditNoteEditModal cn={editCn} onClose={() => setEditCn(null)} />}
+      {showCreate && <CreditNoteCreateModal onClose={() => setShowCreate(false)} />}
+      <div className="flex items-center justify-between mb-4">
+        <span className="text-sm text-gray-400">{data?.count ?? 0} credit notes</span>
+        {can('can_manage_accounting') && (
+          <button onClick={() => setShowCreate(true)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
+            <Plus size={15} /> New Credit Note
+          </button>
+        )}
+      </div>
       {isLoading ? <Spinner /> : (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div className="overflow-x-auto">
@@ -1773,7 +1805,7 @@ function CreditNotesTab() {
               {data?.results?.map(cn => (
                 <tr key={cn.id} className="hover:bg-gray-50/50">
                   <td className="px-4 py-3 font-mono text-xs font-medium text-indigo-600">{cn.credit_note_number}</td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">{cn.invoice ?? '—'}</td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">{cn.invoice_number ?? '—'}</td>
                   <td className="px-4 py-3 font-medium text-gray-800">{npr(cn.total)}</td>
                   <td className="px-4 py-3"><Badge status={cn.status} /></td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{fmt(cn.issued_at)}</td>
@@ -1808,6 +1840,120 @@ function CreditNotesTab() {
         </div>
       )}
     </div>
+  )
+}
+
+// ─── Credit Note Create Modal ─────────────────────────────────────────────
+
+function CreditNoteCreateModal({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient()
+  const [reason, setReason] = useState('')
+  const [invoiceId, setInvoiceId] = useState<string>('')
+  const [lines, setLines] = useState<LineItemDraft[]>([emptyLine()])
+
+  const { data: invoices } = useQuery<ApiPage<Invoice>>({
+    queryKey: ['invoices-mini'],
+    queryFn: () => apiClient.get(ACCOUNTING.INVOICES + '?page_size=200&status=issued').then(r => toPage<Invoice>(r.data)),
+  })
+
+  const mutation = useMutation({
+    mutationFn: (payload: unknown) => apiClient.post(ACCOUNTING.CREDIT_NOTES, payload),
+    onSuccess: () => { toast.success('Credit note created'); qc.invalidateQueries({ queryKey: ['credit-notes'] }); onClose() },
+    onError: (e: { response?: { data?: { detail?: string } } }) =>
+      toast.error(e?.response?.data?.detail ?? 'Failed to create credit note'),
+  })
+
+  function setLine<K extends keyof LineItemDraft>(idx: number, key: K, val: string) {
+    setLines(ls => ls.map((l, i) => i === idx ? { ...l, [key]: val } : l))
+  }
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    const validLines = lines.filter(l => l.description && l.unit_price)
+    if (!validLines.length) { toast.error('Add at least one line item'); return }
+    mutation.mutate({
+      invoice: invoiceId ? Number(invoiceId) : null,
+      reason,
+      line_items: validLines.map(l => ({ description: l.description, qty: Number(l.qty), unit_price: l.unit_price, discount: l.discount || '0' })),
+    })
+  }
+
+  return (
+    <Modal title="New Credit Note" onClose={onClose}>
+      <form onSubmit={submit} className="space-y-4">
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Linked Invoice (optional)</label>
+          <select value={invoiceId} onChange={e => setInvoiceId(e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <option value="">— Standalone credit note —</option>
+            {invoices?.results?.map(inv => (
+              <option key={inv.id} value={inv.id}>{inv.invoice_number} — {inv.customer_name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Reason</label>
+          <input value={reason} onChange={e => setReason(e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            placeholder="e.g. Returned goods, billing error…" />
+        </div>
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-medium text-gray-600">Line Items</label>
+            <button type="button" onClick={() => setLines(ls => [...ls, emptyLine()])}
+              className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800">
+              <Plus size={12} /> Add line
+            </button>
+          </div>
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left text-gray-500 font-medium">Description</th>
+                  <th className="px-2 py-2 text-right text-gray-500 font-medium w-16">Qty</th>
+                  <th className="px-2 py-2 text-right text-gray-500 font-medium w-28">Unit Price</th>
+                  <th className="px-2 py-2 w-8" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {lines.map((l, i) => (
+                  <tr key={i}>
+                    <td className="px-2 py-1.5">
+                      <input value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
+                        placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <input type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
+                        className="w-full border-0 outline-none text-xs text-right bg-transparent" />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <input type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
+                        placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" />
+                    </td>
+                    <td className="px-2 py-1.5 text-center">
+                      {lines.length > 1 && (
+                        <button type="button" onClick={() => setLines(ls => ls.filter((_, j) => j !== i))}
+                          className="text-gray-300 hover:text-red-400 transition-colors">
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className="flex gap-2 justify-end pt-2">
+          <button type="button" onClick={onClose}
+            className="px-4 py-2 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+          <button type="submit" disabled={mutation.isPending}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">
+            {mutation.isPending ? 'Creating…' : 'Create Credit Note'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   )
 }
 
@@ -3385,8 +3531,8 @@ function BanksTab() {
                           <td className="px-4 py-3 font-mono text-xs font-medium text-indigo-600">{p.payment_number}</td>
                           <td className="px-4 py-3 text-gray-500 text-xs capitalize">{p.method.replace('_', ' ')}</td>
                           <td className="px-4 py-3 text-gray-500 text-xs">{p.reference || '—'}</td>
-                          <td className="px-4 py-3 text-gray-500 text-xs">{p.invoice ?? '—'}</td>
-                          <td className="px-4 py-3 text-gray-500 text-xs">{p.bill ?? '—'}</td>
+                          <td className="px-4 py-3 text-gray-500 text-xs">{p.invoice_number ?? '—'}</td>
+                          <td className="px-4 py-3 text-gray-500 text-xs">{p.bill_number ?? '—'}</td>
                           <td className="px-4 py-3 font-medium text-green-700">
                             {p.type === 'incoming' ? npr(p.amount) : '—'}
                           </td>
@@ -3470,8 +3616,8 @@ function BanksTab() {
                         <td className="px-4 py-3 font-mono text-xs font-medium text-indigo-600">{p.payment_number}</td>
                         <td className="px-4 py-3"><Badge status={p.type} /></td>
                         <td className="px-4 py-3 text-gray-500 text-xs">{p.reference || '—'}</td>
-                        <td className="px-4 py-3 text-gray-500 text-xs">{p.invoice ?? '—'}</td>
-                        <td className="px-4 py-3 text-gray-500 text-xs">{p.bill ?? '—'}</td>
+                        <td className="px-4 py-3 text-gray-500 text-xs">{p.invoice_number ?? '—'}</td>
+                        <td className="px-4 py-3 text-gray-500 text-xs">{p.bill_number ?? '—'}</td>
                         <td className="px-4 py-3 font-medium text-green-700">
                           {p.type === 'incoming' ? npr(p.amount) : '—'}
                         </td>
@@ -5412,6 +5558,226 @@ function QuotationEditModal({ quo, onClose }: { quo: Quotation; onClose: () => v
   )
 }
 
+// ─── Debit Note Create Modal ──────────────────────────────────────────────────
+
+function DebitNoteCreateModal({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient()
+  const [billId, setBillId] = useState('')
+  const [reason, setReason] = useState('')
+  const [lines, setLines] = useState<LineItemDraft[]>([emptyLine()])
+
+  const { data: bills } = useQuery<ApiPage<Bill>>({
+    queryKey: ['bills-mini'],
+    queryFn: () => apiClient.get(ACCOUNTING.BILLS + '?page_size=200&status=approved').then(r => toPage<Bill>(r.data)),
+  })
+
+  const mutation = useMutation({
+    mutationFn: (payload: unknown) => apiClient.post(ACCOUNTING.DEBIT_NOTES, payload),
+    onSuccess: () => { toast.success('Debit note created'); qc.invalidateQueries({ queryKey: ['debit-notes'] }); onClose() },
+    onError: (e: { response?: { data?: { detail?: string } } }) =>
+      toast.error(e?.response?.data?.detail ?? 'Failed to create debit note'),
+  })
+
+  function setLine<K extends keyof LineItemDraft>(idx: number, key: K, val: string) {
+    setLines(ls => ls.map((l, i) => i === idx ? { ...l, [key]: val } : l))
+  }
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!billId) { toast.error('Select a bill'); return }
+    const validLines = lines.filter(l => l.description && l.unit_price)
+    if (!validLines.length) { toast.error('Add at least one line item'); return }
+    mutation.mutate({
+      bill: Number(billId),
+      reason,
+      line_items: validLines.map(l => ({ description: l.description, qty: Number(l.qty), unit_price: l.unit_price })),
+    })
+  }
+
+  return (
+    <Modal title="New Debit Note" onClose={onClose}>
+      <form onSubmit={submit} className="space-y-4">
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Bill *</label>
+          <select value={billId} onChange={e => setBillId(e.target.value)} required
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <option value="">— Select approved bill —</option>
+            {bills?.results?.map(b => (
+              <option key={b.id} value={b.id}>{b.bill_number} — {b.supplier_name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Reason for return</label>
+          <input value={reason} onChange={e => setReason(e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            placeholder="e.g. Defective goods returned to supplier" />
+        </div>
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-medium text-gray-600">Line Items</label>
+            <button type="button" onClick={() => setLines(ls => [...ls, emptyLine()])}
+              className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800">
+              <Plus size={12} /> Add line
+            </button>
+          </div>
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left text-gray-500 font-medium">Description</th>
+                  <th className="px-2 py-2 text-right text-gray-500 font-medium w-16">Qty</th>
+                  <th className="px-2 py-2 text-right text-gray-500 font-medium w-28">Unit Price</th>
+                  <th className="px-2 py-2 w-8" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {lines.map((l, i) => (
+                  <tr key={i}>
+                    <td className="px-2 py-1.5">
+                      <input value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
+                        placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <input type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
+                        className="w-full border-0 outline-none text-xs text-right bg-transparent" />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <input type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
+                        placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" />
+                    </td>
+                    <td className="px-2 py-1.5 text-center">
+                      {lines.length > 1 && (
+                        <button type="button" onClick={() => setLines(ls => ls.filter((_, j) => j !== i))}
+                          className="text-gray-300 hover:text-red-400 transition-colors">
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className="flex gap-2 justify-end pt-2">
+          <button type="button" onClick={onClose}
+            className="px-4 py-2 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+          <button type="submit" disabled={mutation.isPending}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">
+            {mutation.isPending ? 'Creating…' : 'Create Debit Note'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+// ─── Debit Note Edit Modal ────────────────────────────────────────────────────
+
+function DebitNoteEditModal({ dn, onClose }: { dn: DebitNote; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [reason, setReason] = useState(dn.reason ?? '')
+  const [lines, setLines] = useState<LineItemDraft[]>(() =>
+    dn.line_items.length > 0
+      ? dn.line_items.map(l => ({
+          description: String(l.description ?? ''),
+          qty:         String(l.qty ?? 1),
+          unit_price:  String(l.unit_price ?? ''),
+          discount:    String(l.discount ?? '0'),
+          line_type:   (l.line_type as 'service' | 'product') ?? 'service',
+        }))
+      : [emptyLine()]
+  )
+
+  const mutation = useMutation({
+    mutationFn: (payload: unknown) => apiClient.patch(ACCOUNTING.DEBIT_NOTE_DETAIL(dn.id), payload),
+    onSuccess: () => { toast.success('Debit note updated'); qc.invalidateQueries({ queryKey: ['debit-notes'] }); onClose() },
+    onError: (e: { response?: { data?: { detail?: string } } }) =>
+      toast.error(e?.response?.data?.detail ?? 'Failed to update'),
+  })
+
+  function setLine<K extends keyof LineItemDraft>(idx: number, key: K, val: string) {
+    setLines(ls => ls.map((l, i) => i === idx ? { ...l, [key]: val } : l))
+  }
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    mutation.mutate({
+      reason,
+      line_items: lines
+        .filter(l => l.description && l.unit_price)
+        .map(l => ({ description: l.description, qty: Number(l.qty), unit_price: l.unit_price })),
+    })
+  }
+
+  return (
+    <Modal title={`Edit ${dn.debit_note_number}`} onClose={onClose}>
+      <form onSubmit={submit} className="space-y-4">
+        <Field label="Reason">
+          <input value={reason} onChange={e => setReason(e.target.value)}
+            placeholder="Reason for return" className={inputCls} />
+        </Field>
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-medium text-gray-600">Line Items</label>
+            <button type="button" onClick={() => setLines(ls => [...ls, emptyLine()])}
+              className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800">
+              <Plus size={12} /> Add line
+            </button>
+          </div>
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 py-2 text-left text-gray-500 font-medium">Description</th>
+                  <th className="px-2 py-2 text-right text-gray-500 font-medium w-16">Qty</th>
+                  <th className="px-2 py-2 text-right text-gray-500 font-medium w-28">Unit Price</th>
+                  <th className="px-2 py-2 w-8" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {lines.map((l, i) => (
+                  <tr key={i}>
+                    <td className="px-2 py-1.5">
+                      <input value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
+                        placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <input type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
+                        className="w-full border-0 outline-none text-xs text-right bg-transparent" />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <input type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
+                        placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" />
+                    </td>
+                    <td className="px-2 py-1.5 text-center">
+                      {lines.length > 1 && (
+                        <button type="button" onClick={() => setLines(ls => ls.filter((_, j) => j !== i))}
+                          className="text-gray-300 hover:text-red-400 transition-colors">
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">Cancel</button>
+          <button type="submit" disabled={mutation.isPending}
+            className="px-5 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2">
+            {mutation.isPending && <Loader2 size={14} className="animate-spin" />}
+            Save Changes
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 // ─── Debit Notes Tab ──────────────────────────────────────────────────────────
 
 const DN_STATUS: Record<string, string> = {
@@ -5421,8 +5787,12 @@ const DN_STATUS: Record<string, string> = {
 
 function DebitNotesTab() {
   const qc = useQueryClient()
+  const confirm = useConfirm()
+  const { can } = usePermissions()
   const [statusFilter, setStatusFilter] = useState('')
   const { fyYear } = useFY()
+  const [showCreate, setShowCreate] = useState(false)
+  const [editDn, setEditDn] = useState<DebitNote | null>(null)
 
   const { data, isLoading } = useQuery<ApiPage<DebitNote>>({
     queryKey: ['debit-notes', statusFilter, fyYear],
@@ -5431,9 +5801,16 @@ function DebitNotesTab() {
 
   const mutateIssue = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.DEBIT_NOTE_ISSUE(id)), onSuccess: () => { toast.success('Debit note issued'); qc.invalidateQueries({ queryKey: ['debit-notes'] }) }, onError: (e: {response?: {data?: {detail?: string}}}) => toast.error(e?.response?.data?.detail ?? 'Failed') })
   const mutateVoid  = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.DEBIT_NOTE_VOID(id)),  onSuccess: () => { toast.success('Debit note voided');  qc.invalidateQueries({ queryKey: ['debit-notes'] }) }, onError: () => toast.error('Failed') })
+  const mutateDelete = useMutation({
+    mutationFn: (id: number) => apiClient.delete(ACCOUNTING.DEBIT_NOTE_DETAIL(id)),
+    onSuccess: () => { toast.success('Debit note deleted'); qc.invalidateQueries({ queryKey: ['debit-notes'] }) },
+    onError: (e: { response?: { data?: { detail?: string } } }) => toast.error(e?.response?.data?.detail ?? 'Failed to delete'),
+  })
 
   return (
     <div className="space-y-4">
+      {showCreate && <DebitNoteCreateModal onClose={() => setShowCreate(false)} />}
+      {editDn && <DebitNoteEditModal dn={editDn} onClose={() => setEditDn(null)} />}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
           {['', 'draft', 'issued', 'applied', 'void'].map(s => (
@@ -5443,7 +5820,15 @@ function DebitNotesTab() {
             </button>
           ))}
         </div>
-        <span className="text-sm text-gray-400">{data?.count ?? 0} debit notes</span>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-gray-400">{data?.count ?? 0} debit notes</span>
+          {can('can_manage_accounting') && (
+            <button onClick={() => setShowCreate(true)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
+              <Plus size={15} /> New Debit Note
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex gap-2 text-sm text-amber-700">
@@ -5483,6 +5868,18 @@ function DebitNotesTab() {
                       <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmt(dn.issued_at)}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1">
+                          {dn.status === 'draft' && can('can_manage_accounting') && (
+                            <button onClick={() => setEditDn(dn)} title="Edit"
+                              className="p-1.5 rounded hover:bg-indigo-50 text-indigo-400 transition-colors">
+                              <Pencil size={13} />
+                            </button>
+                          )}
+                          {dn.status === 'draft' && can('can_manage_accounting') && (
+                            <button onClick={() => confirm({ title: 'Delete Debit Note', message: `Delete ${dn.debit_note_number}?`, variant: 'danger', confirmLabel: 'Delete' }).then(ok => { if (ok) mutateDelete.mutate(dn.id) })}
+                              title="Delete" className="p-1.5 rounded hover:bg-red-50 text-red-400 transition-colors">
+                              <Trash2 size={13} />
+                            </button>
+                          )}
                           {dn.status === 'draft' && (
                             <button onClick={() => mutateIssue.mutate(dn.id)} className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors whitespace-nowrap">Issue</button>
                           )}
@@ -5943,10 +6340,109 @@ function BankReconciliationTab() {
 
 const FREQ_LABELS: Record<string, string> = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly' }
 
+// ─── Recurring Journal Edit Modal ─────────────────────────────────────────────
+
+function RecurringJournalEditModal({ rj, onClose }: { rj: RecurringJournal; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [form, setForm] = useState({
+    name: rj.name,
+    description: rj.description ?? '',
+    frequency: rj.frequency,
+    end_date: rj.end_date ?? '',
+  })
+  const [templateLines, setTemplateLines] = useState(
+    rj.template_lines.length > 0
+      ? rj.template_lines.map(l => ({ account_code: l.account_code, debit: l.debit, credit: l.credit, description: l.description }))
+      : [{ account_code: '', debit: '', credit: '', description: '' }]
+  )
+
+  const mutation = useMutation({
+    mutationFn: (payload: unknown) => apiClient.patch(ACCOUNTING.RECURRING_JOURNAL_DETAIL(rj.id), payload),
+    onSuccess: () => { toast.success('Template updated'); qc.invalidateQueries({ queryKey: ['recurring-journals'] }); onClose() },
+    onError: (e: { response?: { data?: { detail?: string } } }) => toast.error(e?.response?.data?.detail ?? 'Failed to update'),
+  })
+
+  function addLine() { setTemplateLines(p => [...p, { account_code: '', debit: '', credit: '', description: '' }]) }
+  function updateLine(i: number, field: string, value: string) {
+    setTemplateLines(p => p.map((l, idx) => idx === i ? { ...l, [field]: value } : l))
+  }
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!form.name) { toast.error('Name is required'); return }
+    mutation.mutate({ ...form, template_lines: templateLines, end_date: form.end_date || null })
+  }
+
+  return (
+    <Modal title={`Edit — ${rj.name}`} onClose={onClose}>
+      <form onSubmit={submit} className="space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
+            <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Frequency</label>
+            <select value={form.frequency} onChange={e => setForm(p => ({ ...p, frequency: e.target.value }))}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              {Object.entries(FREQ_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">End Date (optional)</label>
+            <NepaliDatePicker value={form.end_date} onChange={v => setForm(p => ({ ...p, end_date: v }))} label="End Date" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
+            <input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+        </div>
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Journal Lines</label>
+            <button type="button" onClick={addLine} className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1"><Plus size={12} /> Add Line</button>
+          </div>
+          <div className="overflow-x-auto border border-gray-200 rounded-lg">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50">
+                <tr>{['Account Code', 'Description', 'Debit', 'Credit', ''].map(h => <th key={h} className="px-2 py-2 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>)}</tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {templateLines.map((l, i) => (
+                  <tr key={i}>
+                    <td className="px-2 py-1"><input value={l.account_code} onChange={e => updateLine(i, 'account_code', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24" placeholder="1001" /></td>
+                    <td className="px-2 py-1"><input value={l.description} onChange={e => updateLine(i, 'description', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-36" placeholder="Description" /></td>
+                    <td className="px-2 py-1"><input type="number" step="0.01" value={l.debit} onChange={e => updateLine(i, 'debit', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24" placeholder="0.00" /></td>
+                    <td className="px-2 py-1"><input type="number" step="0.01" value={l.credit} onChange={e => updateLine(i, 'credit', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24" placeholder="0.00" /></td>
+                    <td className="px-2 py-1">{templateLines.length > 1 && <button type="button" onClick={() => setTemplateLines(p => p.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600"><X size={13} /></button>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">Cancel</button>
+          <button type="submit" disabled={mutation.isPending}
+            className="px-5 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2">
+            {mutation.isPending && <Loader2 size={14} className="animate-spin" />}
+            Save Changes
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 function RecurringJournalsTab() {
   const qc = useQueryClient()
+  const confirm = useConfirm()
+  const { can } = usePermissions()
   const [expanded, setExpanded] = useState<number | null>(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [editRj, setEditRj] = useState<RecurringJournal | null>(null)
   const [form, setForm] = useState({ name: '', description: '', frequency: 'monthly', start_date: '', end_date: '' })
   const [templateLines, setTemplateLines] = useState([{ account_code: '', debit: '', credit: '', description: '' }])
 
@@ -5970,6 +6466,11 @@ function RecurringJournalsTab() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['recurring-journals'] }) },
     onError: () => toast.error('Failed'),
   })
+  const mutateDelete = useMutation({
+    mutationFn: (id: number) => apiClient.delete(ACCOUNTING.RECURRING_JOURNAL_DETAIL(id)),
+    onSuccess: () => { toast.success('Template deleted'); qc.invalidateQueries({ queryKey: ['recurring-journals'] }) },
+    onError: (e: { response?: { data?: { detail?: string } } }) => toast.error(e?.response?.data?.detail ?? 'Failed to delete'),
+  })
 
   function addTemplateLine() { setTemplateLines(p => [...p, { account_code: '', debit: '', credit: '', description: '' }]) }
   function updateTemplateLine(i: number, field: string, value: string) {
@@ -5979,6 +6480,7 @@ function RecurringJournalsTab() {
 
   return (
     <div className="space-y-4">
+      {editRj && <RecurringJournalEditModal rj={editRj} onClose={() => setEditRj(null)} />}
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-500">Templates for recurring entries — rent, subscriptions, depreciation, etc.</p>
         <button onClick={() => setShowCreate(s => !s)} className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
@@ -6076,6 +6578,18 @@ function RecurringJournalsTab() {
                       <button onClick={() => mutateRun.mutate(rj.id)} disabled={mutateRun.isPending}
                         className="flex items-center gap-1 px-2 py-1 text-xs bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition-colors disabled:opacity-50">
                         <Play size={12} /> Run Now
+                      </button>
+                    )}
+                    {can('can_manage_accounting') && (
+                      <button onClick={() => setEditRj(rj)} title="Edit template"
+                        className="p-1.5 rounded hover:bg-indigo-50 text-indigo-400 transition-colors">
+                        <Pencil size={13} />
+                      </button>
+                    )}
+                    {can('can_manage_accounting') && (
+                      <button onClick={() => confirm({ title: 'Delete Template', message: `Delete recurring template "${rj.name}"? This will stop future auto-runs.`, variant: 'danger', confirmLabel: 'Delete' }).then(ok => { if (ok) mutateDelete.mutate(rj.id) })}
+                        title="Delete" className="p-1.5 rounded hover:bg-red-50 text-red-400 transition-colors">
+                        <Trash2 size={13} />
                       </button>
                     )}
                     <ChevronDown size={16} className={`text-gray-400 transition-transform ${expanded === rj.id ? '' : '-rotate-90'}`} />
