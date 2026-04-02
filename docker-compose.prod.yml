@@ -97,8 +97,10 @@ services:
   frontend:
     # Built locally via deploy-frontend.sh, then rsync'd to ./frontend/dist/
     # No Docker build needed — just nginx serving the pre-built static files.
+    # Run as root so bind-mounted host files (owned by ubuntu) are readable.
     image: nginx:alpine
     restart: unless-stopped
+    user: "0:0"
     volumes:
       - ./frontend/dist:/usr/share/nginx/html:ro
       - ./frontend/nginx-spa.conf:/etc/nginx/conf.d/default.conf:ro
