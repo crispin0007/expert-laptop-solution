@@ -95,6 +95,8 @@ class TicketCategoryViewSet(NexusViewSet):
     """
 
     required_module = 'tickets'
+    serializer_class = TicketCategorySerializer
+    input_serializer_class = TicketCategoryWriteSerializer
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name']
     ordering_fields = ['name', 'created_at']
@@ -103,11 +105,6 @@ class TicketCategoryViewSet(NexusViewSet):
         if self.action in ('list', 'retrieve', 'subcategories'):
             return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='tickets.view')()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='tickets.update')()]
-
-    def get_serializer_class(self):
-        if self.request.method in ('POST', 'PUT', 'PATCH'):
-            return TicketCategoryWriteSerializer
-        return TicketCategorySerializer
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -725,6 +722,7 @@ class VehicleViewSet(NexusViewSet):
     Permissions: read = all staff; write = manager+
     """
     required_module = 'tickets'
+    serializer_class = None  # set below after import
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
@@ -738,6 +736,11 @@ class VehicleViewSet(NexusViewSet):
     def get_serializer_class(self):
         from .serializers import VehicleSerializer
         return VehicleSerializer
+
+    def get_input_serializer(self, *args, **kwargs):
+        from .serializers import VehicleSerializer
+        kwargs.setdefault('context', self.get_serializer_context())
+        return VehicleSerializer(*args, **kwargs)
 
 
 class VehicleLogViewSet(NexusViewSet):
@@ -769,3 +772,8 @@ class VehicleLogViewSet(NexusViewSet):
     def get_serializer_class(self):
         from .serializers import VehicleLogSerializer
         return VehicleLogSerializer
+
+    def get_input_serializer(self, *args, **kwargs):
+        from .serializers import VehicleLogSerializer
+        kwargs.setdefault('context', self.get_serializer_context())
+        return VehicleLogSerializer(*args, **kwargs)
