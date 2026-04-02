@@ -6,7 +6,7 @@
  *       payslips | reports
  */
 import { useState, useCallback, useRef, useEffect, Fragment } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from '../../api/client'
 import { ACCOUNTING, INVENTORY, STAFF } from '../../api/endpoints'
@@ -23,6 +23,8 @@ import {
   // New icons for extra tabs
   FileQuestion, Percent, Repeat2, BookMarked, CalendarDays,
   ArrowRightLeft, ChevronDown, Search, CheckSquare2, Play, Power, Pencil,
+  // CoA + Quick Links icons
+  Zap, Eye, EyeOff, Info, ListFilter, Wallet,
 } from 'lucide-react'
 import DateDisplay from '../../components/DateDisplay'
 import NepaliDatePicker from '../../components/NepaliDatePicker'
@@ -140,7 +142,7 @@ interface JournalLine {
 interface Account {
   id: number; code: string; name: string; type: string
   is_system: boolean; is_active: boolean; parent: number | null
-  balance: string
+  balance: string; description: string; opening_balance: string
 }
 interface BankAccount {
   id: number; name: string; bank_name: string; account_number: string
@@ -340,8 +342,29 @@ const TABS = [
 
 // ─── Dashboard Tab ─────────────────────────────────────────────────────────
 
+const QUICK_LINKS = [
+  // AR / Sales
+  { label: 'New Invoice',         tab: 'invoices',            icon: Receipt,        color: 'text-blue-600',    bg: 'bg-blue-50    hover:bg-blue-100',   group: 'Sales'     },
+  { label: 'New Quotation',       tab: 'quotations',          icon: FileQuestion,   color: 'text-sky-600',     bg: 'bg-sky-50     hover:bg-sky-100',    group: 'Sales'     },
+  { label: 'Finance Review',      tab: 'finance-review',      icon: ShieldCheck,    color: 'text-emerald-600', bg: 'bg-emerald-50 hover:bg-emerald-100', group: 'Sales'     },
+  // AP / Purchases
+  { label: 'New Bill',            tab: 'bills',               icon: FileText,       color: 'text-orange-600',  bg: 'bg-orange-50  hover:bg-orange-100', group: 'Purchases' },
+  { label: 'Record Expense',      tab: 'expenses',            icon: Wallet,         color: 'text-red-600',     bg: 'bg-red-50     hover:bg-red-100',    group: 'Purchases' },
+  // Banking
+  { label: 'Record Payment',      tab: 'payments',            icon: CreditCard,     color: 'text-violet-600',  bg: 'bg-violet-50  hover:bg-violet-100', group: 'Banking'   },
+  { label: 'Reconcile Bank',      tab: 'bank-reconciliation', icon: ArrowRightLeft, color: 'text-teal-600',    bg: 'bg-teal-50    hover:bg-teal-100',   group: 'Banking'   },
+  // Ledger
+  { label: 'Journal Entry',       tab: 'journals',            icon: BookOpen,       color: 'text-indigo-600',  bg: 'bg-indigo-50  hover:bg-indigo-100', group: 'Ledger'    },
+  { label: 'Account Ledger',      tab: 'ledger',              icon: BookMarked,     color: 'text-gray-700',    bg: 'bg-gray-50    hover:bg-gray-100',   group: 'Ledger'    },
+  { label: 'Day Book',            tab: 'day-book',            icon: CalendarDays,   color: 'text-gray-700',    bg: 'bg-gray-50    hover:bg-gray-100',   group: 'Ledger'    },
+  // Reports
+  { label: 'P&L Report',          tab: 'reports',             icon: TrendingUp,     color: 'text-green-600',   bg: 'bg-green-50   hover:bg-green-100',  group: 'Reports'   },
+  { label: 'Balance Sheet',       tab: 'reports',             icon: BarChart2,      color: 'text-blue-700',    bg: 'bg-blue-50    hover:bg-blue-100',   group: 'Reports'   },
+] as const
+
 function DashboardTab() {
   const { fyYear } = useFY()
+  const navigate = useNavigate()
   const { data: invoices } = useQuery<ApiPage<Invoice>>({
     queryKey: ['invoices', 'recent', fyYear],
     queryFn: () => apiClient.get(addFyParam(ACCOUNTING.INVOICES + '?page_size=10&ordering=-created_at', fyYear)).then(r => toPage<Invoice>(r.data)),
@@ -358,8 +381,45 @@ function DashboardTab() {
     { label: 'Pending Bills',   value: bills?.results?.filter(b => b.status === 'draft').length ?? '—',            icon: CreditCard,   color: 'text-orange-600', bg: 'bg-orange-50' },
   ]
 
+  const quickGroups = ['Sales', 'Purchases', 'Banking', 'Ledger', 'Reports'] as const
+  type GroupName = typeof quickGroups[number]
+  const byGroup = quickGroups.reduce<Record<GroupName, typeof QUICK_LINKS[number][]>>(
+    (acc, g) => { acc[g] = QUICK_LINKS.filter(l => l.group === g) as typeof QUICK_LINKS[number][]; return acc },
+    { Sales: [], Purchases: [], Banking: [], Ledger: [], Reports: [] }
+  )
+
   return (
     <div className="space-y-6">
+
+      {/* ── Quick Actions ────────────────────────────────────────────── */}
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-2">
+          <Zap size={15} className="text-amber-500" />
+          <h3 className="font-semibold text-gray-700 text-sm">Quick Actions</h3>
+          <span className="text-xs text-gray-400 ml-1">— jump directly to any workflow</span>
+        </div>
+        <div className="p-4 grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+          {quickGroups.map(group => (
+            <div key={group}>
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">{group}</p>
+              <div className="flex flex-col gap-1.5">
+                {byGroup[group].map(link => (
+                  <button
+                    key={link.label}
+                    onClick={() => navigate(`/accounting?tab=${link.tab}`)}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-transparent text-left transition-all ${link.bg}`}
+                  >
+                    <link.icon size={14} className={link.color} />
+                    <span className={`text-xs font-medium ${link.color}`}>{link.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── KPI cards ────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {cards.map(c => (
           <div key={c.label} className={`${c.bg} rounded-xl p-5 flex items-center gap-4`}>
@@ -2242,8 +2302,11 @@ function InlineEditRow({
   onCancel: () => void
 }) {
   const qc  = useQueryClient()
-  const [name, setName] = useState(account.name)
-  const [code, setCode] = useState(account.code)
+  const [name,        setName]        = useState(account.name)
+  const [code,        setCode]        = useState(account.code)
+  const [description, setDescription] = useState(account.description ?? '')
+  const [openingBal,  setOpeningBal]  = useState(account.opening_balance ?? '0')
+  const [isActive,    setIsActive]    = useState(account.is_active)
   const nameRef = useRef<HTMLInputElement>(null)
   useEffect(() => { nameRef.current?.focus() }, [])
 
@@ -2262,28 +2325,61 @@ function InlineEditRow({
   function submit(e?: React.FormEvent) {
     e?.preventDefault()
     if (!name.trim()) { nameRef.current?.focus(); return }
-    mutation.mutate({ code: code.trim(), name: name.trim() })
+    mutation.mutate({
+      code: code.trim(),
+      name: name.trim(),
+      description: description.trim(),
+      opening_balance: openingBal || '0',
+      is_active: isActive,
+    })
   }
 
   return (
     <tr className="bg-amber-50/50 border-y border-amber-100">
-      <td className="py-1.5 pl-3">
+      <td className="py-2 pl-3 align-top">
         <input
           value={code} onChange={e => setCode(e.target.value)}
           className="w-24 font-mono text-xs border border-amber-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400"
         />
       </td>
-      <td className="py-1.5 pr-2" colSpan={2}>
-        <form onSubmit={submit}>
+      <td className="py-2 pr-2 align-top" colSpan={2}>
+        <form onSubmit={submit} className="space-y-1">
           <input
             ref={nameRef}
             value={name} onChange={e => setName(e.target.value)}
             className="w-full text-sm border border-amber-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400"
             onKeyDown={e => { if (e.key === 'Escape') onCancel() }}
+            placeholder="Account name"
           />
+          <input
+            value={description} onChange={e => setDescription(e.target.value)}
+            className="w-full text-xs border border-amber-100 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300 text-gray-500"
+            placeholder="Description / notes (optional)"
+          />
+          <div className="flex items-center gap-3 mt-1">
+            <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
+              <span>Opening Bal:</span>
+              <input
+                type="number" value={openingBal} onChange={e => setOpeningBal(e.target.value)}
+                className="w-24 font-mono text-xs border border-amber-200 rounded px-2 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setIsActive(v => !v)}
+              className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded border font-medium transition-colors ${
+                isActive
+                  ? 'border-green-300 text-green-700 bg-green-50 hover:bg-green-100'
+                  : 'border-gray-300 text-gray-400 bg-gray-50 hover:bg-gray-100'
+              }`}
+            >
+              {isActive ? <Eye size={11} /> : <EyeOff size={11} />}
+              {isActive ? 'Active' : 'Inactive'}
+            </button>
+          </div>
         </form>
       </td>
-      <td className="py-1.5" colSpan={2}>
+      <td className="py-2 align-top" colSpan={2}>
         <div className="flex items-center gap-1">
           <button onClick={submit} disabled={mutation.isPending}
             className="p-1 rounded bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50" title="Save">
@@ -2316,8 +2412,10 @@ function InlineAddRow({
   onCancel: () => void
 }) {
   const qc = useQueryClient()
-  const [name, setName] = useState('')
-  const [code, setCode] = useState(state.suggestedCode)
+  const [name,        setName]        = useState('')
+  const [code,        setCode]        = useState(state.suggestedCode)
+  const [description, setDescription] = useState('')
+  const [openingBal,  setOpeningBal]  = useState('0')
   const nameRef = useRef<HTMLInputElement>(null)
   useEffect(() => { nameRef.current?.focus() }, [])
 
@@ -2341,7 +2439,11 @@ function InlineAddRow({
   function submit(e?: React.FormEvent) {
     e?.preventDefault()
     if (!name.trim()) { nameRef.current?.focus(); return }
-    mutation.mutate({ code: code.trim(), name: name.trim(), type: state.type, parent: state.parentId })
+    mutation.mutate({
+      code: code.trim(), name: name.trim(), type: state.type, parent: state.parentId,
+      description: description.trim(),
+      opening_balance: openingBal || '0',
+    })
   }
 
   const indent = state.depth * 20
@@ -2349,30 +2451,44 @@ function InlineAddRow({
   return (
     <tr className="bg-indigo-50/40 border-y border-indigo-100">
       {/* Code cell */}
-      <td className="py-1.5" style={{ paddingLeft: `${16 + indent + 20}px` }}>
+      <td className="py-2 align-top" style={{ paddingLeft: `${16 + indent + 20}px` }}>
         <input
           value={code} onChange={e => setCode(e.target.value)}
           className="w-24 font-mono text-xs border border-indigo-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
           placeholder="Code"
         />
       </td>
-      {/* Name cell */}
-      <td className="py-1.5 pr-2" colSpan={2}>
-        <form onSubmit={submit} className="flex items-center gap-2">
+      {/* Name + description + opening balance cell */}
+      <td className="py-2 pr-2 align-top" colSpan={2}>
+        <form onSubmit={submit} className="space-y-1">
+          <div className="flex items-center gap-2">
+            <input
+              ref={nameRef}
+              value={name} onChange={e => setName(e.target.value)}
+              className="flex-1 text-sm border border-indigo-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              placeholder="Account name…"
+              onKeyDown={e => { if (e.key === 'Escape') onCancel() }}
+            />
+            <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 ${typeColors[state.type] ?? ''}`}>
+              {state.type}
+            </span>
+          </div>
           <input
-            ref={nameRef}
-            value={name} onChange={e => setName(e.target.value)}
-            className="flex-1 text-sm border border-indigo-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
-            placeholder="Account name…"
-            onKeyDown={e => { if (e.key === 'Escape') onCancel() }}
+            value={description} onChange={e => setDescription(e.target.value)}
+            className="w-full text-xs border border-indigo-100 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-300 text-gray-500"
+            placeholder="Description / notes (optional)"
           />
-          <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${typeColors[state.type] ?? ''}`}>
-            {state.type}
-          </span>
+          <label className="flex items-center gap-1.5 text-xs text-gray-500">
+            <span>Opening Bal:</span>
+            <input
+              type="number" value={openingBal} onChange={e => setOpeningBal(e.target.value)}
+              className="w-24 font-mono text-xs border border-indigo-200 rounded px-2 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            />
+          </label>
         </form>
       </td>
       {/* Actions cell */}
-      <td className="py-1.5" colSpan={2}>
+      <td className="py-2 align-top" colSpan={2}>
         <div className="flex items-center gap-1">
           <button onClick={submit} disabled={mutation.isPending}
             className="p-1 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50" title="Save (Enter)">
@@ -2398,10 +2514,24 @@ function AccountsTab() {
       Array.isArray(r.data) ? r.data : (r.data?.data ?? r.data?.results ?? [])),
   })
 
-  const [inlineAdd,  setInlineAdd]  = useState<InlineAddState | null>(null)
-  const [editingId,  setEditingId]  = useState<number | null>(null)
+  const [inlineAdd,    setInlineAdd]    = useState<InlineAddState | null>(null)
+  const [editingId,    setEditingId]    = useState<number | null>(null)
+  const [search,       setSearch]       = useState('')
+  const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('active')
 
   const allAccounts = data ?? []
+
+  // ── Client-side search + filter ──────────────────────────────────────
+  const visibleAccounts = allAccounts.filter(a => {
+    if (activeFilter === 'active'   && !a.is_active) return false
+    if (activeFilter === 'inactive' &&  a.is_active) return false
+    if (search) {
+      const q = search.toLowerCase()
+      return a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q) ||
+             (a.description ?? '').toLowerCase().includes(q)
+    }
+    return true
+  })
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => apiClient.delete(`${ACCOUNTING.ACCOUNTS}${id}/`),
@@ -2413,11 +2543,18 @@ function AccountsTab() {
       toast.error(e?.response?.data?.detail ?? 'Cannot delete this account'),
   })
 
+  const toggleActiveMutation = useMutation({
+    mutationFn: ({ id, is_active }: { id: number; is_active: boolean }) =>
+      apiClient.patch(`${ACCOUNTING.ACCOUNTS}${id}/`, { is_active }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['accounts'] }),
+    onError: () => toast.error('Failed to update account status'),
+  })
+
   function confirmDelete(a: Account) {
     if (a.is_system) { toast.error('System accounts cannot be deleted.'); return }
     confirm({
       title: 'Delete Account',
-      message: `Delete "${a.code} – ${a.name}"? This cannot be undone.`,
+      message: `Delete "${a.code} \u2013 ${a.name}"? This cannot be undone.`,
       variant: 'danger',
       confirmLabel: 'Delete',
     }).then(ok => { if (ok) deleteMutation.mutate(a.id) })
@@ -2441,23 +2578,62 @@ function AccountsTab() {
     })
   }
 
-  const typeOrder: Array<[string, string]> = [
-    ['asset', 'Asset'], ['liability', 'Liability'], ['equity', 'Equity'],
-    ['revenue', 'Revenue'], ['expense', 'Expense'],
+  // ── CSV export ───────────────────────────────────────────────────────
+  function exportCSV() {
+    const header = ['Code', 'Account Name', 'Type', 'Parent Code', 'Description', 'Opening Balance', 'Current Balance', 'Active']
+    const rows = allAccounts.map(a => {
+      const parent = allAccounts.find(p => p.id === a.parent)
+      return [
+        a.code,
+        `"${a.name.replace(/"/g, '""')}"`,
+        a.type,
+        parent?.code ?? '',
+        `"${(a.description ?? '').replace(/"/g, '""')}"`,
+        a.opening_balance ?? '0',
+        a.balance ?? '0',
+        a.is_active ? 'Yes' : 'No',
+      ].join(',')
+    })
+    const csv = [header.join(','), ...rows].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url; link.download = 'chart-of-accounts.csv'; link.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const typeOrder: Array<[string, string, string]> = [
+    ['asset',     'Asset',     'text-blue-700   bg-blue-50   border-blue-100'],
+    ['liability', 'Liability', 'text-orange-700 bg-orange-50 border-orange-100'],
+    ['equity',    'Equity',    'text-purple-700 bg-purple-50 border-purple-100'],
+    ['revenue',   'Revenue',   'text-green-700  bg-green-50  border-green-100'],
+    ['expense',   'Expense',   'text-red-700    bg-red-50    border-red-100'],
   ]
 
-  // Build tree per type-section
-  function renderSection(type: string, label: string) {
-    const sectionAccounts = allAccounts.filter(a => a.type === type)
-    const treeItems = buildAccountTree(sectionAccounts)
+  // Build tree per type-section (using visibleAccounts for search, but tree needs parent hierarchy from allAccounts)
+  function renderSection(type: string, label: string, sectionCls: string) {
+    // When searching, show flat list; tree requires all parents to be visible
+    const sectionAll     = allAccounts.filter(a => a.type === type)
+    const sectionVisible = visibleAccounts.filter(a => a.type === type)
+    const treeItems      = search
+      ? sectionVisible.map(a => ({ account: a, depth: 0 }))
+      : buildAccountTree(sectionAll).filter(({ account: a }) =>
+          activeFilter === 'active'   ? a.is_active :
+          activeFilter === 'inactive' ? !a.is_active : true)
 
     const isRootInline = inlineAdd?.parentId === null && inlineAdd?.type === type
+    if (!treeItems.length && !isRootInline) return null
 
     return (
-      <div key={type} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div key={type} className={`bg-white rounded-xl border overflow-hidden ${sectionCls}`}>
         {/* Section header */}
-        <div className="px-5 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-          <span className="font-semibold text-gray-700 text-sm">{label} Accounts</span>
+        <div className={`px-5 py-2.5 border-b flex items-center justify-between ${sectionCls}`}>
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-sm">{label} Accounts</span>
+            <span className="text-xs text-gray-400 font-normal tabular-nums">
+              ({treeItems.length} {activeFilter !== 'all' ? activeFilter : ''})
+            </span>
+          </div>
           <button
             onClick={() => isRootInline ? setInlineAdd(null) : openRoot(type)}
             className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium px-2 py-1 rounded hover:bg-indigo-50">
@@ -2498,33 +2674,50 @@ function AccountsTab() {
                       onCancel={() => setEditingId(null)}
                     />
                   ) : (
-                    <tr className="hover:bg-gray-50/60 group">
+                    <tr className={`group ${a.is_active ? 'hover:bg-gray-50/60' : 'bg-gray-50/40 opacity-60 hover:opacity-80'}`}>
                       {/* Code */}
                       <td className="py-2 font-mono text-xs text-indigo-600"
                         style={{ paddingLeft: `${16 + depth * 20}px` }}>
-                        {depth > 0 && <span className="text-gray-300 mr-1">└</span>}
+                        {depth > 0 && <span className="text-gray-300 mr-1">\u2514</span>}
                         {a.code}
                       </td>
-                      {/* Name */}
-                      <td className="px-3 py-2 text-gray-700" style={{ paddingLeft: `${8 + depth * 4}px` }}>
-                        {a.name}
-                        {a.is_system && (
-                          <span className="ml-2 text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
-                            system
-                          </span>
+                      {/* Name + description */}
+                      <td className="px-3 py-2" style={{ paddingLeft: `${8 + depth * 4}px` }}>
+                        <div className="flex items-center gap-1.5">
+                          <span className={a.is_active ? 'text-gray-700' : 'text-gray-400 line-through'}>{a.name}</span>
+                          {a.is_system && (
+                            <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">system</span>
+                          )}
+                          {!a.is_active && (
+                            <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">inactive</span>
+                          )}
+                        </div>
+                        {a.description && (
+                          <p className="text-xs text-gray-400 mt-0.5 truncate max-w-xs" title={a.description}>{a.description}</p>
                         )}
                       </td>
                       {/* Parent code */}
                       <td className="px-4 py-2 text-xs text-gray-400">
-                        {parentAcc ? parentAcc.code : '—'}
+                        {parentAcc ? parentAcc.code : '\u2014'}
                       </td>
                       {/* Balance */}
                       <td className="px-4 py-2 text-gray-800 font-medium text-xs tabular-nums">
                         {npr(a.balance)}
                       </td>
-                      {/* Actions: add-child · edit · delete */}
+                      {/* Actions */}
                       <td className="px-3 py-2 text-right">
                         <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {/* Active / Inactive toggle */}
+                          <button
+                            title={a.is_active ? 'Deactivate account' : 'Activate account'}
+                            onClick={() => toggleActiveMutation.mutate({ id: a.id, is_active: !a.is_active })}
+                            className={`rounded p-1 transition-colors ${
+                              a.is_active
+                                ? 'text-green-500 hover:text-green-700 hover:bg-green-50'
+                                : 'text-gray-400 hover:text-green-600 hover:bg-green-50'
+                            }`}>
+                            {a.is_active ? <Eye size={13} /> : <EyeOff size={13} />}
+                          </button>
                           {canAddChild && (
                             <button
                               title={`Add sub-account under ${a.code}`}
@@ -2553,7 +2746,7 @@ function AccountsTab() {
                     </tr>
                   )}
 
-                  {/* Inline child add row — appears directly below the clicked row */}
+                  {/* Inline child add row */}
                   {isChildInline && (
                     <InlineAddRow
                       state={inlineAdd!}
@@ -2565,28 +2758,77 @@ function AccountsTab() {
                 </Fragment>
               )
             })}
-
-            {!treeItems.length && !isRootInline && (
-              <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-sm text-gray-400">
-                  No {label.toLowerCase()} accounts yet.
-                  <button onClick={() => openRoot(type)} className="ml-1 text-indigo-600 hover:underline">
-                    Add one
-                  </button>
-                </td>
-              </tr>
-            )}
           </tbody>
         </table>
       </div>
     )
   }
 
+  const totalAccounts  = allAccounts.length
+  const activeCount    = allAccounts.filter(a =>  a.is_active).length
+  const inactiveCount  = allAccounts.filter(a => !a.is_active).length
+
   return (
-    <div>
+    <div className="space-y-4">
+      {/* ── Toolbar ──────────────────────────────────────────────────── */}
+      <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap shadow-sm">
+        {/* Search */}
+        <div className="relative flex-1 min-w-48">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search code, name, or description…"
+            className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+          />
+        </div>
+
+        {/* Active filter */}
+        <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+          {([['all', `All (${totalAccounts})`], ['active', `Active (${activeCount})`], ['inactive', `Inactive (${inactiveCount})`]] as const).map(([val, lbl]) => (
+            <button key={val}
+              onClick={() => setActiveFilter(val)}
+              className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                activeFilter === val ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}>
+              {lbl}
+            </button>
+          ))}
+        </div>
+
+        {/* Export CSV */}
+        <button
+          onClick={exportCSV}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-colors">
+          <Download size={13} /> Export CSV
+        </button>
+      </div>
+
+      {/* ── Legend ────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-3 flex-wrap">
+        {typeOrder.map(([type, label, cls]) => {
+          const col = allAccounts.filter(a => a.type === type)
+          return (
+            <div key={type} className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-medium ${cls}`}>
+              <span>{label}</span>
+              <span className="opacity-60">({col.length})</span>
+            </div>
+          )
+        })}
+        <div className="ml-auto flex items-center gap-1 text-xs text-gray-400">
+          <Info size={12} />
+          <span>Click <Eye size={11} className="inline" /> to deactivate · <Pencil size={11} className="inline" /> to edit · <Plus size={11} className="inline" /> to add sub-account</span>
+        </div>
+      </div>
+
+      {/* ── Account sections ────────────────────────────────────────── */}
       {isLoading ? <Spinner /> : (
         <div className="space-y-4">
-          {typeOrder.map(([type, label]) => renderSection(type, label))}
+          {typeOrder.map(([type, label, cls]) => renderSection(type, label, cls))}
+          {!visibleAccounts.length && !isLoading && (
+            <div className="bg-white border border-gray-200 rounded-xl py-12 text-center text-sm text-gray-400">
+              No accounts match the current filter.
+            </div>
+          )}
         </div>
       )}
     </div>

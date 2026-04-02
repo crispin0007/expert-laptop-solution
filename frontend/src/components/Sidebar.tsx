@@ -44,6 +44,7 @@ import {
   ExternalLink,
   Pencil,
   FileImage,
+  Wallet,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { useTenantStore } from '../store/tenantStore'
@@ -402,10 +403,11 @@ function SidebarContent({
                   <SubNavItem to="/accounting?tab=quotations"    label="Quotations"     icon={<FileQuestion size={13} />} />
                 </NavSubSection>
 
-                <NavSubSection label="Purchases" icon={<ShoppingCart size={11} />} matchTabs={['bills','debit-notes','tds']}>
-                  <SubNavItem to="/accounting?tab=bills"        label="Bills"        icon={<FileText size={13} />} />
-                  <SubNavItem to="/accounting?tab=debit-notes"  label="Debit Notes"  icon={<FileText size={13} />} />
-                  <SubNavItem to="/accounting?tab=tds"          label="TDS"          icon={<Percent  size={13} />} />
+                <NavSubSection label="Purchases" icon={<ShoppingCart size={11} />} matchTabs={['bills','debit-notes','tds','expenses']}>
+                  <SubNavItem to="/accounting?tab=bills"        label="Bills"          icon={<FileText size={13} />} />
+                  <SubNavItem to="/accounting?tab=debit-notes"  label="Debit Notes"    icon={<FileText size={13} />} />
+                  <SubNavItem to="/accounting?tab=expenses"     label="Expenses"       icon={<Wallet   size={13} />} />
+                  <SubNavItem to="/accounting?tab=tds"          label="TDS / WHT"      icon={<Percent  size={13} />} />
                 </NavSubSection>
 
                 <NavSubSection label="Banking" icon={<Building2 size={11} />} matchTabs={['payments','banks','bank-reconciliation']}>
