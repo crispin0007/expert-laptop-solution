@@ -12,7 +12,7 @@ from django.utils import timezone
 from django.http import HttpResponse
 from core.mixins import TenantMixin
 from core.views import NexusViewSet
-from core.exceptions import ConflictError, ForbiddenError
+from core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from core.exceptions import ValidationError as AppValidationError
 from core.response import ApiResponse
 from core.permissions import (
@@ -322,10 +322,18 @@ class PaymentViewSet(NexusViewSet):
             qs = qs.filter(method=method)
         if bank := self.request.query_params.get('bank_account'):
             qs = qs.filter(bank_account_id=bank)
-        if inv := self.request.query_params.get('invoice'):
-            qs = qs.filter(invoice_id=inv)
-        if bill := self.request.query_params.get('bill'):
-            qs = qs.filter(bill_id=bill)
+        inv = self.request.query_params.get('invoice')
+        if inv is not None:
+            if inv == 'null':
+                qs = qs.filter(invoice__isnull=True)
+            else:
+                qs = qs.filter(invoice_id=inv)
+        bill = self.request.query_params.get('bill')
+        if bill is not None:
+            if bill == 'null':
+                qs = qs.filter(bill__isnull=True)
+            else:
+                qs = qs.filter(bill_id=bill)
         if fy_raw := self.request.query_params.get('fiscal_year'):
             try:
                 from core.nepali_date import fiscal_year_date_range, FiscalYear
@@ -357,6 +365,8 @@ class PaymentViewSet(NexusViewSet):
             bank_account=v.get('bank_account'),
             reference=v.get('reference', ''),
             notes=v.get('notes', ''),
+            party_name=v.get('party_name', ''),
+            cheque_status=v.get('cheque_status', ''),
         )
         serializer.instance = payment
 
@@ -366,8 +376,84 @@ class PaymentViewSet(NexusViewSet):
         self.perform_create(serializer)
         return ApiResponse.created(data=PaymentSerializer(serializer.instance).data)
 
+    @action(detail=True, methods=['post'], url_path='allocate')
+    def allocate(self, request, *args, **kwargs):
+        """Link an unallocated payment to an invoice (incoming) or bill (outgoing)."""
+        payment = self.get_object()
+        invoice_id = request.data.get('invoice')
+        bill_id    = request.data.get('bill')
+
+        if invoice_id and bill_id:
+            raise AppValidationError({'detail': 'Provide either invoice or bill, not both.'})
+
+        if invoice_id:
+            if payment.type != Payment.TYPE_INCOMING:
+                raise AppValidationError({'detail': 'Only incoming payments can be linked to invoices.'})
+            if payment.invoice_id is not None:
+                raise ConflictError('Payment is already linked to an invoice.')
+            try:
+                invoice = Invoice.objects.for_tenant(self.tenant).get(id=invoice_id)
+            except Invoice.DoesNotExist:
+                raise NotFoundError('Invoice not found.')
+            payment.invoice = invoice
+            payment.save(update_fields=['invoice'])
+            # Auto-settle invoice if now fully paid
+            if invoice.amount_due <= Decimal('0'):
+                invoice.status = 'paid'
+                invoice.paid_at = timezone.now()
+                invoice.save(update_fields=['status', 'paid_at'])
+                try:
+                    from core.events import EventBus
+                    EventBus.publish('invoice.paid', {
+                        'id': invoice.pk,
+                        'tenant_id': self.tenant.id,
+                        'customer_id': invoice.customer_id,
+                        'amount': str(payment.amount),
+                        'paid_at': invoice.paid_at.isoformat(),
+                    }, tenant=self.tenant)
+                except Exception:
+                    pass
+
+        elif bill_id:
+            if payment.type != Payment.TYPE_OUTGOING:
+                raise AppValidationError({'detail': 'Only outgoing payments can be linked to bills.'})
+            if payment.bill_id is not None:
+                raise ConflictError('Payment is already linked to a bill.')
+            try:
+                bill = Bill.objects.for_tenant(self.tenant).get(id=bill_id)
+            except Bill.DoesNotExist:
+                raise NotFoundError('Bill not found.')
+            payment.bill = bill
+            payment.save(update_fields=['bill'])
+            if bill.amount_due <= Decimal('0'):
+                bill.status = 'paid'
+                bill.paid_at = timezone.now()
+                bill.save(update_fields=['status', 'paid_at'])
+
+        else:
+            raise AppValidationError({'detail': 'Provide invoice or bill to allocate.'})
+
+        return ApiResponse.success(data=PaymentSerializer(payment).data, message='Payment allocated.')
+
     def update(self, request, *args, **kwargs):
         raise ConflictError('Payments cannot be edited.')
+
+    @action(detail=True, methods=['patch'], url_path='cheque-status')
+    def update_cheque_status(self, request, *args, **kwargs):
+        """Update cheque lifecycle status.
+        Only valid for payments with method=cheque.
+        Allowed transitions: issued → presented → cleared | bounced
+        """
+        payment = self.get_object()
+        if payment.method != Payment.METHOD_CHEQUE:
+            raise AppValidationError({'detail': 'Only cheque payments can have their cheque status updated.'})
+        new_status = request.data.get('cheque_status')
+        valid = {c[0] for c in Payment.CHEQUE_STATUS_CHOICES}
+        if new_status not in valid:
+            raise AppValidationError({'detail': f'cheque_status must be one of: {", ".join(sorted(valid))}.'})
+        payment.cheque_status = new_status
+        payment.save(update_fields=['cheque_status'])
+        return ApiResponse.success(data=PaymentSerializer(payment).data, message='Cheque status updated.')
 
     def destroy(self, request, *args, **kwargs):
         """Admin-only hard delete. Note: linked journal entries are NOT auto-reversed.
@@ -633,6 +719,386 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
         except ValueError as exc:
             raise AppValidationError(str(exc))
         return ApiResponse.success(data=day_book(self.tenant, d))
+
+    # ── GL ──────────────────────────────────────────────────────────────────
+
+    @action(detail=False, methods=['get'], url_path='gl-summary')
+    def gl_summary(self, request):
+        """GET /reports/gl-summary/?date_from=&date_to="""
+        from .services.report_service import gl_summary
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=gl_summary(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='gl-master')
+    def gl_master(self, request):
+        """GET /reports/gl-master/?date_from=&date_to="""
+        from .services.report_service import gl_master
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=gl_master(self.tenant, df, dt))
+
+    # ── Receivables ──────────────────────────────────────────────────────────
+
+    @action(detail=False, methods=['get'], url_path='customer-receivable-summary')
+    def customer_receivable_summary(self, request):
+        """GET /reports/customer-receivable-summary/?as_of_date="""
+        from .services.report_service import customer_receivable_summary
+        self.ensure_tenant()
+        try:
+            (as_of,) = self._parse_dates(request, 'as_of_date')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=customer_receivable_summary(self.tenant, as_of))
+
+    @action(detail=False, methods=['get'], url_path='invoice-age-detail')
+    def invoice_age_detail(self, request):
+        """GET /reports/invoice-age-detail/?as_of_date="""
+        from .services.report_service import invoice_age_detail
+        self.ensure_tenant()
+        try:
+            (as_of,) = self._parse_dates(request, 'as_of_date')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=invoice_age_detail(self.tenant, as_of))
+
+    @action(detail=False, methods=['get'], url_path='customer-statement')
+    def customer_statement(self, request):
+        """GET /reports/customer-statement/?customer_id=&date_from=&date_to="""
+        from .services.report_service import customer_statement
+        self.ensure_tenant()
+        customer_id = request.query_params.get('customer_id')
+        if not customer_id:
+            raise AppValidationError("customer_id is required")
+        try:
+            customer_id = int(customer_id)
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except (ValueError, TypeError) as exc:
+            raise AppValidationError(str(exc))
+        try:
+            return ApiResponse.success(data=customer_statement(self.tenant, customer_id, df, dt))
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+
+    # ── Payables ─────────────────────────────────────────────────────────────
+
+    @action(detail=False, methods=['get'], url_path='supplier-payable-summary')
+    def supplier_payable_summary(self, request):
+        """GET /reports/supplier-payable-summary/?as_of_date="""
+        from .services.report_service import supplier_payable_summary
+        self.ensure_tenant()
+        try:
+            (as_of,) = self._parse_dates(request, 'as_of_date')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=supplier_payable_summary(self.tenant, as_of))
+
+    @action(detail=False, methods=['get'], url_path='bill-age-detail')
+    def bill_age_detail(self, request):
+        """GET /reports/bill-age-detail/?as_of_date="""
+        from .services.report_service import bill_age_detail
+        self.ensure_tenant()
+        try:
+            (as_of,) = self._parse_dates(request, 'as_of_date')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=bill_age_detail(self.tenant, as_of))
+
+    @action(detail=False, methods=['get'], url_path='supplier-statement')
+    def supplier_statement(self, request):
+        """GET /reports/supplier-statement/?supplier_id=&date_from=&date_to="""
+        from .services.report_service import supplier_statement
+        self.ensure_tenant()
+        supplier_id = request.query_params.get('supplier_id')
+        if not supplier_id:
+            raise AppValidationError("supplier_id is required")
+        try:
+            supplier_id = int(supplier_id)
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except (ValueError, TypeError) as exc:
+            raise AppValidationError(str(exc))
+        try:
+            return ApiResponse.success(data=supplier_statement(self.tenant, supplier_id, df, dt))
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+
+    # ── Sales ────────────────────────────────────────────────────────────────
+
+    @action(detail=False, methods=['get'], url_path='sales-by-customer')
+    def sales_by_customer(self, request):
+        """GET /reports/sales-by-customer/?date_from=&date_to="""
+        from .services.report_service import sales_by_customer
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=sales_by_customer(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='sales-by-item')
+    def sales_by_item(self, request):
+        """GET /reports/sales-by-item/?date_from=&date_to="""
+        from .services.report_service import sales_by_item
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=sales_by_item(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='sales-by-customer-monthly')
+    def sales_by_customer_monthly(self, request):
+        """GET /reports/sales-by-customer-monthly/?date_from=&date_to="""
+        from .services.report_service import sales_by_customer_monthly
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=sales_by_customer_monthly(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='sales-by-item-monthly')
+    def sales_by_item_monthly(self, request):
+        """GET /reports/sales-by-item-monthly/?date_from=&date_to="""
+        from .services.report_service import sales_by_item_monthly
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=sales_by_item_monthly(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='sales-master')
+    def sales_master(self, request):
+        """GET /reports/sales-master/?date_from=&date_to="""
+        from .services.report_service import sales_master
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=sales_master(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='sales-summary')
+    def sales_summary(self, request):
+        """GET /reports/sales-summary/?date_from=&date_to="""
+        from .services.report_service import sales_summary
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=sales_summary(self.tenant, df, dt))
+
+    # ── Purchases ────────────────────────────────────────────────────────────
+
+    @action(detail=False, methods=['get'], url_path='purchase-by-supplier')
+    def purchase_by_supplier(self, request):
+        """GET /reports/purchase-by-supplier/?date_from=&date_to="""
+        from .services.report_service import purchase_by_supplier
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=purchase_by_supplier(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='purchase-by-item')
+    def purchase_by_item(self, request):
+        """GET /reports/purchase-by-item/?date_from=&date_to="""
+        from .services.report_service import purchase_by_item
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=purchase_by_item(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='purchase-by-supplier-monthly')
+    def purchase_by_supplier_monthly(self, request):
+        """GET /reports/purchase-by-supplier-monthly/?date_from=&date_to="""
+        from .services.report_service import purchase_by_supplier_monthly
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=purchase_by_supplier_monthly(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='purchase-by-item-monthly')
+    def purchase_by_item_monthly(self, request):
+        """GET /reports/purchase-by-item-monthly/?date_from=&date_to="""
+        from .services.report_service import purchase_by_item_monthly
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=purchase_by_item_monthly(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='purchase-master')
+    def purchase_master(self, request):
+        """GET /reports/purchase-master/?date_from=&date_to="""
+        from .services.report_service import purchase_master
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=purchase_master(self.tenant, df, dt))
+
+    # ── Tax / IRD ────────────────────────────────────────────────────────────
+
+    @action(detail=False, methods=['get'], url_path='sales-register')
+    def sales_register(self, request):
+        """GET /reports/sales-register/?date_from=&date_to="""
+        from .services.report_service import sales_register
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=sales_register(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='sales-return-register')
+    def sales_return_register(self, request):
+        """GET /reports/sales-return-register/?date_from=&date_to="""
+        from .services.report_service import sales_return_register
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=sales_return_register(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='purchase-register')
+    def purchase_register(self, request):
+        """GET /reports/purchase-register/?date_from=&date_to="""
+        from .services.report_service import purchase_register
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=purchase_register(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='purchase-return-register')
+    def purchase_return_register(self, request):
+        """GET /reports/purchase-return-register/?date_from=&date_to="""
+        from .services.report_service import purchase_return_register
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=purchase_return_register(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='tds-report')
+    def tds_report(self, request):
+        """GET /reports/tds-report/?date_from=&date_to="""
+        from .services.report_service import tds_report
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=tds_report(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='annex-13')
+    def annex_13(self, request):
+        """GET /reports/annex-13/?date_from=&date_to="""
+        from .services.report_service import annex_13
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=annex_13(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='annex-5')
+    def annex_5(self, request):
+        """GET /reports/annex-5/?date_from=&date_to="""
+        from .services.report_service import annex_5
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=annex_5(self.tenant, df, dt))
+
+    # ── Inventory ────────────────────────────────────────────────────────────
+
+    @action(detail=False, methods=['get'], url_path='inventory-position')
+    def inventory_position(self, request):
+        """GET /reports/inventory-position/?as_of_date="""
+        from .services.report_service import inventory_position
+        self.ensure_tenant()
+        try:
+            (as_of,) = self._parse_dates(request, 'as_of_date')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=inventory_position(self.tenant, as_of))
+
+    @action(detail=False, methods=['get'], url_path='inventory-movement')
+    def inventory_movement(self, request):
+        """GET /reports/inventory-movement/?date_from=&date_to="""
+        from .services.report_service import inventory_movement
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=inventory_movement(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='inventory-master')
+    def inventory_master(self, request):
+        """GET /reports/inventory-master/ (no date params)"""
+        from .services.report_service import inventory_master
+        self.ensure_tenant()
+        return ApiResponse.success(data=inventory_master(self.tenant))
+
+    @action(detail=False, methods=['get'], url_path='product-profitability')
+    def product_profitability(self, request):
+        """GET /reports/product-profitability/?date_from=&date_to="""
+        from .services.report_service import product_profitability
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=product_profitability(self.tenant, df, dt))
+
+    # ── System / Activity ────────────────────────────────────────────────────
+
+    @action(detail=False, methods=['get'], url_path='activity-log')
+    def activity_log(self, request):
+        """GET /reports/activity-log/?date_from=&date_to="""
+        from .services.report_service import activity_log
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=activity_log(self.tenant, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='user-log')
+    def user_log(self, request):
+        """GET /reports/user-log/?date_from=&date_to=&user_id= (optional)"""
+        from .services.report_service import user_log
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        uid_raw = request.query_params.get('user_id')
+        uid = int(uid_raw) if uid_raw and uid_raw.isdigit() else None
+        return ApiResponse.success(data=user_log(self.tenant, df, dt, user_id=uid))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

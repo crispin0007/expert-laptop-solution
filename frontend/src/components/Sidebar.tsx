@@ -442,9 +442,6 @@ function SidebarContent({
                   <SubNavItem to="/accounting?tab=payslips" label="Payslips & Coins" icon={<Coins size={13} />} />
                 </NavSubSection>
 
-                <NavSubSection label="Reports" icon={<BarChart2 size={11} />} matchTabs={['reports']}>
-                  <SubNavItem to="/accounting?tab=reports" label="Financial Reports" icon={<BarChart2 size={13} />} />
-                </NavSubSection>
               </NavSection>
             )}
             {modules.has('cms') && perms.isManager && (
@@ -465,14 +462,17 @@ function SidebarContent({
                   <span className="truncate">View Live Site</span>
                 </a>
               </NavSection>
-            )}
-            {modules.has('inventory') && perms.can('can_view_inventory') && (
+            )}            {(modules.has('accounting') || modules.has('inventory')) && (perms.can('can_view_accounting') || perms.can('can_view_inventory')) && (
+              <NavItem to="/reports" label="Reports" icon={BarChart2} collapsed={collapsed} />
+            )}            {modules.has('inventory') && perms.can('can_view_inventory') && (
               <NavSection label="Inventory" icon={Package} basePath="/inventory" collapsed={collapsed}>
-                <NavSubSection label="Products" icon={<Package size={11} />} matchTabs={['products','categories','uom','variants']}>
-                  <SubNavItem to="/inventory?tab=products"   label="Products"          icon={<Package size={13} />} />
-                  <SubNavItem to="/inventory?tab=categories" label="Categories"        icon={<Layers  size={13} />} />
-                  <SubNavItem to="/inventory?tab=uom"        label="Units of Measure"  icon={<Scale   size={13} />} />
-                  <SubNavItem to="/inventory?tab=variants"   label="Variants"          icon={<Layers  size={13} />} />
+                <NavSubSection label="Products" icon={<Package size={11} />} matchTabs={['products','categories','uom','variants','bundles','warranty']}>
+                  <SubNavItem to="/inventory?tab=products"   label="Products"          icon={<Package     size={13} />} />
+                  <SubNavItem to="/inventory?tab=categories" label="Categories"        icon={<Layers      size={13} />} />
+                  <SubNavItem to="/inventory?tab=uom"        label="Units of Measure"  icon={<Scale       size={13} />} />
+                  <SubNavItem to="/inventory?tab=variants"   label="Variants"          icon={<Layers      size={13} />} />
+                  <SubNavItem to="/inventory?tab=bundles"    label="Bundles"           icon={<Package     size={13} />} />
+                  <SubNavItem to="/inventory?tab=warranty"   label="Warranty"          icon={<ShieldCheck size={13} />} />
                 </NavSubSection>
 
                 <NavSubSection label="Stock" icon={<ArrowLeftRight size={11} />} matchTabs={['movements','low-stock','stock-counts']}>
@@ -481,16 +481,14 @@ function SidebarContent({
                   <SubNavItem to="/inventory?tab=stock-counts" label="Stock Counts"   icon={<ClipboardList  size={13} />} />
                 </NavSubSection>
 
-                <NavSubSection label="Suppliers" icon={<Truck size={11} />} matchTabs={['suppliers','supplier-catalog','purchase-orders','returns']}>
-                  <SubNavItem to="/inventory?tab=suppliers"        label="Suppliers"         icon={<Truck        size={13} />} />
-                  <SubNavItem to="/inventory?tab=supplier-catalog" label="Supplier Catalog"  icon={<Truck        size={13} />} />
-                  <SubNavItem to="/inventory?tab=purchase-orders"  label="Purchase Orders"   icon={<ShoppingCart size={13} />} />
-                  <SubNavItem to="/inventory?tab=returns"          label="Returns"           icon={<RotateCcw    size={13} />} />
+                <NavSubSection label="Suppliers" icon={<Truck size={11} />} matchTabs={['suppliers','supplier-catalog','purchase-orders','returns','supplier-payments']}>
+                  <SubNavItem to="/inventory?tab=suppliers"         label="Suppliers"          icon={<Truck        size={13} />} />
+                  <SubNavItem to="/inventory?tab=supplier-catalog"  label="Supplier Catalog"   icon={<Truck        size={13} />} />
+                  <SubNavItem to="/inventory?tab=purchase-orders"   label="Purchase Orders"    icon={<ShoppingCart size={13} />} />
+                  <SubNavItem to="/inventory?tab=returns"           label="Returns"            icon={<RotateCcw    size={13} />} />
+                  <SubNavItem to="/inventory?tab=supplier-payments" label="Supplier Payments"  icon={<CreditCard   size={13} />} />
                 </NavSubSection>
 
-                <NavSubSection label="Reports" icon={<BarChart2 size={11} />} matchTabs={['reports']}>
-                  <SubNavItem to="/inventory?tab=reports" label="Reports" icon={<BarChart2 size={13} />} />
-                </NavSubSection>
               </NavSection>
             )}
             {/* Auto-rendered simple module nav items (main section). */}

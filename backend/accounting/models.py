@@ -599,6 +599,29 @@ class Payment(TenantModel):
     reference = models.CharField(max_length=64, blank=True)
     notes     = models.TextField(blank=True)
 
+    # Cheque-specific fields (populated only when method=cheque)
+    CHEQUE_STATUS_ISSUED    = 'issued'
+    CHEQUE_STATUS_PRESENTED = 'presented'
+    CHEQUE_STATUS_CLEARED   = 'cleared'
+    CHEQUE_STATUS_BOUNCED   = 'bounced'
+
+    CHEQUE_STATUS_CHOICES = [
+        (CHEQUE_STATUS_ISSUED,    'Issued'),
+        (CHEQUE_STATUS_PRESENTED, 'Presented to Bank'),
+        (CHEQUE_STATUS_CLEARED,   'Cleared'),
+        (CHEQUE_STATUS_BOUNCED,   'Bounced'),
+    ]
+
+    party_name    = models.CharField(
+        max_length=200, blank=True,
+        help_text='Payee name (outgoing) or payer/drawer name (incoming). Used for cheque tracking.',
+    )
+    cheque_status = models.CharField(
+        max_length=16, blank=True,
+        choices=CHEQUE_STATUS_CHOICES,
+        help_text='Cheque lifecycle status. Only applicable when method=cheque.',
+    )
+
     class Meta:
         ordering = ['-date', '-created_at']
 

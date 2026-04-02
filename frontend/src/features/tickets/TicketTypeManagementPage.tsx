@@ -60,6 +60,7 @@ interface TicketCategory {
   color: string
   icon: string
   is_active: boolean
+  has_brand_model: boolean
   subcategories: SubCategory[]
 }
 
@@ -486,7 +487,7 @@ function CategoriesTab() {
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [showCatForm, setShowCatForm] = useState(false)
   const [editCat, setEditCat] = useState<TicketCategory | null>(null)
-  const [catForm, setCatForm] = useState({ name: '', description: '', color: '#6366f1', icon: '' })
+  const [catForm, setCatForm] = useState({ name: '', description: '', color: '#6366f1', icon: '', has_brand_model: false })
   const [addingSubFor, setAddingSubFor] = useState<number | null>(null)
   const [editingSub, setEditingSub] = useState<{ catId: number; sub: SubCategory } | null>(null)
 
@@ -499,14 +500,14 @@ function CategoriesTab() {
   })
 
   const resetCatForm = () => {
-    setCatForm({ name: '', description: '', color: '#6366f1', icon: '' })
+    setCatForm({ name: '', description: '', color: '#6366f1', icon: '', has_brand_model: false })
     setEditCat(null)
     setShowCatForm(false)
   }
 
   const startEditCat = (cat: TicketCategory) => {
     setEditCat(cat)
-    setCatForm({ name: cat.name, description: cat.description, color: cat.color, icon: cat.icon })
+    setCatForm({ name: cat.name, description: cat.description, color: cat.color, icon: cat.icon, has_brand_model: cat.has_brand_model })
     setShowCatForm(true)
   }
 
@@ -602,6 +603,21 @@ function CategoriesTab() {
               </label>
               <ColorPicker value={catForm.color} onChange={c => setCatForm(p => ({ ...p, color: c }))} />
             </div>
+            <div className="col-span-2">
+              <button
+                type="button"
+                onClick={() => setCatForm(p => ({ ...p, has_brand_model: !p.has_brand_model }))}
+                className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border transition-colors ${
+                  catForm.has_brand_model
+                    ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
+                    : 'bg-white border-slate-300 text-slate-600'
+                }`}
+              >
+                <Tag size={14} />
+                {catForm.has_brand_model ? 'Requires Brand & Model (on)' : 'Requires Brand & Model (off)'}
+              </button>
+              <p className="text-xs text-slate-400 mt-1">When enabled, tickets in this category will prompt for device brand and model.</p>
+            </div>
           </div>
           <div className="flex gap-2 mt-4">
             <button
@@ -648,6 +664,9 @@ function CategoriesTab() {
                     <span className="font-medium text-slate-800 text-sm">{cat.name}</span>
                     {cat.description && (
                       <span className="text-xs text-slate-400 ml-2">{cat.description}</span>
+                    )}
+                    {cat.has_brand_model && (
+                      <span className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded ml-2">Brand &amp; Model</span>
                     )}
                     <span className="text-xs text-slate-400 ml-2">
                       ({cat.subcategories.length} sub-{cat.subcategories.length === 1 ? 'category' : 'categories'})

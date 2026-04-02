@@ -137,6 +137,8 @@ export const ACCOUNTING = {
   // ── Payments ─────────────────────────────────────────────────────────────
   PAYMENTS: '/accounting/payments/',
   PAYMENT_DETAIL: (id: number) => `/accounting/payments/${id}/`,
+  PAYMENT_ALLOCATE: (id: number) => `/accounting/payments/${id}/allocate/`,
+  PAYMENT_CHEQUE_STATUS: (id: number) => `/accounting/payments/${id}/cheque-status/`,
 
   // ── Credit Notes ─────────────────────────────────────────────────────────
   CREDIT_NOTES: '/accounting/credit-notes/',
@@ -153,6 +155,46 @@ export const ACCOUNTING = {
   REPORT_AGED_PAYABLES: '/accounting/reports/aged-payables/',
   REPORT_VAT: '/accounting/reports/vat-report/',
   REPORT_CASH_FLOW: '/accounting/reports/cash-flow/',
+  // GL
+  REPORT_GL_SUMMARY: '/accounting/reports/gl-summary/',
+  REPORT_GL_MASTER: '/accounting/reports/gl-master/',
+  // Receivables
+  REPORT_CUSTOMER_RECEIVABLE_SUMMARY: '/accounting/reports/customer-receivable-summary/',
+  REPORT_INVOICE_AGE: '/accounting/reports/invoice-age-detail/',
+  REPORT_CUSTOMER_STATEMENT: '/accounting/reports/customer-statement/',
+  // Payables
+  REPORT_SUPPLIER_PAYABLE_SUMMARY: '/accounting/reports/supplier-payable-summary/',
+  REPORT_BILL_AGE: '/accounting/reports/bill-age-detail/',
+  REPORT_SUPPLIER_STATEMENT: '/accounting/reports/supplier-statement/',
+  // Sales
+  REPORT_SALES_BY_CUSTOMER: '/accounting/reports/sales-by-customer/',
+  REPORT_SALES_BY_ITEM: '/accounting/reports/sales-by-item/',
+  REPORT_SALES_BY_CUSTOMER_MONTHLY: '/accounting/reports/sales-by-customer-monthly/',
+  REPORT_SALES_BY_ITEM_MONTHLY: '/accounting/reports/sales-by-item-monthly/',
+  REPORT_SALES_MASTER: '/accounting/reports/sales-master/',
+  REPORT_SALES_SUMMARY: '/accounting/reports/sales-summary/',
+  // Purchases
+  REPORT_PURCHASE_BY_SUPPLIER: '/accounting/reports/purchase-by-supplier/',
+  REPORT_PURCHASE_BY_ITEM: '/accounting/reports/purchase-by-item/',
+  REPORT_PURCHASE_BY_SUPPLIER_MONTHLY: '/accounting/reports/purchase-by-supplier-monthly/',
+  REPORT_PURCHASE_BY_ITEM_MONTHLY: '/accounting/reports/purchase-by-item-monthly/',
+  REPORT_PURCHASE_MASTER: '/accounting/reports/purchase-master/',
+  // Tax / IRD
+  REPORT_SALES_REGISTER: '/accounting/reports/sales-register/',
+  REPORT_SALES_RETURN_REGISTER: '/accounting/reports/sales-return-register/',
+  REPORT_PURCHASE_REGISTER: '/accounting/reports/purchase-register/',
+  REPORT_PURCHASE_RETURN_REGISTER: '/accounting/reports/purchase-return-register/',
+  REPORT_TDS: '/accounting/reports/tds-report/',
+  REPORT_ANNEX_13: '/accounting/reports/annex-13/',
+  REPORT_ANNEX_5: '/accounting/reports/annex-5/',
+  // Inventory
+  REPORT_INVENTORY_POSITION: '/accounting/reports/inventory-position/',
+  REPORT_INVENTORY_MOVEMENT: '/accounting/reports/inventory-movement/',
+  REPORT_INVENTORY_MASTER: '/accounting/reports/inventory-master/',
+  REPORT_PRODUCT_PROFITABILITY: '/accounting/reports/product-profitability/',
+  // System
+  REPORT_ACTIVITY_LOG: '/accounting/reports/activity-log/',
+  REPORT_USER_LOG: '/accounting/reports/user-log/',
 
   // ── Coins ─────────────────────────────────────────────────────────────────
   COINS: '/accounting/coins/',

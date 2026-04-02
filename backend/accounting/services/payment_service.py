@@ -20,6 +20,8 @@ def record_payment(
     bank_account=None,
     reference='',
     notes='',
+    party_name='',
+    cheque_status='',
 ):
     """
     Create a Payment and auto-settle the linked invoice/bill when fully paid.
@@ -54,6 +56,8 @@ def record_payment(
         bill=bill,
         reference=reference,
         notes=notes,
+        party_name=party_name,
+        cheque_status=cheque_status,
     )
 
     # Auto-mark invoice/bill as paid when amount_due reaches 0

@@ -189,6 +189,7 @@ class PaymentSerializer(NepaliModelSerializer):
             'invoice', 'invoice_number',
             'bill', 'bill_number',
             'reference', 'notes',
+            'party_name', 'cheque_status',
             'created_by_name', 'created_at',
         )
         read_only_fields = ('payment_number', 'created_at')

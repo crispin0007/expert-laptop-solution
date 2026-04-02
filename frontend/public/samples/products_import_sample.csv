@@ -1,0 +1,11 @@
+name,sku,unit_price,cost_price,barcode,brand,description,reorder_level,is_service,is_active,track_stock
+HP LaserJet Toner 85A,INK-HP-85A,3500.00,2800.00,0885631537641,HP,Original HP 85A black toner cartridge,5,false,true,true
+Samsung 24" Monitor,MON-SAM-24,25000.00,20000.00,8806090076879,Samsung,Full HD IPS panel 24 inch monitor,2,false,true,true
+CAT6 Network Cable (1m),CAB-CAT6-1M,150.00,90.00,,Generic,CAT6 UTP patch cable 1 metre,50,false,true,true
+RAM DDR4 8GB,RAM-8GB-DDR4,4500.00,3800.00,,Kingston,8GB DDR4 2666MHz desktop RAM,10,false,true,true
+Annual Maintenance Contract,SVC-AMC-ANNUAL,15000.00,0.00,,,Yearly on-site support contract,0,true,true,false
+Screen Replacement Service,SVC-SCREEN-RPL,2500.00,0.00,,,Laptop/phone screen replacement labour,0,true,true,false
+USB-C Hub 7-in-1,USB-HUB-7IN1,1800.00,1200.00,6970048522061,Anker,7-port USB-C hub with HDMI and PD,5,false,true,true
+Thermal Paste 5g,PASTE-THERMAL-5G,350.00,200.00,,Arctic,Arctic MX-4 thermal compound,20,false,true,true
+Antivirus 1 Year License,SVC-AV-1YR,1200.00,800.00,,,1-year antivirus software licence key,0,true,true,false
+Power Supply 500W,PSU-500W,3200.00,2500.00,,Seasonic,80+ Bronze certified 500W ATX PSU,3,false,false,true

@@ -7,10 +7,10 @@ import {
   ArrowLeft, Send, UserCheck, ArrowRightLeft, AlertCircle,
   Clock, CheckCircle2, CircleDot, Loader2, Lock, MessageSquare,
   Package, Plus, Trash2, FileText, Coins, Paperclip, Users, X, Download, Phone,
-  Car, MapPin, Banknote, CreditCard, CheckCircle, XCircle, ShieldCheck,
+  Car, MapPin, Banknote, CreditCard, CheckCircle, XCircle, ShieldCheck, Search,
 } from 'lucide-react'
 import apiClient from '../../api/client'
-import { TICKETS, ACCOUNTING, INVENTORY, DEPARTMENTS } from '../../api/endpoints'
+import { TICKETS, ACCOUNTING, INVENTORY, DEPARTMENTS, STAFF } from '../../api/endpoints'
 import Modal from '../../components/Modal'
 import { usePermissions } from '../../hooks/usePermissions'
 
@@ -238,15 +238,17 @@ function AssignModal({
 }: { ticketId: number; currentAssignee: number | null; currentTeamMembers: number[]; open: boolean; onClose: () => void; onDone: () => void }) {
   const [userId, setUserId] = useState<number | ''>(currentAssignee ?? '')
   const [teamIds, setTeamIds] = useState<number[]>(currentTeamMembers)
+  const [search, setSearch] = useState('')
 
   useEffect(() => {
     setUserId(currentAssignee ?? '')
     setTeamIds(currentTeamMembers)
+    setSearch('')
   }, [currentAssignee, currentTeamMembers, open])
 
   const { data: staff = [] } = useQuery<StaffUser[]>({
     queryKey: ['staff-list'],
-    queryFn: () => apiClient.get('/accounts/staff/').then(r =>
+    queryFn: () => apiClient.get(STAFF.LIST).then(r =>
       Array.isArray(r.data) ? r.data : (r.data.results ?? r.data.data ?? [])
     ),
     enabled: open,
@@ -281,6 +283,16 @@ function AssignModal({
   return (
     <Modal open={open} onClose={onClose} title="Assign Staff" width="max-w-sm">
       <div className="space-y-4">
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          <input
+            type="text"
+            placeholder="Search staff..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Primary Assignee</label>
           <select
@@ -289,9 +301,14 @@ function AssignModal({
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
           >
             <option value="">— Unassigned —</option>
-            {staff.map(s => (
-              <option key={s.id} value={s.id}>{s.display_name || s.full_name || s.email}</option>
-            ))}
+            {staff
+              .filter(s => {
+                const name = (s.display_name || s.full_name || s.email).toLowerCase()
+                return name.includes(search.toLowerCase())
+              })
+              .map(s => (
+                <option key={s.id} value={s.id}>{s.display_name || s.full_name || s.email}</option>
+              ))}
           </select>
         </div>
         <div>
@@ -299,17 +316,22 @@ function AssignModal({
             <Users size={12} /> Team Members (multiple)
           </label>
           <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
-            {staff.map(s => (
-              <label key={s.id} className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={teamIds.includes(s.id)}
-                  onChange={() => toggleTeamMember(s.id)}
-                  className="rounded text-indigo-600"
-                />
-                <span className="text-sm text-gray-700">{s.display_name || s.full_name || s.email}</span>
-              </label>
-            ))}
+            {staff
+              .filter(s => {
+                const name = (s.display_name || s.full_name || s.email).toLowerCase()
+                return name.includes(search.toLowerCase())
+              })
+              .map(s => (
+                <label key={s.id} className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={teamIds.includes(s.id)}
+                    onChange={() => toggleTeamMember(s.id)}
+                    className="rounded text-indigo-600"
+                  />
+                  <span className="text-sm text-gray-700">{s.display_name || s.full_name || s.email}</span>
+                </label>
+              ))}
           </div>
         </div>
         <div className="flex gap-3">

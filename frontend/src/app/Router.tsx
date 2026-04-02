@@ -26,6 +26,7 @@ import ProjectDetailPage from '../features/projects/ProjectDetailPage'
 import CustomerListPage from '../features/customers/CustomerListPage'
 import CustomerDetailPage from '../features/customers/CustomerDetailPage'
 import AccountingPage from '../features/accounting/AccountingPage'
+import ReportsPage from '../features/reports/ReportsPage'
 import InventoryPage from '../features/inventory/InventoryPage'
 import DepartmentListPage from '../features/departments/DepartmentListPage'
 import StaffListPage from '../features/staff/StaffListPage'
@@ -229,6 +230,18 @@ export default function Router() {
               <ModuleGuard module="accounting">
                 <RoleGuard require="can_view_accounting">
                   <AccountingPage />
+                </RoleGuard>
+              </ModuleGuard>
+            }
+          />
+
+          {/* Reports hub — accounting + inventory reports in one place */}
+          <Route
+            path="reports"
+            element={
+              <ModuleGuard module="accounting">
+                <RoleGuard require="can_view_accounting">
+                  <ReportsPage />
                 </RoleGuard>
               </ModuleGuard>
             }

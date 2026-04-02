@@ -45,7 +45,7 @@ class TicketCategorySerializer(serializers.ModelSerializer):
         model = TicketCategory
         fields = (
             'id', 'name', 'slug', 'description', 'color', 'icon',
-            'is_active', 'subcategories', 'created_at', 'updated_at',
+            'is_active', 'has_brand_model', 'subcategories', 'created_at', 'updated_at',
         )
         read_only_fields = ('slug', 'created_at', 'updated_at')
 
@@ -54,7 +54,7 @@ class TicketCategoryWriteSerializer(serializers.ModelSerializer):
     """Write serializer (no nested subcategories)."""
     class Meta:
         model = TicketCategory
-        fields = ('id', 'name', 'description', 'color', 'icon', 'is_active')
+        fields = ('id', 'name', 'description', 'color', 'icon', 'is_active', 'has_brand_model')
 
 
 # ── TicketType ────────────────────────────────────────────────────────────────
@@ -102,6 +102,7 @@ class TicketSerializer(NepaliModelSerializer):
             'category', 'category_name',
             'subcategory', 'subcategory_name',
             'title', 'description', 'contact_phone',
+            'device_brand', 'device_model',
             'status', 'priority',
             'assigned_to', 'assigned_to_name',
             'team_members', 'team_member_names',
@@ -184,7 +185,9 @@ class TicketCreateSerializer(NepaliModelSerializer):
         fields = (
             'ticket_type', 'customer', 'department',
             'category', 'subcategory',
-            'title', 'description', 'contact_phone', 'priority',
+            'title', 'description', 'contact_phone',
+            'device_brand', 'device_model',
+            'priority',
             'assigned_to', 'parent_ticket', 'team_members', 'vehicles',
         )
 

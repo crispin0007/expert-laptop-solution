@@ -39,6 +39,7 @@ interface TicketCategory {
   name: string
   color: string
   icon: string
+  has_brand_model: boolean
   subcategories: SubCategory[]
 }
 
@@ -83,6 +84,8 @@ interface WizardState {
   description: string
   priority: 'low' | 'medium' | 'high' | 'critical'
   contact_phone: string
+  device_brand: string
+  device_model: string
 }
 
 interface Props {
@@ -212,15 +215,21 @@ function Step2Category({
   selectedCat,
   selectedSub,
   categoryError,
+  deviceBrand,
+  deviceModel,
   onCat,
   onSub,
+  onBrandModel,
 }: {
   categories: TicketCategory[]
   selectedCat: number | null
   selectedSub: number | null
   categoryError?: string
+  deviceBrand: string
+  deviceModel: string
   onCat: (id: number | null) => void
   onSub: (id: number | null) => void
+  onBrandModel: (brand: string, model: string) => void
 }) {
   const activeCat = categories.find(c => c.id === selectedCat)
 
@@ -281,6 +290,30 @@ function Step2Category({
                     {sub.name}
                   </button>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Brand & Model — only when category has has_brand_model=true */}
+          {activeCat?.has_brand_model && (
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-slate-600 block mb-1">Device Brand</label>
+                <input
+                  value={deviceBrand}
+                  onChange={e => onBrandModel(e.target.value, deviceModel)}
+                  placeholder="e.g. Samsung, Apple, HP"
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-600 block mb-1">Device Model</label>
+                <input
+                  value={deviceModel}
+                  onChange={e => onBrandModel(deviceBrand, e.target.value)}
+                  placeholder="e.g. Galaxy S22, MacBook Pro"
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
               </div>
             </div>
           )}
@@ -834,6 +867,9 @@ function Step5Review({
   const rows: [string, string][] = [
     ['Ticket Type', type?.name ?? '—'],
     ['Category', cat ? (sub ? `${cat.name} → ${sub.name}` : cat.name) : '—'],
+    ...(cat?.has_brand_model && (state.device_brand || state.device_model) ? [
+      ['Device', [state.device_brand, state.device_model].filter(Boolean).join(' ')] as [string, string],
+    ] : []),
     ['Customer', customer?.name ?? '—'],
     ['Priority', state.priority.charAt(0).toUpperCase() + state.priority.slice(1)],
     ['Department', dept?.name ?? '—'],
@@ -888,6 +924,8 @@ const INIT: WizardState = {
   description: '',
   priority: 'medium',
   contact_phone: '',
+  device_brand: '',
+  device_model: '',
 }
 
 export default function CreateTicketWizard({ open, onClose, onCreated }: Props) {
@@ -1016,6 +1054,8 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
       if (state.customer) payload.customer = state.customer
       if (state.department) payload.department = state.department
       if (state.contact_phone) payload.contact_phone = state.contact_phone
+      if (state.device_brand) payload.device_brand = state.device_brand
+      if (state.device_model) payload.device_model = state.device_model
       // First selected staff member is the lead assignee; all go into team_members
       if (state.team_members.length > 0) {
         payload.assigned_to = state.team_members[0]
@@ -1133,8 +1173,11 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
               selectedCat={state.category}
               selectedSub={state.subcategory}
               categoryError={fieldErrors.category}
-              onCat={id => update({ category: id, subcategory: null })}
+              deviceBrand={state.device_brand}
+              deviceModel={state.device_model}
+              onCat={id => update({ category: id, subcategory: null, device_brand: '', device_model: '' })}
               onSub={id => update({ subcategory: id })}
+              onBrandModel={(brand, model) => update({ device_brand: brand, device_model: model })}
             />
           )}
           {step === 2 && (

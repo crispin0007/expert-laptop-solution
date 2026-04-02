@@ -15,6 +15,10 @@ class TicketCategory(TenantModel):
     color = models.CharField(max_length=16, blank=True, help_text='Hex color code e.g. #FF5733')
     icon = models.CharField(max_length=64, blank=True, help_text='Icon name from lucide-react')
     is_active = models.BooleanField(default=True)
+    has_brand_model = models.BooleanField(
+        default=False,
+        help_text='When enabled, tickets in this category will prompt for device brand and model.',
+    )
 
     class Meta:
         ordering = ['name']
@@ -167,6 +171,9 @@ class Ticket(TenantModel):
     description = models.TextField(blank=True)
     # Optional phone number to reach the contact person for this ticket
     contact_phone = models.CharField(max_length=32, blank=True, help_text='Phone number to contact for this ticket')
+    # Device info — populated when the ticket's category has has_brand_model=True
+    device_brand = models.CharField(max_length=128, blank=True)
+    device_model = models.CharField(max_length=128, blank=True)
     status = models.CharField(max_length=32, choices=STATUS_CHOICES, default=STATUS_OPEN)
     priority = models.CharField(max_length=16, choices=PRIORITY_CHOICES, default=PRIORITY_MEDIUM)
 

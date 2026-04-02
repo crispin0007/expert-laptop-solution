@@ -546,3 +546,1583 @@ def day_book(tenant, date):
         'total_credit': total_cr,
         'entry_count':  len(result),
     }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  PHASE 1 — GL Reports (General Ledger)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def gl_summary(tenant, date_from, date_to):
+    """
+    General Ledger Summary — account balances grouped by type for the period.
+    Returns each account type (asset/liability/equity/revenue/expense) with
+    its constituent accounts and sub-total.
+    """
+    ACCT_TYPES = [
+        ('asset',     'Assets'),
+        ('liability', 'Liabilities'),
+        ('equity',    'Capital / Equity'),
+        ('revenue',   'Revenue'),
+        ('expense',   'Expenses'),
+    ]
+    groups = {}
+    for code, label in ACCT_TYPES:
+        rows = _accounts_by_type(tenant, code, date_from, date_to)
+        rows = [r for r in rows if r['balance']]  # omit zero-balance accounts
+        total = sum(r['balance'] for r in rows)
+        groups[code] = {'label': label, 'rows': rows, 'total': total}
+
+    return {
+        'period':   _period_meta(date_from, date_to),
+        'date_from': str(date_from),
+        'date_to':   str(date_to),
+        'groups':    groups,
+    }
+
+
+def gl_master(tenant, date_from, date_to):
+    """
+    GL Master Report — every account with opening balance, period movements
+    (debit/credit), and closing balance.  Mirrors Tally's Account Summary.
+    """
+    from accounting.models import Account, JournalLine
+    from django.db.models import Sum
+
+    accounts = Account.objects.filter(
+        tenant=tenant, is_active=True
+    ).order_by('type', 'code')
+
+    rows = []
+    for acc in accounts:
+        # Period movements
+        qs = JournalLine.objects.filter(
+            entry__tenant=tenant,
+            entry__is_posted=True,
+            account=acc,
+            entry__date__gte=date_from,
+            entry__date__lte=date_to,
+        )
+        d = qs.aggregate(debit=Sum('debit'), credit=Sum('credit'))
+        dr = d['debit']  or _zero()
+        cr = d['credit'] or _zero()
+        ob = acc.opening_balance or _zero()
+
+        if acc.type in ('asset', 'expense'):
+            closing = ob + dr - cr
+        else:
+            closing = ob + cr - dr
+
+        if not (ob or dr or cr or closing):
+            continue  # skip completely untouched accounts
+
+        rows.append({
+            'code':             acc.code,
+            'name':             acc.name,
+            'type':             acc.type,
+            'opening_balance':  ob,
+            'period_debit':     dr,
+            'period_credit':    cr,
+            'closing_balance':  closing,
+        })
+
+    return {
+        'period':   _period_meta(date_from, date_to),
+        'date_from': str(date_from),
+        'date_to':   str(date_to),
+        'accounts':  rows,
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  PHASE 2 — Receivable Reports
+# ═════════════════════════════════════════════════════════════════════════════
+
+def customer_receivable_summary(tenant, as_of_date):
+    """
+    Per-customer summary: total invoiced, total collected, outstanding balance.
+    Only invoices with status=issued|paid are included.
+    Uses ORM annotation to avoid N+1 on amount_paid.
+    """
+    from accounting.models import Invoice
+    from django.db.models import Sum as DSum, Value, DecimalField
+    from django.db.models.functions import Coalesce
+
+    invoices = (
+        Invoice.objects
+        .filter(tenant=tenant, status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID],
+                created_at__date__lte=as_of_date)
+        .select_related('customer')
+        .annotate(paid_sum=Coalesce(DSum('payments__amount'), Value(_zero()), output_field=DecimalField()))
+    )
+
+    summary: dict = {}
+    for inv in invoices:
+        cname = inv.customer.name if inv.customer else '(No Customer)'
+        cid   = inv.customer_id or 0
+        if cid not in summary:
+            summary[cid] = {
+                'customer_id':   cid,
+                'customer_name': cname,
+                'total_invoiced': _zero(),
+                'total_paid':     _zero(),
+                'outstanding':    _zero(),
+                'invoice_count':  0,
+            }
+        outstanding = max(inv.total - inv.paid_sum, _zero())
+        summary[cid]['total_invoiced'] += inv.total
+        summary[cid]['total_paid']     += inv.paid_sum
+        summary[cid]['outstanding']    += outstanding
+        summary[cid]['invoice_count']  += 1
+
+    rows = sorted(summary.values(), key=lambda r: r['outstanding'], reverse=True)
+    grand_outstanding = sum(r['outstanding'] for r in rows)
+    grand_invoiced    = sum(r['total_invoiced'] for r in rows)
+
+    return {
+        'as_of_date':     str(as_of_date),
+        'rows':           rows,
+        'grand_invoiced': grand_invoiced,
+        'grand_paid':     grand_invoiced - grand_outstanding,
+        'grand_outstanding': grand_outstanding,
+    }
+
+
+def invoice_age_detail(tenant, as_of_date):
+    """
+    Invoice Age — every outstanding invoice with customer, amount, due_date,
+    days overdue and ageing bucket.  More granular than aged_receivables.
+    """
+    from accounting.models import Invoice
+    from django.db.models import Sum as DSum, Value, DecimalField
+    from django.db.models.functions import Coalesce
+
+    invoices = (
+        Invoice.objects
+        .filter(tenant=tenant, status=Invoice.STATUS_ISSUED,
+                created_at__date__lte=as_of_date)
+        .select_related('customer')
+        .annotate(paid_sum=Coalesce(DSum('payments__amount'), Value(_zero()), output_field=DecimalField()))
+        .order_by('due_date', 'created_at')
+    )
+
+    rows = []
+    for inv in invoices:
+        outstanding = float(max(inv.total - inv.paid_sum, _zero()))
+        if outstanding <= 0:
+            continue
+        due = inv.due_date
+        days = (as_of_date - due).days if due else 0
+        if days <= 0:
+            bucket = 'current'
+        elif days <= 30:
+            bucket = '1_30'
+        elif days <= 60:
+            bucket = '31_60'
+        elif days <= 90:
+            bucket = '61_90'
+        else:
+            bucket = '90_plus'
+        rows.append({
+            'invoice_number': inv.invoice_number,
+            'customer':       inv.customer.name if inv.customer else '',
+            'date':           str(inv.created_at.date()),
+            'due_date':       str(due) if due else None,
+            'days_overdue':   max(days, 0),
+            'total':          float(inv.total),
+            'paid':           float(inv.paid_sum),
+            'outstanding':    outstanding,
+            'bucket':         bucket,
+        })
+
+    return {
+        'as_of_date': str(as_of_date),
+        'rows':       rows,
+        'grand_total': sum(r['outstanding'] for r in rows),
+    }
+
+
+def customer_statement(tenant, customer_id, date_from, date_to):
+    """
+    Customer Statement — full AR ledger for one customer in the period.
+    Shows opening balance, every invoice/payment/credit note, running balance.
+    """
+    from accounting.models import Invoice, Payment, CreditNote
+    from customers.models import Customer
+    from django.db.models import Sum as DSum
+
+    try:
+        customer = Customer.objects.get(tenant=tenant, pk=customer_id)
+    except Customer.DoesNotExist:
+        raise ValueError(f"Customer {customer_id} not found")
+
+    # Opening balance before date_from
+    inv_before = Invoice.objects.filter(
+        tenant=tenant, customer=customer,
+        status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID],
+        created_at__date__lt=date_from,
+    ).aggregate(t=DSum('total'))['t'] or _zero()
+
+    pay_before = Payment.objects.filter(
+        tenant=tenant, invoice__customer=customer,
+        type=Payment.TYPE_INCOMING,
+        date__lt=date_from,
+    ).exclude(method='credit_note').aggregate(t=DSum('amount'))['t'] or _zero()
+
+    cn_before = CreditNote.objects.filter(
+        tenant=tenant, invoice__customer=customer,
+        status__in=[CreditNote.STATUS_ISSUED, CreditNote.STATUS_APPLIED],
+        created_at__date__lt=date_from,
+    ).aggregate(t=DSum('total'))['t'] or _zero()
+
+    opening_balance = inv_before - pay_before - cn_before
+
+    # Collect transactions in period
+    txns = []
+
+    for inv in Invoice.objects.filter(
+        tenant=tenant, customer=customer,
+        created_at__date__gte=date_from, created_at__date__lte=date_to,
+        status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID, Invoice.STATUS_VOID],
+    ).order_by('created_at'):
+        txns.append({
+            'sort_key': inv.created_at.isoformat(),
+            'date':      str(inv.created_at.date()),
+            'type':      'invoice',
+            'reference': inv.invoice_number,
+            'description': f"Invoice {inv.invoice_number}",
+            'debit':     inv.total if inv.status != Invoice.STATUS_VOID else _zero(),
+            'credit':    _zero(),
+        })
+
+    for pay in Payment.objects.filter(
+        tenant=tenant, invoice__customer=customer,
+        type=Payment.TYPE_INCOMING,
+        date__gte=date_from, date__lte=date_to,
+    ).exclude(method='credit_note').select_related('invoice').order_by('date', 'created_at'):
+        inv_ref = f" — Inv {pay.invoice.invoice_number}" if pay.invoice else ''
+        txns.append({
+            'sort_key': str(pay.date),
+            'date':      str(pay.date),
+            'type':      'payment',
+            'reference': pay.payment_number,
+            'description': f"Payment {pay.payment_number}{inv_ref}",
+            'debit':     _zero(),
+            'credit':    pay.amount,
+        })
+
+    for cn in CreditNote.objects.filter(
+        tenant=tenant, invoice__customer=customer,
+        status__in=[CreditNote.STATUS_ISSUED, CreditNote.STATUS_APPLIED],
+        created_at__date__gte=date_from, created_at__date__lte=date_to,
+    ).select_related('invoice').order_by('created_at'):
+        inv_ref = f" — Inv {cn.invoice.invoice_number}" if cn.invoice else ''
+        txns.append({
+            'sort_key': cn.created_at.isoformat(),
+            'date':      str(cn.created_at.date()),
+            'type':      'credit_note',
+            'reference': cn.credit_note_number,
+            'description': f"Credit Note {cn.credit_note_number}{inv_ref}",
+            'debit':     _zero(),
+            'credit':    cn.total,
+        })
+
+    txns.sort(key=lambda x: x['sort_key'])
+    running = opening_balance
+    for t in txns:
+        running = running + t['debit'] - t['credit']
+        t['balance'] = running
+        del t['sort_key']
+
+    return {
+        'period':          _period_meta(date_from, date_to),
+        'customer':        {'id': customer.pk, 'name': customer.name,
+                            'email': customer.email, 'phone': customer.phone},
+        'opening_balance': opening_balance,
+        'closing_balance': running,
+        'transactions':    txns,
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  PHASE 3 — Payable Reports
+# ═════════════════════════════════════════════════════════════════════════════
+
+def supplier_payable_summary(tenant, as_of_date):
+    """
+    Per-supplier summary: total billed, total paid, outstanding balance.
+    """
+    from accounting.models import Bill
+    from django.db.models import Sum as DSum, Value, DecimalField
+    from django.db.models.functions import Coalesce
+
+    bills = (
+        Bill.objects
+        .filter(tenant=tenant,
+                status__in=[Bill.STATUS_APPROVED, Bill.STATUS_PAID],
+                created_at__date__lte=as_of_date)
+        .select_related('supplier')
+        .annotate(paid_sum=Coalesce(DSum('payments__amount'), Value(_zero()), output_field=DecimalField()))
+    )
+
+    summary: dict = {}
+    for bill in bills:
+        sname = bill.supplier.name if bill.supplier else bill.supplier_name or '(No Supplier)'
+        sid   = bill.supplier_id or 0
+        if sid not in summary:
+            summary[sid] = {
+                'supplier_id':   sid,
+                'supplier_name': sname,
+                'total_billed':  _zero(),
+                'total_paid':    _zero(),
+                'outstanding':   _zero(),
+                'bill_count':    0,
+            }
+        outstanding = max(bill.total - bill.paid_sum, _zero())
+        summary[sid]['total_billed']  += bill.total
+        summary[sid]['total_paid']    += bill.paid_sum
+        summary[sid]['outstanding']   += outstanding
+        summary[sid]['bill_count']    += 1
+
+    rows = sorted(summary.values(), key=lambda r: r['outstanding'], reverse=True)
+    grand_outstanding = sum(r['outstanding'] for r in rows)
+
+    return {
+        'as_of_date':        str(as_of_date),
+        'rows':              rows,
+        'grand_billed':      sum(r['total_billed'] for r in rows),
+        'grand_paid':        sum(r['total_paid'] for r in rows),
+        'grand_outstanding': grand_outstanding,
+    }
+
+
+def bill_age_detail(tenant, as_of_date):
+    """
+    Bill Age — every outstanding bill with supplier, amount, due_date, days overdue.
+    """
+    from accounting.models import Bill
+    from django.db.models import Sum as DSum, Value, DecimalField
+    from django.db.models.functions import Coalesce
+
+    bills = (
+        Bill.objects
+        .filter(tenant=tenant, status=Bill.STATUS_APPROVED,
+                created_at__date__lte=as_of_date)
+        .select_related('supplier')
+        .annotate(paid_sum=Coalesce(DSum('payments__amount'), Value(_zero()), output_field=DecimalField()))
+        .order_by('due_date', 'created_at')
+    )
+
+    rows = []
+    for bill in bills:
+        outstanding = float(max(bill.total - bill.paid_sum, _zero()))
+        if outstanding <= 0:
+            continue
+        due = bill.due_date
+        days = (as_of_date - due).days if due else 0
+        if days <= 0:
+            bucket = 'current'
+        elif days <= 30:
+            bucket = '1_30'
+        elif days <= 60:
+            bucket = '31_60'
+        elif days <= 90:
+            bucket = '61_90'
+        else:
+            bucket = '90_plus'
+        sname = bill.supplier.name if bill.supplier else bill.supplier_name
+        rows.append({
+            'bill_number': bill.bill_number,
+            'supplier':    sname,
+            'date':        str(bill.created_at.date()),
+            'due_date':    str(due) if due else None,
+            'days_overdue': max(days, 0),
+            'total':       float(bill.total),
+            'paid':        float(bill.paid_sum),
+            'outstanding': outstanding,
+            'bucket':      bucket,
+        })
+
+    return {
+        'as_of_date': str(as_of_date),
+        'rows':       rows,
+        'grand_total': sum(r['outstanding'] for r in rows),
+    }
+
+
+def supplier_statement(tenant, supplier_id, date_from, date_to):
+    """
+    Supplier Statement — full AP ledger for one supplier in the period.
+    """
+    from accounting.models import Bill, Payment, DebitNote
+    from inventory.models import Supplier
+    from django.db.models import Sum as DSum
+
+    try:
+        supplier = Supplier.objects.get(tenant=tenant, pk=supplier_id)
+    except Supplier.DoesNotExist:
+        raise ValueError(f"Supplier {supplier_id} not found")
+
+    # Opening balance (bills approved before date_from minus payments)
+    bill_before = Bill.objects.filter(
+        tenant=tenant, supplier=supplier,
+        status__in=[Bill.STATUS_APPROVED, Bill.STATUS_PAID],
+        created_at__date__lt=date_from,
+    ).aggregate(t=DSum('total'))['t'] or _zero()
+
+    pay_before = Payment.objects.filter(
+        tenant=tenant, bill__supplier=supplier,
+        type=Payment.TYPE_OUTGOING,
+        date__lt=date_from,
+    ).aggregate(t=DSum('amount'))['t'] or _zero()
+
+    dn_before = DebitNote.objects.filter(
+        tenant=tenant, bill__supplier=supplier,
+        status__in=[DebitNote.STATUS_ISSUED, DebitNote.STATUS_APPLIED],
+        created_at__date__lt=date_from,
+    ).aggregate(t=DSum('total'))['t'] or _zero()
+
+    opening_balance = bill_before - pay_before - dn_before
+
+    txns = []
+
+    for bill in Bill.objects.filter(
+        tenant=tenant, supplier=supplier,
+        created_at__date__gte=date_from, created_at__date__lte=date_to,
+        status__in=[Bill.STATUS_APPROVED, Bill.STATUS_PAID, Bill.STATUS_VOID],
+    ).order_by('created_at'):
+        txns.append({
+            'sort_key':    bill.created_at.isoformat(),
+            'date':        str(bill.created_at.date()),
+            'type':        'bill',
+            'reference':   bill.bill_number,
+            'description': f"Bill {bill.bill_number}",
+            'debit':   bill.total if bill.status != Bill.STATUS_VOID else _zero(),
+            'credit':  _zero(),
+        })
+
+    for pay in Payment.objects.filter(
+        tenant=tenant, bill__supplier=supplier,
+        type=Payment.TYPE_OUTGOING,
+        date__gte=date_from, date__lte=date_to,
+    ).select_related('bill').order_by('date', 'created_at'):
+        bill_ref = f" — Bill {pay.bill.bill_number}" if pay.bill else ''
+        txns.append({
+            'sort_key':    str(pay.date),
+            'date':        str(pay.date),
+            'type':        'payment',
+            'reference':   pay.payment_number,
+            'description': f"Payment {pay.payment_number}{bill_ref}",
+            'debit':   _zero(),
+            'credit':  pay.amount,
+        })
+
+    for dn in DebitNote.objects.filter(
+        tenant=tenant, bill__supplier=supplier,
+        status__in=[DebitNote.STATUS_ISSUED, DebitNote.STATUS_APPLIED],
+        created_at__date__gte=date_from, created_at__date__lte=date_to,
+    ).select_related('bill').order_by('created_at'):
+        bill_ref = f" — Bill {dn.bill.bill_number}" if dn.bill else ''
+        txns.append({
+            'sort_key':    dn.created_at.isoformat(),
+            'date':        str(dn.created_at.date()),
+            'type':        'debit_note',
+            'reference':   dn.debit_note_number,
+            'description': f"Debit Note {dn.debit_note_number}{bill_ref}",
+            'debit':   _zero(),
+            'credit':  dn.total,
+        })
+
+    txns.sort(key=lambda x: x['sort_key'])
+    running = opening_balance
+    for t in txns:
+        running = running + t['debit'] - t['credit']
+        t['balance'] = running
+        del t['sort_key']
+
+    return {
+        'period':          _period_meta(date_from, date_to),
+        'supplier':        {'id': supplier.pk, 'name': supplier.name},
+        'opening_balance': opening_balance,
+        'closing_balance': running,
+        'transactions':    txns,
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  PHASE 4 — Sales Reports
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _active_invoices(tenant, date_from, date_to):
+    """Invoices with status=issued|paid in the period (helper)."""
+    from accounting.models import Invoice
+    return Invoice.objects.filter(
+        tenant=tenant,
+        status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID],
+        created_at__date__gte=date_from,
+        created_at__date__lte=date_to,
+    )
+
+
+def sales_by_customer(tenant, date_from, date_to):
+    """Invoice totals grouped by customer for the period."""
+    from django.db.models import Sum as DSum, Count, Value, DecimalField
+    from django.db.models.functions import Coalesce
+
+    qs = (
+        _active_invoices(tenant, date_from, date_to)
+        .select_related('customer')
+        .annotate(paid_sum=Coalesce(DSum('payments__amount'), Value(_zero()), output_field=DecimalField()))
+    )
+
+    summary: dict = {}
+    for inv in qs:
+        cname = inv.customer.name if inv.customer else '(No Customer)'
+        cid   = inv.customer_id or 0
+        if cid not in summary:
+            summary[cid] = {
+                'customer_id':   cid,
+                'customer_name': cname,
+                'subtotal':      _zero(),
+                'discount':      _zero(),
+                'vat_amount':    _zero(),
+                'total':         _zero(),
+                'paid':          _zero(),
+                'outstanding':   _zero(),
+                'invoice_count': 0,
+            }
+            outstanding = max(inv.total - inv.paid_sum, _zero())
+        summary[cid]['subtotal']      += inv.subtotal
+        summary[cid]['discount']      += inv.discount
+        summary[cid]['vat_amount']    += inv.vat_amount
+        summary[cid]['total']         += inv.total
+        summary[cid]['paid']          += inv.paid_sum
+        summary[cid]['outstanding']   += outstanding
+        summary[cid]['invoice_count'] += 1
+
+    rows = sorted(summary.values(), key=lambda r: r['total'], reverse=True)
+    return {
+        'period':      _period_meta(date_from, date_to),
+        'date_from':   str(date_from),
+        'date_to':     str(date_to),
+        'rows':        rows,
+        'grand_total': sum(r['total'] for r in rows),
+        'grand_vat':   sum(r['vat_amount'] for r in rows),
+    }
+
+
+def sales_by_item(tenant, date_from, date_to):
+    """Invoice line-item totals grouped by item description/product."""
+    from collections import defaultdict
+
+    items: dict = defaultdict(lambda: {
+        'description': '', 'total_qty': Decimal('0'),
+        'total_amount': _zero(), 'invoice_count': 0,
+    })
+
+    for inv in _active_invoices(tenant, date_from, date_to):
+        for line in (inv.line_items or []):
+            key  = line.get('product_name') or line.get('description') or 'Unspecified'
+            qty  = Decimal(str(line.get('qty') or line.get('quantity') or 0))
+            amt  = Decimal(str(line.get('amount') or 0))
+            items[key]['description']  = key
+            items[key]['total_qty']   += qty
+            items[key]['total_amount'] += amt
+            items[key]['invoice_count'] += 1
+
+    rows = sorted(items.values(), key=lambda r: r['total_amount'], reverse=True)
+    return {
+        'period':      _period_meta(date_from, date_to),
+        'date_from':   str(date_from),
+        'date_to':     str(date_to),
+        'rows':        rows,
+        'grand_total': sum(r['total_amount'] for r in rows),
+    }
+
+
+def sales_by_customer_monthly(tenant, date_from, date_to):
+    """Monthly sales totals per customer (pivot table)."""
+    from collections import defaultdict
+
+    qs = _active_invoices(tenant, date_from, date_to).select_related('customer')
+
+    data: dict    = defaultdict(lambda: defaultdict(_zero))
+    months_set: set = set()
+
+    for inv in qs:
+        cname = inv.customer.name if inv.customer else '(No Customer)'
+        m = f"{inv.created_at.year}-{inv.created_at.month:02d}"
+        data[cname][m] += inv.total
+        months_set.add(m)
+
+    months = sorted(months_set)
+    rows   = []
+    for cname, mdata in sorted(data.items()):
+        row = {'customer': cname}
+        total = _zero()
+        for m in months:
+            row[m] = mdata.get(m, _zero())
+            total += row[m]
+        row['total'] = total
+        rows.append(row)
+
+    rows.sort(key=lambda r: r['total'], reverse=True)
+    return {
+        'period':      _period_meta(date_from, date_to),
+        'months':      months,
+        'rows':        rows,
+        'grand_total': sum(r['total'] for r in rows),
+    }
+
+
+def sales_by_item_monthly(tenant, date_from, date_to):
+    """Monthly sales totals per item (pivot table)."""
+    from collections import defaultdict
+
+    data: dict    = defaultdict(lambda: defaultdict(_zero))
+    months_set: set = set()
+
+    for inv in _active_invoices(tenant, date_from, date_to):
+        m = f"{inv.created_at.year}-{inv.created_at.month:02d}"
+        for line in (inv.line_items or []):
+            key = line.get('product_name') or line.get('description') or 'Unspecified'
+            amt = Decimal(str(line.get('amount') or 0))
+            data[key][m] += amt
+            months_set.add(m)
+
+    months = sorted(months_set)
+    rows   = []
+    for key, mdata in sorted(data.items()):
+        row = {'item': key}
+        total = _zero()
+        for m in months:
+            row[m] = mdata.get(m, _zero())
+            total += row[m]
+        row['total'] = total
+        rows.append(row)
+
+    rows.sort(key=lambda r: r['total'], reverse=True)
+    return {
+        'period':      _period_meta(date_from, date_to),
+        'months':      months,
+        'rows':        rows,
+        'grand_total': sum(r['total'] for r in rows),
+    }
+
+
+def sales_master(tenant, date_from, date_to):
+    """
+    Sales Master Report — every invoice with full detail:
+    number, date, customer, PAX/VAT no, subtotal, discount, VAT, total, status.
+    """
+    qs = (
+        _active_invoices(tenant, date_from, date_to)
+        .select_related('customer')
+        .order_by('created_at')
+    )
+
+    rows = []
+    for inv in qs:
+        rows.append({
+            'invoice_number': inv.invoice_number,
+            'date':           str(inv.created_at.date()),
+            'customer':       inv.customer.name if inv.customer else '',
+            'pan_vat':        inv.customer.vat_number if inv.customer else '',
+            'subtotal':       inv.subtotal,
+            'discount':       inv.discount,
+            'vat_amount':     inv.vat_amount,
+            'total':          inv.total,
+            'status':         inv.status,
+            'reference':      inv.reference,
+        })
+
+    return {
+        'period':      _period_meta(date_from, date_to),
+        'date_from':   str(date_from),
+        'date_to':     str(date_to),
+        'rows':        rows,
+        'grand_subtotal': sum(r['subtotal'] for r in rows),
+        'grand_discount': sum(r['discount'] for r in rows),
+        'grand_vat':      sum(r['vat_amount'] for r in rows),
+        'grand_total':    sum(r['total'] for r in rows),
+        'invoice_count':  len(rows),
+    }
+
+
+def sales_summary(tenant, date_from, date_to):
+    """
+    Sales Summary — aggregate KPIs: total invoiced, collected, outstanding,
+    VAT, average invoice value, invoice count, top 5 customers.
+    """
+    from django.db.models import Sum as DSum, Count, Avg, Value, DecimalField
+    from django.db.models.functions import Coalesce
+
+    qs = (
+        _active_invoices(tenant, date_from, date_to)
+        .annotate(paid_sum=Coalesce(DSum('payments__amount'), Value(_zero()), output_field=DecimalField()))
+    )
+
+    total_invoiced  = _zero()
+    total_collected = _zero()
+    total_vat       = _zero()
+
+    for inv in qs:
+        total_invoiced  += inv.total
+        total_collected += inv.paid_sum
+        total_vat       += inv.vat_amount
+
+    count = qs.count()
+    avg_invoice = (total_invoiced / count) if count else _zero()
+
+    # Top 5 by revenue
+    from collections import defaultdict
+    by_cust: dict = defaultdict(_zero)
+    for inv in (
+        _active_invoices(tenant, date_from, date_to)
+        .select_related('customer')
+    ):
+        cname = inv.customer.name if inv.customer else '(No Customer)'
+        by_cust[cname] += inv.total
+
+    top5 = sorted(
+        [{'customer': k, 'total': v} for k, v in by_cust.items()],
+        key=lambda r: r['total'], reverse=True
+    )[:5]
+
+    return {
+        'period':         _period_meta(date_from, date_to),
+        'date_from':      str(date_from),
+        'date_to':        str(date_to),
+        'total_invoiced': total_invoiced,
+        'total_collected': total_collected,
+        'total_outstanding': total_invoiced - total_collected,
+        'total_vat':      total_vat,
+        'invoice_count':  count,
+        'avg_invoice_value': avg_invoice,
+        'top_customers':  top5,
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  PHASE 5 — Purchase Reports
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _active_bills(tenant, date_from, date_to):
+    """Bills with status=approved|paid in the period (helper)."""
+    from accounting.models import Bill
+    return Bill.objects.filter(
+        tenant=tenant,
+        status__in=[Bill.STATUS_APPROVED, Bill.STATUS_PAID],
+        created_at__date__gte=date_from,
+        created_at__date__lte=date_to,
+    )
+
+
+def purchase_by_supplier(tenant, date_from, date_to):
+    """Bill totals grouped by supplier."""
+    from django.db.models import Sum as DSum, Value, DecimalField
+    from django.db.models.functions import Coalesce
+
+    qs = (
+        _active_bills(tenant, date_from, date_to)
+        .select_related('supplier')
+        .annotate(paid_sum=Coalesce(DSum('payments__amount'), Value(_zero()), output_field=DecimalField()))
+    )
+
+    summary: dict = {}
+    for bill in qs:
+        sname = bill.supplier.name if bill.supplier else bill.supplier_name or '(No Supplier)'
+        sid   = bill.supplier_id or 0
+        if sid not in summary:
+            summary[sid] = {
+                'supplier_id':   sid,
+                'supplier_name': sname,
+                'subtotal':      _zero(),
+                'vat_amount':    _zero(),
+                'total':         _zero(),
+                'paid':          _zero(),
+                'outstanding':   _zero(),
+                'bill_count':    0,
+            }
+        outstanding = max(bill.total - bill.paid_sum, _zero())
+        summary[sid]['subtotal']    += bill.subtotal
+        summary[sid]['vat_amount']  += bill.vat_amount
+        summary[sid]['total']       += bill.total
+        summary[sid]['paid']        += bill.paid_sum
+        summary[sid]['outstanding'] += outstanding
+        summary[sid]['bill_count']  += 1
+
+    rows = sorted(summary.values(), key=lambda r: r['total'], reverse=True)
+    return {
+        'period':      _period_meta(date_from, date_to),
+        'date_from':   str(date_from),
+        'date_to':     str(date_to),
+        'rows':        rows,
+        'grand_total': sum(r['total'] for r in rows),
+        'grand_vat':   sum(r['vat_amount'] for r in rows),
+    }
+
+
+def purchase_by_item(tenant, date_from, date_to):
+    """Bill line-item totals grouped by description."""
+    from collections import defaultdict
+
+    items: dict = defaultdict(lambda: {
+        'description': '', 'total_qty': Decimal('0'),
+        'total_amount': _zero(), 'bill_count': 0,
+    })
+
+    for bill in _active_bills(tenant, date_from, date_to):
+        for line in (bill.line_items or []):
+            key = line.get('product_name') or line.get('description') or 'Unspecified'
+            qty = Decimal(str(line.get('qty') or line.get('quantity') or 0))
+            amt = Decimal(str(line.get('amount') or 0))
+            items[key]['description']  = key
+            items[key]['total_qty']   += qty
+            items[key]['total_amount'] += amt
+            items[key]['bill_count']   += 1
+
+    rows = sorted(items.values(), key=lambda r: r['total_amount'], reverse=True)
+    return {
+        'period':      _period_meta(date_from, date_to),
+        'date_from':   str(date_from),
+        'date_to':     str(date_to),
+        'rows':        rows,
+        'grand_total': sum(r['total_amount'] for r in rows),
+    }
+
+
+def purchase_by_supplier_monthly(tenant, date_from, date_to):
+    """Monthly purchase totals per supplier (pivot table)."""
+    from collections import defaultdict
+
+    qs = _active_bills(tenant, date_from, date_to).select_related('supplier')
+    data: dict    = defaultdict(lambda: defaultdict(_zero))
+    months_set: set = set()
+
+    for bill in qs:
+        sname = bill.supplier.name if bill.supplier else bill.supplier_name or '(No Supplier)'
+        m = f"{bill.created_at.year}-{bill.created_at.month:02d}"
+        data[sname][m] += bill.total
+        months_set.add(m)
+
+    months = sorted(months_set)
+    rows   = []
+    for sname, mdata in sorted(data.items()):
+        row = {'supplier': sname}
+        total = _zero()
+        for m in months:
+            row[m] = mdata.get(m, _zero())
+            total += row[m]
+        row['total'] = total
+        rows.append(row)
+
+    rows.sort(key=lambda r: r['total'], reverse=True)
+    return {
+        'period':      _period_meta(date_from, date_to),
+        'months':      months,
+        'rows':        rows,
+        'grand_total': sum(r['total'] for r in rows),
+    }
+
+
+def purchase_by_item_monthly(tenant, date_from, date_to):
+    """Monthly purchase totals per item (pivot table)."""
+    from collections import defaultdict
+
+    data: dict    = defaultdict(lambda: defaultdict(_zero))
+    months_set: set = set()
+
+    for bill in _active_bills(tenant, date_from, date_to):
+        m = f"{bill.created_at.year}-{bill.created_at.month:02d}"
+        for line in (bill.line_items or []):
+            key = line.get('product_name') or line.get('description') or 'Unspecified'
+            amt = Decimal(str(line.get('amount') or 0))
+            data[key][m] += amt
+            months_set.add(m)
+
+    months = sorted(months_set)
+    rows   = []
+    for key, mdata in sorted(data.items()):
+        row = {'item': key}
+        total = _zero()
+        for m in months:
+            row[m] = mdata.get(m, _zero())
+            total += row[m]
+        row['total'] = total
+        rows.append(row)
+
+    rows.sort(key=lambda r: r['total'], reverse=True)
+    return {
+        'period':      _period_meta(date_from, date_to),
+        'months':      months,
+        'rows':        rows,
+        'grand_total': sum(r['total'] for r in rows),
+    }
+
+
+def purchase_master(tenant, date_from, date_to):
+    """Purchase Master — every bill with full detail."""
+    qs = (
+        _active_bills(tenant, date_from, date_to)
+        .select_related('supplier')
+        .order_by('created_at')
+    )
+
+    rows = []
+    for bill in qs:
+        rows.append({
+            'bill_number': bill.bill_number,
+            'date':        str(bill.created_at.date()),
+            'supplier':    bill.supplier.name if bill.supplier else bill.supplier_name,
+            'subtotal':    bill.subtotal,
+            'discount':    bill.discount,
+            'vat_amount':  bill.vat_amount,
+            'total':       bill.total,
+            'status':      bill.status,
+            'reference':   bill.reference,
+        })
+
+    return {
+        'period':         _period_meta(date_from, date_to),
+        'date_from':      str(date_from),
+        'date_to':        str(date_to),
+        'rows':           rows,
+        'grand_subtotal': sum(r['subtotal'] for r in rows),
+        'grand_vat':      sum(r['vat_amount'] for r in rows),
+        'grand_total':    sum(r['total'] for r in rows),
+        'bill_count':     len(rows),
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  PHASE 6 — Tax / IRD Reports  (Nepal)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def sales_register(tenant, date_from, date_to):
+    """
+    Sales Register (VAT Register) — all issued/paid invoices in period
+    with buyer VAT/PAN, taxable amount and VAT column.
+    Format matches Nepal IRD sales register requirements.
+    """
+    from core.nepali_date import date_to_bs_display
+
+    qs = (
+        _active_invoices(tenant, date_from, date_to)
+        .select_related('customer')
+        .order_by('created_at')
+    )
+
+    rows = []
+    for i, inv in enumerate(qs, start=1):
+        bs_info = date_to_bs_display(inv.created_at.date())
+        rows.append({
+            'sno':            i,
+            'date_ad':        str(inv.created_at.date()),
+            'date_bs':        bs_info.get('bs') if bs_info else None,
+            'invoice_number': inv.invoice_number,
+            'buyer_name':     inv.customer.name if inv.customer else '',
+            'buyer_pan':      inv.customer.vat_number or inv.customer.pan_number if inv.customer else '',
+            'taxable_amount': inv.subtotal - inv.discount,
+            'vat_amount':     inv.vat_amount,
+            'total':          inv.total,
+        })
+
+    return {
+        'period':             _period_meta(date_from, date_to),
+        'date_from':          str(date_from),
+        'date_to':            str(date_to),
+        'rows':               rows,
+        'total_taxable':      sum(r['taxable_amount'] for r in rows),
+        'total_vat':          sum(r['vat_amount'] for r in rows),
+        'total_amount':       sum(r['total'] for r in rows),
+        'invoice_count':      len(rows),
+    }
+
+
+def sales_return_register(tenant, date_from, date_to):
+    """
+    Sales Return Register — all issued/applied credit notes in period.
+    IRD requires a separate register for sales returns.
+    """
+    from accounting.models import CreditNote
+    from core.nepali_date import date_to_bs_display
+
+    qs = (
+        CreditNote.objects
+        .filter(tenant=tenant,
+                status__in=[CreditNote.STATUS_ISSUED, CreditNote.STATUS_APPLIED],
+                created_at__date__gte=date_from,
+                created_at__date__lte=date_to)
+        .select_related('invoice__customer')
+        .order_by('created_at')
+    )
+
+    rows = []
+    for i, cn in enumerate(qs, start=1):
+        customer = cn.invoice.customer if cn.invoice else None
+        bs_info  = date_to_bs_display(cn.created_at.date())
+        rows.append({
+            'sno':             i,
+            'date_ad':         str(cn.created_at.date()),
+            'date_bs':         bs_info.get('bs') if bs_info else None,
+            'credit_note_no':  cn.credit_note_number,
+            'original_invoice': cn.invoice.invoice_number if cn.invoice else '',
+            'buyer_name':      customer.name if customer else '',
+            'buyer_pan':       customer.vat_number or customer.pan_number if customer else '',
+            'taxable_amount':  cn.subtotal,
+            'vat_amount':      cn.vat_amount,
+            'total':           cn.total,
+        })
+
+    return {
+        'period':        _period_meta(date_from, date_to),
+        'date_from':     str(date_from),
+        'date_to':       str(date_to),
+        'rows':          rows,
+        'total_taxable': sum(r['taxable_amount'] for r in rows),
+        'total_vat':     sum(r['vat_amount'] for r in rows),
+        'total_amount':  sum(r['total'] for r in rows),
+        'count':         len(rows),
+    }
+
+
+def purchase_register(tenant, date_from, date_to):
+    """
+    Purchase Register (Input VAT Register) — all approved/paid bills in period.
+    Matches Nepal IRD purchase register requirements.
+    """
+    from core.nepali_date import date_to_bs_display
+
+    qs = (
+        _active_bills(tenant, date_from, date_to)
+        .select_related('supplier')
+        .order_by('created_at')
+    )
+
+    rows = []
+    for i, bill in enumerate(qs, start=1):
+        bs_info = date_to_bs_display(bill.created_at.date())
+        rows.append({
+            'sno':         i,
+            'date_ad':     str(bill.created_at.date()),
+            'date_bs':     bs_info.get('bs') if bs_info else None,
+            'bill_number': bill.bill_number,
+            'supplier':    bill.supplier.name if bill.supplier else bill.supplier_name,
+            'supplier_pan': (bill.supplier.pan_number if bill.supplier and hasattr(bill.supplier, 'pan_number') else ''),
+            'taxable_amount': bill.subtotal - bill.discount,
+            'vat_amount':  bill.vat_amount,
+            'total':       bill.total,
+        })
+
+    return {
+        'period':        _period_meta(date_from, date_to),
+        'date_from':     str(date_from),
+        'date_to':       str(date_to),
+        'rows':          rows,
+        'total_taxable': sum(r['taxable_amount'] for r in rows),
+        'total_vat':     sum(r['vat_amount'] for r in rows),
+        'total_amount':  sum(r['total'] for r in rows),
+        'bill_count':    len(rows),
+    }
+
+
+def purchase_return_register(tenant, date_from, date_to):
+    """
+    Purchase Return Register — all issued/applied debit notes in period.
+    """
+    from accounting.models import DebitNote
+    from core.nepali_date import date_to_bs_display
+
+    qs = (
+        DebitNote.objects
+        .filter(tenant=tenant,
+                status__in=[DebitNote.STATUS_ISSUED, DebitNote.STATUS_APPLIED],
+                created_at__date__gte=date_from,
+                created_at__date__lte=date_to)
+        .select_related('bill__supplier')
+        .order_by('created_at')
+    )
+
+    rows = []
+    for i, dn in enumerate(qs, start=1):
+        supplier = dn.bill.supplier if dn.bill else None
+        bs_info  = date_to_bs_display(dn.created_at.date())
+        rows.append({
+            'sno':           i,
+            'date_ad':       str(dn.created_at.date()),
+            'date_bs':       bs_info.get('bs') if bs_info else None,
+            'debit_note_no': dn.debit_note_number,
+            'original_bill': dn.bill.bill_number if dn.bill else '',
+            'supplier':      supplier.name if supplier else '',
+            'taxable_amount': dn.subtotal,
+            'vat_amount':    dn.vat_amount,
+            'total':         dn.total,
+        })
+
+    return {
+        'period':        _period_meta(date_from, date_to),
+        'date_from':     str(date_from),
+        'date_to':       str(date_to),
+        'rows':          rows,
+        'total_taxable': sum(r['taxable_amount'] for r in rows),
+        'total_vat':     sum(r['vat_amount'] for r in rows),
+        'total_amount':  sum(r['total'] for r in rows),
+        'count':         len(rows),
+    }
+
+
+def tds_report(tenant, date_from, date_to):
+    """
+    TDS Report — all TDS entries for the period grouped by supplier and status.
+    Used for Nepal IRD TDS remittance and reconciliation.
+    """
+    from accounting.models import TDSEntry
+
+    entries = (
+        TDSEntry.objects
+        .filter(tenant=tenant,
+                created_at__date__gte=date_from,
+                created_at__date__lte=date_to)
+        .select_related('bill')
+        .order_by('created_at')
+    )
+
+    rows = []
+    for e in entries:
+        rows.append({
+            'id':              e.pk,
+            'date':            str(e.created_at.date()),
+            'bill_number':     e.bill.bill_number if e.bill else '',
+            'supplier_name':   e.supplier_name,
+            'supplier_pan':    e.supplier_pan,
+            'taxable_amount':  e.taxable_amount,
+            'tds_rate':        float(e.tds_rate),
+            'tds_amount':      e.tds_amount,
+            'net_payable':     e.net_payable,
+            'status':          e.status,
+            'period_month':    e.period_month,
+            'period_year':     e.period_year,
+            'deposited_at':    str(e.deposited_at) if e.deposited_at else None,
+            'deposit_reference': e.deposit_reference,
+        })
+
+    total_taxable = sum(r['taxable_amount'] for r in rows)
+    total_tds     = sum(r['tds_amount'] for r in rows)
+    total_pending = sum(r['tds_amount'] for r in rows if r['status'] == TDSEntry.STATUS_PENDING)
+
+    return {
+        'period':         _period_meta(date_from, date_to),
+        'date_from':      str(date_from),
+        'date_to':        str(date_to),
+        'rows':           rows,
+        'total_taxable':  total_taxable,
+        'total_tds':      total_tds,
+        'total_pending':  total_pending,
+        'total_deposited': total_tds - total_pending,
+        'count':          len(rows),
+    }
+
+
+def annex_13(tenant, period_start, period_end):
+    """
+    Nepal IRD Annex-13 — Schedule of VAT invoices issued.
+    Format per IRD: SNo, Invoice Date (BS), Invoice No, Buyer Name,
+    Buyer PAN/VAT, Taxable Amount, VAT Amount.
+    Only invoices with vat_amount > 0 are included.
+    """
+    from core.nepali_date import date_to_bs_display
+
+    qs = (
+        _active_invoices(tenant, period_start, period_end)
+        .filter(vat_amount__gt=0)
+        .select_related('customer')
+        .order_by('created_at')
+    )
+
+    rows = []
+    for i, inv in enumerate(qs, start=1):
+        bs_info  = date_to_bs_display(inv.created_at.date())
+        customer = inv.customer
+        rows.append({
+            'sno':            i,
+            'invoice_date_ad': str(inv.created_at.date()),
+            'invoice_date_bs': bs_info.get('bs') if bs_info else None,
+            'invoice_number': inv.invoice_number,
+            'buyer_name':     customer.name if customer else '',
+            'buyer_pan':      customer.vat_number or customer.pan_number if customer else '',
+            'taxable_amount': inv.subtotal - inv.discount,
+            'vat_amount':     inv.vat_amount,
+            'total':          inv.total,
+        })
+
+    return {
+        'period':        _period_meta(period_start, period_end),
+        'period_start':  str(period_start),
+        'period_end':    str(period_end),
+        'rows':          rows,
+        'total_taxable': sum(r['taxable_amount'] for r in rows),
+        'total_vat':     sum(r['vat_amount'] for r in rows),
+        'total_amount':  sum(r['total'] for r in rows),
+        'invoice_count': len(rows),
+    }
+
+
+def annex_5(tenant, period_start, period_end):
+    """
+    Nepal IRD Annex-5 — VAT Account Summary (Materialized View).
+    Shows: total purchases (excl VAT), input VAT claimed, total sales (excl VAT),
+    output VAT collected, net VAT payable/refundable to/from IRD.
+    Also includes sales returns (credit notes) and purchase returns (debit notes).
+    """
+    from accounting.models import Invoice, Bill, CreditNote, DebitNote
+    from django.db.models import Sum as DSum
+
+    # Sales
+    inv_agg = Invoice.objects.filter(
+        tenant=tenant,
+        status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID],
+        created_at__date__gte=period_start,
+        created_at__date__lte=period_end,
+    ).aggregate(
+        taxable=DSum('subtotal'),
+        discount=DSum('discount'),
+        vat=DSum('vat_amount'),
+        total=DSum('total'),
+    )
+
+    # Sales returns
+    cn_agg = CreditNote.objects.filter(
+        tenant=tenant,
+        status__in=[CreditNote.STATUS_ISSUED, CreditNote.STATUS_APPLIED],
+        created_at__date__gte=period_start,
+        created_at__date__lte=period_end,
+    ).aggregate(taxable=DSum('subtotal'), vat=DSum('vat_amount'))
+
+    # Purchases
+    bill_agg = Bill.objects.filter(
+        tenant=tenant,
+        status__in=[Bill.STATUS_APPROVED, Bill.STATUS_PAID],
+        created_at__date__gte=period_start,
+        created_at__date__lte=period_end,
+    ).aggregate(
+        taxable=DSum('subtotal'),
+        discount=DSum('discount'),
+        vat=DSum('vat_amount'),
+        total=DSum('total'),
+    )
+
+    # Purchase returns
+    dn_agg = DebitNote.objects.filter(
+        tenant=tenant,
+        status__in=[DebitNote.STATUS_ISSUED, DebitNote.STATUS_APPLIED],
+        created_at__date__gte=period_start,
+        created_at__date__lte=period_end,
+    ).aggregate(taxable=DSum('subtotal'), vat=DSum('vat_amount'))
+
+    def _d(v): return v or _zero()
+
+    sales_taxable    = _d(inv_agg['taxable']) - _d(inv_agg['discount'])
+    output_vat       = _d(inv_agg['vat'])
+    sales_return_tax = _d(cn_agg['taxable'])
+    sales_return_vat = _d(cn_agg['vat'])
+    net_output_vat   = output_vat - sales_return_vat
+
+    purchase_taxable  = _d(bill_agg['taxable']) - _d(bill_agg['discount'])
+    input_vat         = _d(bill_agg['vat'])
+    purchase_return_taxable = _d(dn_agg['taxable'])
+    purchase_return_vat     = _d(dn_agg['vat'])
+    net_input_vat     = input_vat - purchase_return_vat
+
+    net_vat_payable   = net_output_vat - net_input_vat
+
+    return {
+        'period':             _period_meta(period_start, period_end),
+        'period_start':       str(period_start),
+        'period_end':         str(period_end),
+        # Sales side
+        'sales_taxable':          sales_taxable,
+        'output_vat':             output_vat,
+        'sales_return_taxable':   sales_return_tax,
+        'sales_return_vat':       sales_return_vat,
+        'net_output_vat':         net_output_vat,
+        # Purchase side
+        'purchase_taxable':       purchase_taxable,
+        'input_vat':              input_vat,
+        'purchase_return_taxable': purchase_return_taxable,
+        'purchase_return_vat':    purchase_return_vat,
+        'net_input_vat':          net_input_vat,
+        # Net
+        'net_vat_payable':        net_vat_payable,
+        'is_refund':              net_vat_payable < _zero(),
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  PHASE 7 — Inventory Reports
+# ═════════════════════════════════════════════════════════════════════════════
+
+def inventory_position(tenant, as_of_date):
+    """
+    Inventory Position — current stock level per product with value at cost.
+    Computes on-hand from StockMovement aggregation (source of truth).
+    """
+    from inventory.models import Product, StockMovement
+    from django.db.models import Sum as DSum, Q
+
+    products = (
+        Product.objects
+        .filter(tenant=tenant, is_deleted=False, is_active=True, track_stock=True)
+        .select_related('category', 'uom')
+        .order_by('category__name', 'name')
+    )
+
+    rows = []
+    for prod in products:
+        # All movements up to as_of_date
+        mvs = StockMovement.objects.filter(
+            tenant=tenant, product=prod,
+            created_at__date__lte=as_of_date,
+        ).aggregate(
+            qty_in=DSum('quantity', filter=Q(movement_type__in=['in', 'return'])),
+            qty_out=DSum('quantity', filter=Q(movement_type__in=['out', 'return_supplier', 'adjustment'])),
+        )
+        qty_in  = mvs['qty_in']  or 0
+        qty_out = mvs['qty_out'] or 0
+        on_hand = qty_in - qty_out
+        cost_value = on_hand * float(prod.cost_price or 0)
+        sale_value = on_hand * float(prod.unit_price or 0)
+
+        rows.append({
+            'sku':          prod.sku,
+            'name':         prod.name,
+            'category':     prod.category.name if prod.category else '',
+            'uom':          prod.uom.abbreviation if prod.uom else '',
+            'on_hand':      on_hand,
+            'cost_price':   float(prod.cost_price or 0),
+            'unit_price':   float(prod.unit_price or 0),
+            'cost_value':   cost_value,
+            'sale_value':   sale_value,
+        })
+
+    rows = [r for r in rows if r['on_hand'] >= 0]
+    return {
+        'as_of_date':    str(as_of_date),
+        'rows':          rows,
+        'total_items':   len(rows),
+        'total_cost_value': sum(r['cost_value'] for r in rows),
+        'total_sale_value': sum(r['sale_value'] for r in rows),
+    }
+
+
+def inventory_movement(tenant, date_from, date_to):
+    """
+    Inventory Movement — all stock movements in the period with type and reference.
+    """
+    from inventory.models import StockMovement
+
+    movements = (
+        StockMovement.objects
+        .filter(tenant=tenant,
+                created_at__date__gte=date_from,
+                created_at__date__lte=date_to)
+        .select_related('product', 'product__category', 'product__uom')
+        .order_by('-created_at')
+    )
+
+    rows = []
+    for mv in movements:
+        rows.append({
+            'date':           str(mv.created_at.date()),
+            'product_name':   mv.product.name,
+            'sku':            mv.product.sku,
+            'movement_type':  mv.movement_type,
+            'quantity':       mv.quantity,
+            'reference_type': mv.reference_type,
+            'reference_id':   mv.reference_id,
+            'notes':          mv.notes,
+        })
+
+    in_total  = sum(r['quantity'] for r in rows if r['movement_type'] in ('in', 'return'))
+    out_total = sum(r['quantity'] for r in rows if r['movement_type'] in ('out', 'return_supplier'))
+
+    return {
+        'period':      _period_meta(date_from, date_to),
+        'date_from':   str(date_from),
+        'date_to':     str(date_to),
+        'rows':        rows,
+        'total_in':    in_total,
+        'total_out':   out_total,
+        'net_change':  in_total - out_total,
+    }
+
+
+def inventory_master(tenant):
+    """
+    Inventory Master — all active products with pricing, costs and current stock.
+    """
+    from inventory.models import Product, StockLevel
+
+    products = (
+        Product.objects
+        .filter(tenant=tenant, is_deleted=False, is_active=True)
+        .select_related('category', 'uom', 'stock_level')
+        .order_by('category__name', 'name')
+    )
+
+    rows = []
+    for prod in products:
+        sl = getattr(prod, 'stock_level', None)
+        rows.append({
+            'sku':          prod.sku,
+            'name':         prod.name,
+            'category':     prod.category.name if prod.category else '',
+            'uom':          prod.uom.abbreviation if prod.uom else '',
+            'cost_price':   float(prod.cost_price or 0),
+            'unit_price':   float(prod.unit_price or 0),
+            'reorder_level': prod.reorder_level,
+            'on_hand':      sl.quantity_on_hand if sl else 0,
+            'is_service':   prod.is_service,
+            'track_stock':  prod.track_stock,
+        })
+
+    return {'rows': rows, 'total_products': len(rows)}
+
+
+def product_profitability(tenant, date_from, date_to):
+    """
+    Product Profitability — revenue vs cost per product using invoice line items
+    and Product.cost_price for COGS calculation.
+    """
+    from inventory.models import Product
+    from collections import defaultdict
+
+    # Map product_id → Product for cost lookup
+    products = {
+        p.pk: p for p in Product.objects.filter(tenant=tenant, is_deleted=False)
+    }
+
+    data: dict = defaultdict(lambda: {
+        'product_id': None, 'name': '', 'qty': Decimal('0'),
+        'revenue': _zero(), 'cogs': _zero(),
+    })
+
+    for inv in _active_invoices(tenant, date_from, date_to):
+        for line in (inv.line_items or []):
+            pid  = line.get('product_id')
+            key  = line.get('product_name') or line.get('description') or 'Unspecified'
+            qty  = Decimal(str(line.get('qty') or 0))
+            amt  = Decimal(str(line.get('amount') or 0))
+
+            if pid and pid in products:
+                prod = products[pid]
+                key  = prod.name
+                cogs = qty * (prod.cost_price or _zero())
+            else:
+                cogs = _zero()
+
+            data[key]['product_id'] = pid
+            data[key]['name']       = key
+            data[key]['qty']       += qty
+            data[key]['revenue']   += amt
+            data[key]['cogs']      += cogs
+
+    rows = []
+    for item in data.values():
+        gross_profit = item['revenue'] - item['cogs']
+        margin = (gross_profit / item['revenue'] * 100) if item['revenue'] else _zero()
+        rows.append({
+            'product_id':   item['product_id'],
+            'name':         item['name'],
+            'qty_sold':     item['qty'],
+            'revenue':      item['revenue'],
+            'cogs':         item['cogs'],
+            'gross_profit': gross_profit,
+            'margin_pct':   float(margin),
+        })
+
+    rows.sort(key=lambda r: r['gross_profit'], reverse=True)
+    return {
+        'period':          _period_meta(date_from, date_to),
+        'date_from':       str(date_from),
+        'date_to':         str(date_to),
+        'rows':            rows,
+        'total_revenue':   sum(r['revenue'] for r in rows),
+        'total_cogs':      sum(r['cogs'] for r in rows),
+        'total_profit':    sum(r['gross_profit'] for r in rows),
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  PHASE 8 — System / Activity Reports
+# ═════════════════════════════════════════════════════════════════════════════
+
+def activity_log(tenant, date_from, date_to, limit=500):
+    """
+    Activity Log — recent audit events for this tenant, newest first.
+    Capped at `limit` rows to prevent unbounded responses.
+    """
+    from core.audit import AuditLog
+
+    qs = (
+        AuditLog.objects
+        .filter(tenant_id=tenant.pk,
+                timestamp__date__gte=date_from,
+                timestamp__date__lte=date_to)
+        .order_by('-timestamp')[:limit]
+    )
+
+    rows = []
+    for log in qs:
+        rows.append({
+            'timestamp':  str(log.timestamp),
+            'event':      log.event,
+            'actor_id':   log.actor_id,
+            'ip':         log.ip,
+            'extra':      log.extra,
+        })
+
+    return {
+        'period':    _period_meta(date_from, date_to),
+        'date_from': str(date_from),
+        'date_to':   str(date_to),
+        'rows':      rows,
+        'count':     len(rows),
+        'capped':    len(rows) >= limit,
+    }
+
+
+def user_log(tenant, date_from, date_to, user_id=None, limit=500):
+    """
+    User Log — login/logout/password events per user for this tenant.
+    Optionally filter by user_id.
+    """
+    from core.audit import AuditLog
+
+    qs = AuditLog.objects.filter(
+        tenant_id=tenant.pk,
+        event__in=['user.login', 'user.logout', 'user.password.changed',
+                   'user.2fa.enabled', 'user.2fa.disabled'],
+        timestamp__date__gte=date_from,
+        timestamp__date__lte=date_to,
+    )
+    if user_id:
+        qs = qs.filter(actor_id=user_id)
+
+    rows = []
+    for log in qs.order_by('-timestamp')[:limit]:
+        rows.append({
+            'timestamp': str(log.timestamp),
+            'event':     log.event,
+            'actor_id':  log.actor_id,
+            'ip':        log.ip,
+            'extra':     log.extra,
+        })
+
+    return {
+        'period':    _period_meta(date_from, date_to),
+        'date_from': str(date_from),
+        'date_to':   str(date_to),
+        'rows':      rows,
+        'count':     len(rows),
+        'capped':    len(rows) >= limit,
+    }

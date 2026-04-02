@@ -9,7 +9,7 @@ import { useState, useCallback, useRef, useEffect, Fragment } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from '../../api/client'
-import { ACCOUNTING, INVENTORY, STAFF } from '../../api/endpoints'
+import { ACCOUNTING, INVENTORY, STAFF, CUSTOMERS } from '../../api/endpoints'
 import toast from 'react-hot-toast'
 import { useConfirm } from '../../components/ConfirmDialog'
 import { useAuthStore } from '../../store/authStore'
@@ -126,7 +126,9 @@ interface Payment {
   method: string; amount: string; invoice: number | null; invoice_number: string
   bill: number | null; bill_number: string
   bank_account: number | null; bank_account_name: string
-  reference: string; notes: string; created_by_name: string; created_at: string
+  reference: string; notes: string
+  party_name: string; cheque_status: string
+  created_by_name: string; created_at: string
 }
 interface CreditNote {
   id: number; credit_note_number: string; invoice: number | null; invoice_number: string
@@ -346,7 +348,6 @@ const TABS = [
   { key: 'accounts',       label: 'Chart of Accounts',  icon: Layers          },
   { key: 'banks',          label: 'Bank Accounts',      icon: Building2       },
   { key: 'payslips',           label: 'Payslips & Coins',   icon: Coins           },
-  { key: 'reports',            label: 'Reports',            icon: BarChart2       },
   { key: 'quotations',         label: 'Quotations',         icon: FileQuestion    },
   { key: 'debit-notes',        label: 'Debit Notes',        icon: FileText        },
   { key: 'tds',                label: 'TDS',                icon: Percent         },
@@ -389,8 +390,8 @@ const QUICK_LINKS = [
   { label: 'Account Ledger',      tab: 'ledger',              icon: BookMarked,     color: 'text-gray-700',    bg: 'bg-gray-50    hover:bg-gray-100',   group: 'Ledger'    },
   { label: 'Day Book',            tab: 'day-book',            icon: CalendarDays,   color: 'text-gray-700',    bg: 'bg-gray-50    hover:bg-gray-100',   group: 'Ledger'    },
   // Reports
-  { label: 'P&L Report',          tab: 'reports',             icon: TrendingUp,     color: 'text-green-600',   bg: 'bg-green-50   hover:bg-green-100',  group: 'Reports'   },
-  { label: 'Balance Sheet',       tab: 'reports',             icon: BarChart2,      color: 'text-blue-700',    bg: 'bg-blue-50    hover:bg-blue-100',   group: 'Reports'   },
+  { label: 'P&L Report',          tab: 'pl',                  icon: TrendingUp,     color: 'text-green-600',   bg: 'bg-green-50   hover:bg-green-100',  group: 'Reports'   },
+  { label: 'Balance Sheet',       tab: 'balance-sheet',       icon: BarChart2,      color: 'text-blue-700',    bg: 'bg-blue-50    hover:bg-blue-100',   group: 'Reports'   },
 ] as const
 
 function DashboardTab() {
@@ -437,7 +438,7 @@ function DashboardTab() {
                 {byGroup[group].map(link => (
                   <button
                     key={link.label}
-                    onClick={() => navigate(`/accounting?tab=${link.tab}`)}
+                    onClick={() => navigate(['pl','balance-sheet'].includes(link.tab) ? `/reports?report=${link.tab}` : `/accounting?tab=${link.tab}`)}
                     className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-transparent text-left transition-all ${link.bg}`}
                   >
                     <link.icon size={14} className={link.color} />
@@ -4488,16 +4489,88 @@ function TransactionReceiptModal({ payment, onClose }: { payment: Payment; onClo
 
 // ─── Reports Tab ───────────────────────────────────────────────────────────
 
-type ReportType = 'pl' | 'balance-sheet' | 'trial-balance' | 'aged-receivables' | 'aged-payables' | 'vat' | 'cash-flow'
+type ReportCategory = 'accounting' | 'receivables' | 'payables' | 'sales' | 'purchases' | 'tax' | 'inventory' | 'system'
+type ReportDateMode  = 'range' | 'asof' | 'vat' | 'none'
+type ReportType =
+  | 'pl' | 'balance-sheet' | 'trial-balance' | 'gl-summary' | 'gl-master' | 'cash-flow'
+  | 'aged-receivables' | 'customer-receivable-summary' | 'invoice-age' | 'customer-statement'
+  | 'aged-payables'    | 'supplier-payable-summary'     | 'bill-age'    | 'supplier-statement'
+  | 'sales-by-customer' | 'sales-by-item' | 'sales-by-customer-monthly' | 'sales-by-item-monthly' | 'sales-master' | 'sales-summary'
+  | 'purchase-by-supplier' | 'purchase-by-item' | 'purchase-by-supplier-monthly' | 'purchase-by-item-monthly' | 'purchase-master'
+  | 'sales-register' | 'sales-return-register' | 'purchase-register' | 'purchase-return-register' | 'vat' | 'tds-report' | 'annex-13' | 'annex-5'
+  | 'inventory-position' | 'inventory-movement' | 'inventory-master' | 'product-profitability'
+  | 'activity-log' | 'user-log'
 
-const REPORTS: { key: ReportType; label: string; endpoint: string; icon: React.ElementType }[] = [
-  { key: 'pl',               label: 'Profit & Loss',    endpoint: ACCOUNTING.REPORT_PL,               icon: TrendingUp     },
-  { key: 'balance-sheet',    label: 'Balance Sheet',    endpoint: ACCOUNTING.REPORT_BALANCE_SHEET,    icon: Layers         },
-  { key: 'trial-balance',    label: 'Trial Balance',    endpoint: ACCOUNTING.REPORT_TRIAL_BALANCE,    icon: BookOpen       },
-  { key: 'aged-receivables', label: 'Aged Receivables', endpoint: ACCOUNTING.REPORT_AGED_RECEIVABLES, icon: AlertCircle    },
-  { key: 'aged-payables',    label: 'Aged Payables',    endpoint: ACCOUNTING.REPORT_AGED_PAYABLES,    icon: TrendingDown   },
-  { key: 'vat',              label: 'VAT Report',       endpoint: ACCOUNTING.REPORT_VAT,              icon: Receipt        },
-  { key: 'cash-flow',        label: 'Cash Flow',        endpoint: ACCOUNTING.REPORT_CASH_FLOW,        icon: ArrowLeftRight },
+interface ReportMeta {
+  key:           ReportType
+  label:         string
+  endpoint:      string
+  icon:          React.ElementType
+  category:      ReportCategory
+  dateMode:      ReportDateMode
+  needsCustomer?: boolean
+  needsSupplier?: boolean
+}
+
+const REPORT_CATEGORIES: { id: ReportCategory; label: string; icon: React.ElementType }[] = [
+  { id: 'accounting',  label: 'Accounting',  icon: BookOpen    },
+  { id: 'receivables', label: 'Receivables', icon: TrendingUp  },
+  { id: 'payables',    label: 'Payables',    icon: TrendingDown},
+  { id: 'sales',       label: 'Sales',       icon: ShoppingBag },
+  { id: 'purchases',   label: 'Purchases',   icon: ShoppingCart},
+  { id: 'tax',         label: 'Tax / IRD',   icon: Percent     },
+  { id: 'inventory',   label: 'Inventory',   icon: Package     },
+  { id: 'system',      label: 'System',      icon: ShieldCheck },
+]
+
+const REPORTS: ReportMeta[] = [
+  // ── Accounting ────────────────────────────────────────────────────────────
+  { key: 'pl',               label: 'Profit & Loss',      endpoint: ACCOUNTING.REPORT_PL,               icon: TrendingUp,        category: 'accounting',  dateMode: 'range' },
+  { key: 'balance-sheet',    label: 'Balance Sheet',      endpoint: ACCOUNTING.REPORT_BALANCE_SHEET,    icon: Layers,            category: 'accounting',  dateMode: 'asof'  },
+  { key: 'trial-balance',    label: 'Trial Balance',      endpoint: ACCOUNTING.REPORT_TRIAL_BALANCE,    icon: BookMarked,        category: 'accounting',  dateMode: 'range' },
+  { key: 'gl-summary',       label: 'GL Summary',         endpoint: ACCOUNTING.REPORT_GL_SUMMARY,       icon: BookOpen,          category: 'accounting',  dateMode: 'range' },
+  { key: 'gl-master',        label: 'GL Master',          endpoint: ACCOUNTING.REPORT_GL_MASTER,        icon: Layers,            category: 'accounting',  dateMode: 'range' },
+  { key: 'cash-flow',        label: 'Cash Flow',          endpoint: ACCOUNTING.REPORT_CASH_FLOW,        icon: ArrowLeftRight,    category: 'accounting',  dateMode: 'range' },
+  // ── Receivables ──────────────────────────────────────────────────────────
+  { key: 'aged-receivables',             label: 'Aged Receivables',   endpoint: ACCOUNTING.REPORT_AGED_RECEIVABLES,             icon: AlertCircle, category: 'receivables', dateMode: 'asof'  },
+  { key: 'customer-receivable-summary',  label: 'Receivable Summary', endpoint: ACCOUNTING.REPORT_CUSTOMER_RECEIVABLE_SUMMARY,  icon: Users,       category: 'receivables', dateMode: 'asof'  },
+  { key: 'invoice-age',                  label: 'Invoice Age Detail', endpoint: ACCOUNTING.REPORT_INVOICE_AGE,                  icon: Clock,       category: 'receivables', dateMode: 'asof'  },
+  { key: 'customer-statement',           label: 'Customer Statement', endpoint: ACCOUNTING.REPORT_CUSTOMER_STATEMENT,           icon: FileText,    category: 'receivables', dateMode: 'range', needsCustomer: true },
+  // ── Payables ─────────────────────────────────────────────────────────────
+  { key: 'aged-payables',          label: 'Aged Payables',       endpoint: ACCOUNTING.REPORT_AGED_PAYABLES,          icon: AlertCircle, category: 'payables', dateMode: 'asof'  },
+  { key: 'supplier-payable-summary', label: 'Payable Summary',   endpoint: ACCOUNTING.REPORT_SUPPLIER_PAYABLE_SUMMARY, icon: Truck,      category: 'payables', dateMode: 'asof'  },
+  { key: 'bill-age',               label: 'Bill Age Detail',     endpoint: ACCOUNTING.REPORT_BILL_AGE,               icon: Clock,       category: 'payables', dateMode: 'asof'  },
+  { key: 'supplier-statement',     label: 'Supplier Statement',  endpoint: ACCOUNTING.REPORT_SUPPLIER_STATEMENT,     icon: FileText,    category: 'payables', dateMode: 'range', needsSupplier: true },
+  // ── Sales ─────────────────────────────────────────────────────────────────
+  { key: 'sales-summary',              label: 'Sales Summary',         endpoint: ACCOUNTING.REPORT_SALES_SUMMARY,              icon: BarChart2,       category: 'sales', dateMode: 'range' },
+  { key: 'sales-master',               label: 'Sales Master',          endpoint: ACCOUNTING.REPORT_SALES_MASTER,               icon: FileText,        category: 'sales', dateMode: 'range' },
+  { key: 'sales-by-customer',          label: 'By Customer',           endpoint: ACCOUNTING.REPORT_SALES_BY_CUSTOMER,          icon: Users,           category: 'sales', dateMode: 'range' },
+  { key: 'sales-by-item',              label: 'By Item',               endpoint: ACCOUNTING.REPORT_SALES_BY_ITEM,              icon: ShoppingBag,     category: 'sales', dateMode: 'range' },
+  { key: 'sales-by-customer-monthly',  label: 'By Customer Monthly',   endpoint: ACCOUNTING.REPORT_SALES_BY_CUSTOMER_MONTHLY,  icon: CalendarDays,    category: 'sales', dateMode: 'range' },
+  { key: 'sales-by-item-monthly',      label: 'By Item Monthly',       endpoint: ACCOUNTING.REPORT_SALES_BY_ITEM_MONTHLY,      icon: CalendarDays,    category: 'sales', dateMode: 'range' },
+  // ── Purchases ─────────────────────────────────────────────────────────────
+  { key: 'purchase-master',               label: 'Purchase Master',        endpoint: ACCOUNTING.REPORT_PURCHASE_MASTER,               icon: FileText,     category: 'purchases', dateMode: 'range' },
+  { key: 'purchase-by-supplier',          label: 'By Supplier',            endpoint: ACCOUNTING.REPORT_PURCHASE_BY_SUPPLIER,          icon: Truck,        category: 'purchases', dateMode: 'range' },
+  { key: 'purchase-by-item',              label: 'By Item',                endpoint: ACCOUNTING.REPORT_PURCHASE_BY_ITEM,              icon: Package,      category: 'purchases', dateMode: 'range' },
+  { key: 'purchase-by-supplier-monthly',  label: 'By Supplier Monthly',    endpoint: ACCOUNTING.REPORT_PURCHASE_BY_SUPPLIER_MONTHLY,  icon: CalendarDays, category: 'purchases', dateMode: 'range' },
+  { key: 'purchase-by-item-monthly',      label: 'By Item Monthly',        endpoint: ACCOUNTING.REPORT_PURCHASE_BY_ITEM_MONTHLY,      icon: CalendarDays, category: 'purchases', dateMode: 'range' },
+  // ── Tax / IRD ────────────────────────────────────────────────────────────
+  { key: 'vat',                    label: 'VAT Report',             endpoint: ACCOUNTING.REPORT_VAT,                    icon: Receipt,     category: 'tax', dateMode: 'vat'   },
+  { key: 'sales-register',         label: 'Sales Register',         endpoint: ACCOUNTING.REPORT_SALES_REGISTER,         icon: BookOpen,    category: 'tax', dateMode: 'range' },
+  { key: 'sales-return-register',  label: 'Sales Return Register',  endpoint: ACCOUNTING.REPORT_SALES_RETURN_REGISTER,  icon: RotateCcw,   category: 'tax', dateMode: 'range' },
+  { key: 'purchase-register',      label: 'Purchase Register',      endpoint: ACCOUNTING.REPORT_PURCHASE_REGISTER,      icon: BookMarked,  category: 'tax', dateMode: 'range' },
+  { key: 'purchase-return-register', label: 'Purchase Return Reg.', endpoint: ACCOUNTING.REPORT_PURCHASE_RETURN_REGISTER, icon: RotateCcw, category: 'tax', dateMode: 'range' },
+  { key: 'tds-report',             label: 'TDS Report',             endpoint: ACCOUNTING.REPORT_TDS,                    icon: Percent,     category: 'tax', dateMode: 'range' },
+  { key: 'annex-13',               label: 'Annex 13 (VAT Sales)',   endpoint: ACCOUNTING.REPORT_ANNEX_13,               icon: FileSpreadsheet, category: 'tax', dateMode: 'range' },
+  { key: 'annex-5',                label: 'Annex 5 (VAT Summary)',  endpoint: ACCOUNTING.REPORT_ANNEX_5,                icon: FileSpreadsheet, category: 'tax', dateMode: 'range' },
+  // ── Inventory ────────────────────────────────────────────────────────────
+  { key: 'inventory-position',    label: 'Stock Position',       endpoint: ACCOUNTING.REPORT_INVENTORY_POSITION,    icon: PackageCheck,   category: 'inventory', dateMode: 'asof'  },
+  { key: 'inventory-movement',    label: 'Stock Movement',       endpoint: ACCOUNTING.REPORT_INVENTORY_MOVEMENT,    icon: ArrowLeftRight, category: 'inventory', dateMode: 'range' },
+  { key: 'inventory-master',      label: 'Inventory Master',     endpoint: ACCOUNTING.REPORT_INVENTORY_MASTER,      icon: Package,        category: 'inventory', dateMode: 'none'  },
+  { key: 'product-profitability', label: 'Product Profitability', endpoint: ACCOUNTING.REPORT_PRODUCT_PROFITABILITY, icon: TrendingUp,     category: 'inventory', dateMode: 'range' },
+  // ── System ────────────────────────────────────────────────────────────────
+  { key: 'activity-log', label: 'Activity Log', endpoint: ACCOUNTING.REPORT_ACTIVITY_LOG, icon: Clock,      category: 'system', dateMode: 'range' },
+  { key: 'user-log',     label: 'User Log',     endpoint: ACCOUNTING.REPORT_USER_LOG,     icon: UserCheck,  category: 'system', dateMode: 'range' },
 ]
 
 // ── typed data shapes ──────────────────────────────────────────────────────
@@ -4941,27 +5014,394 @@ function toCSV(key: ReportType, data: Record<string, unknown>): string {
       row('TOTAL', d.total_incoming, d.total_outgoing, d.net_cash_flow)
       break
     }
+    default: {
+      // Generic handler: export `rows` array if present
+      const d = data as Record<string, unknown>
+      const rowsArr = (d.rows as Record<string, unknown>[] | undefined) ?? []
+      if (rowsArr.length) {
+        const headers = Object.keys(rowsArr[0])
+        row(...headers)
+        rowsArr.forEach(r => row(...headers.map(h => r[h] as string | number | undefined)))
+      }
+      break
+    }
   }
   return rows.map(r => r.join(',')).join('\n')
 }
 
 // ── Main ReportsTab ───────────────────────────────────────────────────────
 
-function ReportsTab() {
-  const today        = new Date().toISOString().slice(0, 10)
-  const fy           = currentFiscalYear()
-  const fyParams     = fiscalYearAdParams(fy)
-  const [reportKey, setReportKey] = useState<ReportType>('pl')
-  const [dateFrom,  setDateFrom]  = useState(fyParams.date_from)
-  const [dateTo,    setDateTo]    = useState(today)
+// ── Generic table renderer ────────────────────────────────────────────────
 
-  const report     = REPORTS.find(r => r.key === reportKey)!
-  const isAsOf     = reportKey === 'balance-sheet' || reportKey === 'aged-receivables' || reportKey === 'aged-payables'
-  const isVat      = reportKey === 'vat'
-  const params     = isAsOf ? `?as_of_date=${dateTo}`
-                   : isVat  ? `?period_start=${dateFrom}&period_end=${dateTo}`
-                   :          `?date_from=${dateFrom}&date_to=${dateTo}`
-  const printRef   = useRef<HTMLDivElement>(null)
+const MONEY_COLS = new Set([
+  'total', 'amount', 'subtotal', 'vat_amount', 'outstanding', 'invoiced',
+  'paid', 'billed', 'credit', 'debit', 'balance', 'cogs', 'revenue',
+  'gross_profit', 'cost_value', 'sale_value', 'net_payable', 'taxable_amount',
+  'tds_amount', 'opening_balance', 'closing_balance', 'grand_total',
+  'period_debit', 'period_credit', 'unit_price', 'cost_price',
+])
+
+function colIsAmount(key: string): boolean {
+  const lower = key.toLowerCase()
+  return MONEY_COLS.has(lower) ||
+    lower.endsWith('_total') || lower.endsWith('_amount') || lower.endsWith('_value') ||
+    lower.startsWith('total_') || lower.startsWith('grand_')
+}
+
+function prettyCol(k: string): string {
+  return k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
+interface GenericTableProps {
+  rows: Record<string, unknown>[]
+  totalRow?: Record<string, unknown>
+  summary?: { label: string; value: unknown }[]
+  hideCols?: string[]
+}
+
+function GenericTableView({ rows, totalRow, summary, hideCols = [] }: GenericTableProps) {
+  if (!rows?.length) return (
+    <p className="px-6 py-10 text-sm text-gray-400 text-center italic">No data for this period.</p>
+  )
+
+  const allCols = Object.keys(rows[0]).filter(k => !hideCols.includes(k) && k !== 'sno')
+
+  return (
+    <div>
+      {summary && summary.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 p-5 border-b border-gray-100">
+          {summary.map(s => (
+            <div key={s.label as string} className="bg-gray-50 rounded-xl p-4">
+              <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-0.5">{s.label}</p>
+              <p className="text-base font-bold text-gray-900 tabular-nums">{npr(s.value as number)}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr>
+              <th className="px-4 py-2.5 text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-200 w-10">#</th>
+              {allCols.map(c => (
+                <th key={c} className={`px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide bg-gray-50 border-b border-gray-200 whitespace-nowrap ${colIsAmount(c) ? 'text-right' : 'text-left'}`}>
+                  {prettyCol(c)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                <td className="px-4 py-1.5 text-xs text-gray-400 tabular-nums">{i + 1}</td>
+                {allCols.map(c => {
+                  const v = row[c]
+                  const isAmt = colIsAmount(c)
+                  return (
+                    <td key={c} className={`px-4 py-1.5 ${isAmt ? 'text-right tabular-nums' : ''} max-w-[220px] truncate`}>
+                      {isAmt && v != null ? npr(v as number) : v == null ? '' : String(v)}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+          {totalRow && (
+            <tfoot>
+              <tr className="bg-gray-800 text-white">
+                <td className="px-4 py-2 text-xs font-semibold" />
+                {allCols.map((c, ci) => {
+                  const v = totalRow[c]
+                  return (
+                    <td key={c} className={`px-4 py-2 font-bold ${ci === 0 ? 'text-left text-xs uppercase tracking-wide' : 'text-right tabular-nums'}`}>
+                      {ci === 0 ? 'Total' : v != null ? npr(v as number) : ''}
+                    </td>
+                  )
+                })}
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ── Monthly pivot renderer ────────────────────────────────────────────────
+
+interface MonthlyCrossData {
+  months: string[]
+  rows: Record<string, unknown>[]
+  grand_total: unknown
+}
+
+function MonthlyCrossTableView({ data, entityKey }: { data: MonthlyCrossData; entityKey: string }) {
+  const { months = [], rows = [] } = data
+  if (!rows.length) return <p className="px-6 py-10 text-sm text-gray-400 text-center italic">No data.</p>
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-gray-50 border-b border-gray-200">
+            <th className="px-4 py-2.5 text-xs font-semibold text-gray-500 text-left w-10">#</th>
+            <th className="px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide text-left min-w-[160px]">{prettyCol(entityKey)}</th>
+            {months.map(m => (
+              <th key={m} className="px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide text-right whitespace-nowrap">{m}</th>
+            ))}
+            <th className="px-4 py-2.5 text-xs font-semibold text-gray-700 uppercase tracking-wide text-right bg-gray-100">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+              <td className="px-4 py-1.5 text-xs text-gray-400">{i + 1}</td>
+              <td className="px-4 py-1.5 font-medium text-gray-800 max-w-[200px] truncate">{String(row[entityKey] ?? '')}</td>
+              {months.map(m => (
+                <td key={m} className="px-4 py-1.5 text-right tabular-nums text-gray-600">
+                  {row[m] ? npr(row[m] as number) : '—'}
+                </td>
+              ))}
+              <td className="px-4 py-1.5 text-right tabular-nums font-semibold text-gray-900 bg-gray-50">{npr(row.total as number)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="bg-gray-800 text-white">
+            <td className="px-4 py-2" />
+            <td className="px-4 py-2 text-xs font-bold uppercase tracking-wide">Grand Total</td>
+            {months.map(m => {
+              const colSum = rows.reduce((s, r) => s + parseFloat(String(r[m] ?? 0)), 0)
+              return <td key={m} className="px-4 py-2 text-right tabular-nums font-bold">{npr(colSum)}</td>
+            })}
+            <td className="px-4 py-2 text-right tabular-nums font-bold">{npr(data.grand_total as number)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  )
+}
+
+// ── Statement renderer (running balance ledger) ───────────────────────────
+
+interface StatementTxn {
+  date: string
+  type: string
+  reference: string
+  description: string
+  debit:   number | string
+  credit:  number | string
+  balance: number | string
+}
+
+function StatementView({ data }: { data: { opening_balance: number; closing_balance: number; transactions: StatementTxn[]; [k: string]: unknown } }) {
+  const { transactions = [], opening_balance, closing_balance } = data
+  return (
+    <div>
+      <div className="grid grid-cols-2 gap-4 px-5 py-4 border-b border-gray-100 bg-gray-50 text-sm">
+        <div><span className="text-gray-500 text-xs uppercase tracking-wide font-semibold">Opening Balance</span><p className="font-bold text-gray-800 tabular-nums mt-0.5">{npr(opening_balance)}</p></div>
+        <div><span className="text-gray-500 text-xs uppercase tracking-wide font-semibold">Closing Balance</span><p className="font-bold text-gray-800 tabular-nums mt-0.5">{npr(closing_balance)}</p></div>
+      </div>
+      {!transactions.length
+        ? <p className="px-6 py-8 text-sm text-gray-400 italic text-center">No transactions in this period.</p>
+        : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200">
+                  {['Date', 'Type', 'Reference', 'Description', 'Debit', 'Credit', 'Balance'].map(h => (
+                    <th key={h} className={`px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide ${['Debit', 'Credit', 'Balance'].includes(h) ? 'text-right' : 'text-left'}`}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {transactions.map((t, i) => (
+                  <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                    <td className="px-4 py-1.5 text-gray-600 whitespace-nowrap">{t.date}</td>
+                    <td className="px-4 py-1.5 capitalize text-gray-500">{t.type.replace(/_/g, ' ')}</td>
+                    <td className="px-4 py-1.5 font-mono text-xs text-indigo-600">{t.reference}</td>
+                    <td className="px-4 py-1.5 text-gray-700 max-w-[260px] truncate">{t.description}</td>
+                    <td className="px-4 py-1.5 text-right tabular-nums text-gray-700">{parseFloat(String(t.debit)) ? npr(t.debit as number) : '—'}</td>
+                    <td className="px-4 py-1.5 text-right tabular-nums text-emerald-700">{parseFloat(String(t.credit)) ? npr(t.credit as number) : '—'}</td>
+                    <td className={`px-4 py-1.5 text-right tabular-nums font-semibold ${parseFloat(String(t.balance)) < 0 ? 'text-red-600' : 'text-gray-900'}`}>{npr(t.balance as number)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      }
+    </div>
+  )
+}
+
+// ── GL Summary renderer ───────────────────────────────────────────────────
+
+interface GLSummaryGroup { label: string; rows: { code: string; name: string; balance: number }[]; total: number }
+
+function GLSummaryView({ data }: { data: { groups: Record<string, GLSummaryGroup> } }) {
+  const order = ['asset', 'liability', 'equity', 'revenue', 'expense']
+  return (
+    <div className="divide-y divide-gray-100">
+      {order.map(k => {
+        const g = data.groups?.[k]
+        if (!g) return null
+        return (
+          <RptSection key={k} title={g.label}>
+            {g.rows.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
+            {!g.rows.length && <p className="px-8 py-2 text-xs text-gray-400 italic">No activity.</p>}
+            <RptTotal label={`Total ${g.label}`} amount={g.total} />
+          </RptSection>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Sales Summary renderer ────────────────────────────────────────────────
+
+function SalesSummaryView({ data }: { data: Record<string, unknown> }) {
+  const stats = [
+    { label: 'Total Invoiced',   value: data.total_invoiced },
+    { label: 'Total Collected',  value: data.total_collected },
+    { label: 'Outstanding',      value: data.total_outstanding },
+    { label: 'VAT Collected',    value: data.total_vat },
+    { label: 'Invoice Count',    value: String(data.invoice_count) },
+    { label: 'Avg Invoice',      value: data.avg_invoice_value },
+  ]
+  const top = (data.top_customers as { customer: string; total: number }[]) ?? []
+  return (
+    <div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 p-5 border-b border-gray-100">
+        {stats.map(s => (
+          <div key={s.label} className="bg-gray-50 rounded-xl p-4">
+            <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-0.5">{s.label}</p>
+            <p className="text-base font-bold text-gray-900 tabular-nums">{isNaN(parseFloat(String(s.value))) ? String(s.value ?? 0) : npr(s.value as number)}</p>
+          </div>
+        ))}
+      </div>
+      {top.length > 0 && (
+        <div className="px-5 py-4">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Top Customers by Revenue</p>
+          <div className="space-y-1.5">
+            {top.map((c, i) => (
+              <div key={i} className="flex items-center justify-between px-4 py-2 bg-gray-50 rounded-lg">
+                <span className="text-sm text-gray-700 font-medium">{i + 1}. {c.customer}</span>
+                <span className="text-sm font-bold tabular-nums text-gray-900">{npr(c.total)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Annex 5 renderer ─────────────────────────────────────────────────────
+
+function Annex5View({ data }: { data: Record<string, unknown> }) {
+  const rows = [
+    { side: 'Sales',    label: 'Taxable Sales',           value: data.sales_taxable },
+    { side: 'Sales',    label: 'Output VAT (13%)',         value: data.output_vat },
+    { side: 'Sales',    label: 'Less: Sales Returns Tax',  value: data.sales_return_taxable },
+    { side: 'Sales',    label: 'Less: Sales Return VAT',   value: data.sales_return_vat },
+    { side: 'Sales',    label: 'Net Output VAT',           value: data.net_output_vat },
+    { side: 'Purchase', label: 'Taxable Purchases',        value: data.purchase_taxable },
+    { side: 'Purchase', label: 'Input VAT (13%)',          value: data.input_vat },
+    { side: 'Purchase', label: 'Less: Purchase Returns',   value: data.purchase_return_taxable },
+    { side: 'Purchase', label: 'Less: Purchase Return VAT',value: data.purchase_return_vat },
+    { side: 'Purchase', label: 'Net Input VAT',            value: data.net_input_vat },
+  ]
+  const netPayable = data.net_vat_payable as number
+  return (
+    <div className="divide-y divide-gray-100">
+      {['Sales', 'Purchase'].map(side => (
+        <RptSection key={side} title={`${side} Side`}>
+          {rows.filter(r => r.side === side).map(r => (
+            <RptRow key={r.label} name={r.label} amount={r.value as number}
+              bold={r.label.startsWith('Net')} indent={!r.label.startsWith('Net')} />
+          ))}
+        </RptSection>
+      ))}
+      <RptGrandTotal
+        label={netPayable >= 0 ? 'Net VAT Payable to IRD' : 'VAT Refund Due from IRD'}
+        amount={Math.abs(netPayable)}
+        note={data.is_refund ? '(Refund)' : undefined}
+      />
+    </div>
+  )
+}
+
+function ReportsTab() {
+  const today   = new Date().toISOString().slice(0, 10)
+  const fy      = currentFiscalYear()
+  const fyParams = fiscalYearAdParams(fy)
+
+  const [category,    setCategory]    = useState<ReportCategory>('accounting')
+  const [reportKey,   setReportKey]   = useState<ReportType>('pl')
+  const [dateFrom,    setDateFrom]    = useState(fyParams.date_from)
+  const [dateTo,      setDateTo]      = useState(today)
+  const [customerId,  setCustomerId]  = useState<number | null>(null)
+  const [supplierId,  setSupplierId]  = useState<number | null>(null)
+  const printRef = useRef<HTMLDivElement>(null)
+
+  const report    = REPORTS.find(r => r.key === reportKey)!
+  const catReports = REPORTS.filter(r => r.category === category)
+
+  // When switching category, auto-select first report in that category
+  function handleCategoryChange(cat: ReportCategory) {
+    setCategory(cat)
+    const first = REPORTS.find(r => r.category === cat)
+    if (first) setReportKey(first.key)
+  }
+
+  // Build query params
+  function buildParams(): string {
+    const parts: string[] = []
+    if (report.dateMode === 'range') {
+      parts.push(`date_from=${dateFrom}`, `date_to=${dateTo}`)
+    } else if (report.dateMode === 'asof') {
+      parts.push(`as_of_date=${dateTo}`)
+    } else if (report.dateMode === 'vat') {
+      parts.push(`period_start=${dateFrom}`, `period_end=${dateTo}`)
+    }
+    if (report.needsCustomer && customerId) parts.push(`customer_id=${customerId}`)
+    if (report.needsSupplier && supplierId) parts.push(`supplier_id=${supplierId}`)
+    return parts.length ? `?${parts.join('&')}` : ''
+  }
+
+  // Customer list (for customer-statement)
+  const { data: customersList } = useQuery<{ id: number; name: string }[]>({
+    queryKey: ['report-customers-dropdown'],
+    queryFn:  () => apiClient.get(`${CUSTOMERS.LIST}?page_size=500`).then(r =>
+      (r.data?.data?.results ?? r.data?.results ?? []).map((c: { id: number; name: string }) => ({ id: c.id, name: c.name }))
+    ),
+    enabled: report?.needsCustomer ?? false,
+    staleTime: 60_000,
+  })
+
+  // Supplier list (for supplier-statement)
+  const { data: suppliersList } = useQuery<{ id: number; name: string }[]>({
+    queryKey: ['report-suppliers-dropdown'],
+    queryFn:  () => apiClient.get(`${INVENTORY.SUPPLIERS}?page_size=500`).then(r =>
+      (r.data?.data?.results ?? r.data?.results ?? []).map((s: { id: number; name: string }) => ({ id: s.id, name: s.name }))
+    ),
+    enabled: report?.needsSupplier ?? false,
+    staleTime: 60_000,
+  })
+
+  const { data: reportData, isLoading, isError, error, refetch } = useQuery<Record<string, unknown>>({
+    queryKey: ['report', reportKey, dateFrom, dateTo, customerId, supplierId],
+    queryFn:  () => apiClient.get(report.endpoint + buildParams()).then(r => r.data?.data ?? r.data),
+    enabled:  false,
+  })
+
+  // Reset query when report changes
+  useEffect(() => {
+    // no-op — enabled:false ensures query doesn't auto-run
+  }, [reportKey])
+
+  const isAsOf       = report.dateMode === 'asof'
+  const periodLabel  = isAsOf ? `As of ${fmt(dateTo)}` : `${fmt(dateFrom)} – ${fmt(dateTo)}`
 
   function exportCSV() {
     if (!reportData) return
@@ -4990,10 +5430,7 @@ function ReportsTab() {
   table{width:100%;border-collapse:collapse;margin-bottom:10px}
   th{background:#f1f3f5;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:5px 8px;text-align:left;border-bottom:1px solid #ccc}
   td{padding:4px 8px;border-bottom:1px solid #eee}
-  tfoot td,tr.grand td{background:#1f2937;color:#fff;font-weight:700}
-  .bg-gray-50{background:#f8f9fa}
-  .bg-gray-100{background:#f1f3f5;font-weight:600}
-  .bg-gray-800{background:#1f2937;color:#fff;font-weight:700}
+  tfoot td{background:#1f2937;color:#fff;font-weight:700}
   .text-right,.tabular-nums{text-align:right}
   @media print{body{padding:8px}}
 </style></head><body>
@@ -5005,35 +5442,102 @@ ${el.innerHTML}
     setTimeout(() => { w.print() }, 500)
   }
 
-  const { data: reportData, isLoading, isError, error, refetch } = useQuery<Record<string, unknown>>({
-    queryKey: ['report', reportKey, dateFrom, dateTo],
-    queryFn: () => apiClient.get(report.endpoint + params).then(r => r.data?.data ?? r.data),
-    enabled: false,
-  })
-
   function renderReport() {
     if (!reportData) return null
+    const d = reportData
+
+    // Existing detailed renderers
     switch (reportKey) {
-      case 'pl':               return <PLReportView  data={reportData as unknown as PLReport}  />
-      case 'balance-sheet':    return <BSReportView  data={reportData as unknown as BSReport}  />
-      case 'trial-balance':    return <TBReportView  data={reportData as unknown as TBReport}  />
-      case 'aged-receivables': return <AgedReportView data={reportData as unknown as AgedReport} type="receivables" />
-      case 'aged-payables':    return <AgedReportView data={reportData as unknown as AgedReport} type="payables"    />
-      case 'vat':              return <VATReportView  data={reportData as unknown as VATReport}  />
-      case 'cash-flow':        return <CFReportView   data={reportData as unknown as CFReport}   />
+      case 'pl':               return <PLReportView  data={d as unknown as PLReport} />
+      case 'balance-sheet':    return <BSReportView  data={d as unknown as BSReport} />
+      case 'trial-balance':    return <TBReportView  data={d as unknown as TBReport} />
+      case 'aged-receivables': return <AgedReportView data={d as unknown as AgedReport} type="receivables" />
+      case 'aged-payables':    return <AgedReportView data={d as unknown as AgedReport} type="payables"    />
+      case 'vat':              return <VATReportView  data={d as unknown as VATReport} />
+      case 'cash-flow':        return <CFReportView   data={d as unknown as CFReport}  />
+      case 'gl-summary':       return <GLSummaryView  data={d as unknown as { groups: Record<string, GLSummaryGroup> }} />
+      case 'annex-5':          return <Annex5View data={d} />
+      case 'sales-summary':    return <SalesSummaryView data={d} />
+
+      case 'customer-statement':
+      case 'supplier-statement':
+        return <StatementView data={d as Parameters<typeof StatementView>[0]['data']} />
+
+      // Monthly pivot
+      case 'sales-by-customer-monthly':
+        return <MonthlyCrossTableView data={d as MonthlyCrossData} entityKey="customer" />
+      case 'sales-by-item-monthly':
+        return <MonthlyCrossTableView data={d as MonthlyCrossData} entityKey="item" />
+      case 'purchase-by-supplier-monthly':
+        return <MonthlyCrossTableView data={d as MonthlyCrossData} entityKey="supplier" />
+      case 'purchase-by-item-monthly':
+        return <MonthlyCrossTableView data={d as MonthlyCrossData} entityKey="item" />
     }
+
+    // Generic table for all remaining `rows`-based reports
+    const rows = (d.rows as Record<string, unknown>[]) ?? []
+    const grandRow: Record<string, unknown> = {}
+
+    if ('grand_total' in d)         grandRow.total    = d.grand_total as unknown
+    if ('grand_invoiced' in d)      grandRow.total_invoiced  = d.grand_invoiced as unknown
+    if ('grand_outstanding' in d)   grandRow.outstanding     = d.grand_outstanding as unknown
+    if ('total_taxable' in d)       grandRow.taxable_amount  = d.total_taxable as unknown
+    if ('total_vat' in d)           grandRow.vat_amount      = d.total_vat as unknown
+    if ('total_amount' in d)        grandRow.total           = d.total_amount as unknown
+    if ('total_tds' in d)           grandRow.tds_amount      = d.total_tds as unknown
+
+    const hasTotalRow = Object.keys(grandRow).length > 0
+
+    const summaryRows: { label: string; value: unknown }[] = []
+    if ('invoice_count' in d || 'count' in d)
+      summaryRows.push({ label: 'Count', value: String((d.invoice_count ?? d.count ?? 0)) })
+    if ('grand_total' in d && typeof d.grand_total === 'number')
+      summaryRows.push({ label: 'Grand Total', value: d.grand_total })
+    if ('grand_invoiced' in d)
+      summaryRows.push({ label: 'Total Invoiced', value: d.grand_invoiced })
+    if ('grand_outstanding' in d)
+      summaryRows.push({ label: 'Outstanding', value: d.grand_outstanding })
+    if ('total_taxable' in d)
+      summaryRows.push({ label: 'Total Taxable', value: d.total_taxable })
+    if ('total_vat' in d)
+      summaryRows.push({ label: 'Total VAT', value: d.total_vat })
+
+    return (
+      <GenericTableView
+        rows={rows}
+        totalRow={hasTotalRow ? grandRow : undefined}
+        summary={summaryRows.length ? summaryRows : undefined}
+      />
+    )
   }
 
-  const periodLabel = isAsOf
-    ? `As of ${fmt(dateTo)}`
-    : `${fmt(dateFrom)} – ${fmt(dateTo)}`
-
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
 
-      {/* Report type picker */}
-      <div className="grid grid-cols-7 gap-2">
-        {REPORTS.map(r => {
+      {/* Category tabs */}
+      <div className="flex flex-wrap gap-2">
+        {REPORT_CATEGORIES.map(cat => {
+          const Icon = cat.icon
+          const isActive = category === cat.id
+          return (
+            <button
+              key={cat.id}
+              onClick={() => handleCategoryChange(cat.id)}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold border transition-colors ${
+                isActive
+                  ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
+                  : 'bg-white border-gray-200 text-gray-500 hover:border-indigo-300 hover:text-indigo-600'
+              }`}
+            >
+              <Icon size={15} />{cat.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Report grid for active category */}
+      <div className={`grid gap-2 ${catReports.length <= 4 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-6'}`}>
+        {catReports.map(r => {
           const Icon = r.icon
           return (
             <button
@@ -5041,50 +5545,81 @@ ${el.innerHTML}
               onClick={() => setReportKey(r.key)}
               className={`flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl border text-center transition-colors ${
                 reportKey === r.key
-                  ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm'
-                  : 'bg-white border-gray-200 text-gray-500 hover:border-indigo-300 hover:text-indigo-600'
+                  ? 'bg-indigo-50 border-indigo-400 text-indigo-700 shadow-sm font-semibold'
+                  : 'bg-white border-gray-200 text-gray-500 hover:border-indigo-200 hover:text-indigo-600'
               }`}
             >
               <Icon size={18} />
-              <span className="text-xs font-medium leading-tight">{r.label}</span>
+              <span className="text-xs leading-tight">{r.label}</span>
             </button>
           )
         })}
       </div>
 
-      {/* Date controls */}
+      {/* Param controls */}
       <div className="flex flex-wrap items-end gap-4 bg-white border border-gray-200 rounded-xl px-5 py-4">
-        {!isAsOf && (
+        {report.dateMode !== 'none' && !isAsOf && (
           <div>
             <label className="block text-xs text-gray-500 mb-1 font-medium">
-              {isVat ? 'Period Start' : 'Date From'}
+              {report.dateMode === 'vat' ? 'Period Start' : 'Date From'}
             </label>
             <NepaliDatePicker value={dateFrom} onChange={v => setDateFrom(v)} />
           </div>
         )}
-        <div>
-          <label className="block text-xs text-gray-500 mb-1 font-medium">
-            {isAsOf ? 'As Of Date' : isVat ? 'Period End' : 'Date To'}
-          </label>
-          <NepaliDatePicker value={dateTo} onChange={v => setDateTo(v)} />
-        </div>
+        {report.dateMode !== 'none' && (
+          <div>
+            <label className="block text-xs text-gray-500 mb-1 font-medium">
+              {isAsOf ? 'As Of Date' : report.dateMode === 'vat' ? 'Period End' : 'Date To'}
+            </label>
+            <NepaliDatePicker value={dateTo} onChange={v => setDateTo(v)} />
+          </div>
+        )}
+
+        {/* Customer dropdown (customer-statement only) */}
+        {report.needsCustomer && (
+          <div>
+            <label className="block text-xs text-gray-500 mb-1 font-medium">Customer</label>
+            <select
+              value={customerId ?? ''}
+              onChange={e => setCustomerId(e.target.value ? parseInt(e.target.value) : null)}
+              className="h-9 px-3 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 min-w-[200px]"
+            >
+              <option value="">— Select customer —</option>
+              {(customersList ?? []).map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Supplier dropdown (supplier-statement only) */}
+        {report.needsSupplier && (
+          <div>
+            <label className="block text-xs text-gray-500 mb-1 font-medium">Supplier</label>
+            <select
+              value={supplierId ?? ''}
+              onChange={e => setSupplierId(e.target.value ? parseInt(e.target.value) : null)}
+              className="h-9 px-3 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 min-w-[200px]"
+            >
+              <option value="">— Select supplier —</option>
+              {(suppliersList ?? []).map(s => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {/* Fiscal year quick selects */}
-        {!isAsOf && (
+        {report.dateMode === 'range' && (
           <div className="flex gap-2 pb-0.5">
             <button
-              onClick={() => {
-                const p = fiscalYearAdParams(fy)
-                setDateFrom(p.date_from)
-                setDateTo(today)
-              }}
+              onClick={() => { const p = fiscalYearAdParams(fy); setDateFrom(p.date_from); setDateTo(today) }}
               className="px-3 py-2 text-xs font-semibold border border-indigo-300 text-indigo-700 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition"
-              title={`FY ${fy.label} (Shrawan 1 to today)`}
             >
               This FY
             </button>
             <button
               onClick={() => {
-                // Go 1 day before current FY start = last day of previous FY
                 const { startAd } = fiscalYearDateRange(fy)
                 const prevFyLastDay = new Date(startAd.getTime() - 86_400_000)
                 const lastFy = fiscalYearOf(prevFyLastDay)
@@ -5093,14 +5628,16 @@ ${el.innerHTML}
                 setDateTo(p.date_to)
               }}
               className="px-3 py-2 text-xs font-semibold border border-gray-300 text-gray-600 bg-gray-50 rounded-lg hover:bg-gray-100 transition"
-              title="Previous completed fiscal year"
             >
               Last FY
             </button>
           </div>
         )}
-        <button onClick={() => refetch()}
-          className="px-5 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2"
+
+        <button
+          onClick={() => refetch()}
+          disabled={isLoading}
+          className="px-5 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2 disabled:opacity-60"
         >
           <BarChart2 size={15} /> Run Report
         </button>
@@ -5122,26 +5659,19 @@ ${el.innerHTML}
 
       {reportData && !isLoading && (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-          {/* Report header */}
           <div className="flex items-start justify-between px-6 py-5 border-b border-gray-100 bg-gray-50">
             <div className="text-center flex-1">
-              <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold mb-0.5">Statement</p>
+              <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold mb-0.5">Report</p>
               <h2 className="text-lg font-extrabold text-gray-900 uppercase tracking-wide">{report.label}</h2>
               <RptDateBadge label={periodLabel} />
             </div>
             <div className="flex items-center gap-2 shrink-0 ml-4 mt-1">
-              <button
-                onClick={exportCSV}
-                title="Export to CSV (open in Excel)"
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
-              >
+              <button onClick={exportCSV} title="Export to CSV"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors">
                 <FileSpreadsheet size={13} /> CSV
               </button>
-              <button
-                onClick={exportPDF}
-                title="Print / Save as PDF"
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
-              >
+              <button onClick={exportPDF} title="Print / Save as PDF"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors">
                 <Printer size={13} /> PDF
               </button>
             </div>
@@ -5154,7 +5684,9 @@ ${el.innerHTML}
         <div className="bg-gray-50 border border-dashed border-gray-200 rounded-xl py-14 text-center">
           <BarChart2 size={32} className="mx-auto text-gray-300 mb-3" />
           <p className="text-sm text-gray-500 font-medium">Select a report above and click <strong>Run Report</strong></p>
-          <p className="text-xs text-gray-400 mt-1">Profit & Loss · Balance Sheet · Trial Balance · Aged · VAT · Cash Flow</p>
+          <p className="text-xs text-gray-400 mt-1">
+            {catReports.map(r => r.label).join(' · ')}
+          </p>
         </div>
       )}
     </div>
@@ -7714,7 +8246,8 @@ function QuickPaymentTab() {
   })
   const { data: openBills } = useQuery<ApiPage<Bill>>({
     queryKey: ['bills', 'unpaid-quick'],
-    queryFn: () => apiClient.get(`${ACCOUNTING.BILLS}?status=approved&page_size=200`).then(r => toPage<Bill>(r.data)),
+    // No status filter — fetch all bills, then client-side exclude paid/void so both draft and approved show
+    queryFn: () => apiClient.get(`${ACCOUNTING.BILLS}?page_size=200`).then(r => toPage<Bill>(r.data)),
   })
   const { data: recentPayments } = useQuery<ApiPage<Payment>>({
     queryKey: ['payments', 'outgoing-recent'],
@@ -7781,7 +8314,7 @@ function QuickPaymentTab() {
           <select value={billId} onChange={e => setBillId(e.target.value)}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
             <option value="">— No bill —</option>
-            {openBills?.results?.map(b => <option key={b.id} value={b.id}>{b.bill_number} — {b.supplier_name} ({npr(b.amount_due)} due)</option>)}
+            {(openBills?.results ?? []).filter(b => b.status !== 'paid' && b.status !== 'void').map(b => <option key={b.id} value={b.id}>{b.bill_number} — {b.supplier_name} ({npr(b.amount_due)} due)</option>)}
           </select>
         </div>
         <div>
@@ -7814,7 +8347,7 @@ function QuickPaymentTab() {
                 <tr><td colSpan={4} className="py-8 text-center text-gray-400">No recent payments</td></tr>
               ) : recentPayments?.results?.map(p => (
                 <tr key={p.id} className="hover:bg-gray-50/60">
-                  <td className="px-3 py-2.5 text-gray-500"><DateDisplay value={p.date} /></td>
+                  <td className="px-3 py-2.5 text-gray-500"><DateDisplay adDate={p.date} /></td>
                   <td className="px-3 py-2.5 capitalize text-gray-500">{(p.method ?? '').replace('_', ' ')}</td>
                   <td className="px-3 py-2.5 text-gray-400">{p.bill_number || '—'}</td>
                   <td className="px-3 py-2.5 font-semibold text-red-600 tabular-nums">{npr(p.amount)}</td>
@@ -7847,7 +8380,8 @@ function QuickReceiptTab() {
   })
   const { data: openInvoices } = useQuery<ApiPage<Invoice>>({
     queryKey: ['invoices', 'open-quick'],
-    queryFn: () => apiClient.get(`${ACCOUNTING.INVOICES}?status=sent&page_size=200`).then(r => toPage<Invoice>(r.data)),
+    // status=issued: the only open/unpaid state in the Invoice lifecycle (draft|issued|paid|void)
+    queryFn: () => apiClient.get(`${ACCOUNTING.INVOICES}?status=issued&page_size=200`).then(r => toPage<Invoice>(r.data)),
   })
   const { data: recentPayments } = useQuery<ApiPage<Payment>>({
     queryKey: ['payments', 'incoming-recent'],
@@ -7914,7 +8448,7 @@ function QuickReceiptTab() {
           <select value={invoiceId} onChange={e => setInvoiceId(e.target.value)}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
             <option value="">— No invoice —</option>
-            {openInvoices?.results?.map(inv => <option key={inv.id} value={inv.id}>{inv.invoice_number} — {inv.customer_name} ({npr(inv.amount_due)} due)</option>)}
+            {(openInvoices?.results ?? []).filter(inv => Number(inv.amount_due) > 0).map(inv => <option key={inv.id} value={inv.id}>{inv.invoice_number} — {inv.customer_name} ({npr(inv.amount_due)} due)</option>)}
           </select>
         </div>
         <div>
@@ -7947,7 +8481,7 @@ function QuickReceiptTab() {
                 <tr><td colSpan={4} className="py-8 text-center text-gray-400">No recent receipts</td></tr>
               ) : recentPayments?.results?.map(p => (
                 <tr key={p.id} className="hover:bg-gray-50/60">
-                  <td className="px-3 py-2.5 text-gray-500"><DateDisplay value={p.date} /></td>
+                  <td className="px-3 py-2.5 text-gray-500"><DateDisplay adDate={p.date} /></td>
                   <td className="px-3 py-2.5 capitalize text-gray-500">{(p.method ?? '').replace('_', ' ')}</td>
                   <td className="px-3 py-2.5 text-gray-400">{p.invoice_number || '—'}</td>
                   <td className="px-3 py-2.5 font-semibold text-green-600 tabular-nums">{npr(p.amount)}</td>
@@ -7971,7 +8505,6 @@ function CashTransfersTab() {
   const [toAcc, setToAcc]       = useState('')
   const [amount, setAmount]     = useState('')
   const [reference, setReference] = useState('')
-  const [recentJournals, setRecentJournals] = useState<JournalEntry[]>([])
 
   const { data: bankAccounts = [], isLoading: loadingBanks } = useQuery<BankAccount[]>({
     queryKey: ['bank-accounts'],
@@ -8077,10 +8610,14 @@ function CashTransfersTab() {
                 <tr><td colSpan={4} className="py-8 text-center text-gray-400">No transfers yet</td></tr>
               ) : journalPage?.results?.map(j => (
                 <tr key={j.id} className="hover:bg-gray-50/60">
-                  <td className="px-3 py-2.5 text-gray-500"><DateDisplay value={j.date} /></td>
+                  <td className="px-3 py-2.5 text-gray-500"><DateDisplay adDate={j.date} /></td>
                   <td className="px-3 py-2.5 text-gray-600 max-w-[180px] truncate">{j.description}</td>
                   <td className="px-3 py-2.5 text-gray-400 font-mono">{j.entry_number}</td>
-                  <td className="px-3 py-2.5"><Badge status={j.status} /></td>
+                  <td className="px-3 py-2.5">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${j.is_posted ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                      {j.is_posted ? 'Posted' : 'Draft'}
+                    </span>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -8460,22 +8997,128 @@ function SuppliersTab() {
 // ─── Cheque Register Tab ────────────────────────────────────────────────────
 
 function ChequeRegisterTab() {
+  const qc = useQueryClient()
   const { fyYear } = useFY()
+  const today = new Date().toISOString().slice(0, 10)
+
+  type ChequeView = 'register' | 'issue' | 'receive'
+  const [view, setView] = useState<ChequeView>('register')
+  const [filterType, setFilterType] = useState<'all' | 'incoming' | 'outgoing'>('all')
+  const [updateTarget, setUpdateTarget] = useState<Payment | null>(null)
+  const [newChequeStatus, setNewChequeStatus] = useState('')
+
+  // ── Issue Cheque form state ───────────────────────────────────────────────
+  const [issDate,     setIssDate]     = useState(today)
+  const [issBank,     setIssBank]     = useState('')
+  const [issPayee,    setIssPayee]    = useState('')
+  const [issChqNum,   setIssChqNum]   = useState('')
+  const [issAmount,   setIssAmount]   = useState('')
+  const [issNotes,    setIssNotes]    = useState('')
+
+  // ── Receive Cheque form state ─────────────────────────────────────────────
+  const [rcvDate,     setRcvDate]     = useState(today)
+  const [rcvBank,     setRcvBank]     = useState('')
+  const [rcvPayer,    setRcvPayer]    = useState('')
+  const [rcvChqNum,   setRcvChqNum]   = useState('')
+  const [rcvAmount,   setRcvAmount]   = useState('')
+  const [rcvNotes,    setRcvNotes]    = useState('')
+
+  const { data: bankAccounts = [] } = useQuery<BankAccount[]>({
+    queryKey: ['bank-accounts'],
+    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS).then(r => r.data?.results ?? r.data),
+  })
+
   const { data, isLoading } = useQuery<ApiPage<Payment>>({
     queryKey: ['payments', 'cheque', fyYear],
     queryFn: () => apiClient.get(addFyParam(`${ACCOUNTING.PAYMENTS}?method=cheque&page_size=200`, fyYear)).then(r => toPage<Payment>(r.data)),
   })
-  const payments = data?.results ?? []
-  const totalIn  = payments.filter(p => p.type === 'incoming').reduce((a, p) => a + Number(p.amount), 0)
-  const totalOut = payments.filter(p => p.type === 'outgoing').reduce((a, p) => a + Number(p.amount), 0)
+
+  const allCheques  = data?.results ?? []
+  const payments    = filterType === 'all' ? allCheques : allCheques.filter(p => p.type === filterType)
+  const totalIn     = allCheques.filter(p => p.type === 'incoming').reduce((a, p) => a + Number(p.amount), 0)
+  const totalOut    = allCheques.filter(p => p.type === 'outgoing').reduce((a, p) => a + Number(p.amount), 0)
+
+  const resetIssue   = () => { setIssDate(today); setIssBank(''); setIssPayee(''); setIssChqNum(''); setIssAmount(''); setIssNotes('') }
+  const resetReceive = () => { setRcvDate(today); setRcvBank(''); setRcvPayer(''); setRcvChqNum(''); setRcvAmount(''); setRcvNotes('') }
+
+  const issueMut = useMutation({
+    mutationFn: () => apiClient.post(ACCOUNTING.PAYMENTS, {
+      type: 'outgoing',
+      method: 'cheque',
+      date: issDate,
+      bank_account: issBank || null,
+      party_name: issPayee,
+      reference: issChqNum,
+      amount: issAmount,
+      notes: issNotes,
+      cheque_status: 'issued',
+    }),
+    onSuccess: () => {
+      toast.success('Cheque issued and journal entry created')
+      resetIssue(); setView('register')
+      qc.invalidateQueries({ queryKey: ['payments', 'cheque'] })
+    },
+    onError: (e: { message?: string }) => toast.error(e?.message ?? 'Failed to issue cheque'),
+  })
+
+  const receiveMut = useMutation({
+    mutationFn: () => apiClient.post(ACCOUNTING.PAYMENTS, {
+      type: 'incoming',
+      method: 'cheque',
+      date: rcvDate,
+      bank_account: rcvBank || null,
+      party_name: rcvPayer,
+      reference: rcvChqNum,
+      amount: rcvAmount,
+      notes: rcvNotes,
+      cheque_status: 'issued',
+    }),
+    onSuccess: () => {
+      toast.success('Cheque received and journal entry created')
+      resetReceive(); setView('register')
+      qc.invalidateQueries({ queryKey: ['payments', 'cheque'] })
+    },
+    onError: (e: { message?: string }) => toast.error(e?.message ?? 'Failed to record cheque'),
+  })
+
+  const statusMut = useMutation({
+    mutationFn: (p: Payment) => apiClient.patch(ACCOUNTING.PAYMENT_CHEQUE_STATUS(p.id), { cheque_status: newChequeStatus }),
+    onSuccess: () => {
+      toast.success('Cheque status updated')
+      setUpdateTarget(null); setNewChequeStatus('')
+      qc.invalidateQueries({ queryKey: ['payments', 'cheque'] })
+    },
+    onError: (e: { message?: string }) => toast.error(e?.message ?? 'Failed to update status'),
+  })
+
+  const CHEQUE_STATUS_COLORS: Record<string, string> = {
+    issued:    'bg-amber-100 text-amber-700',
+    presented: 'bg-blue-100 text-blue-700',
+    cleared:   'bg-green-100 text-green-700',
+    bounced:   'bg-red-100 text-red-700',
+  }
+
+  const canIssue   = issDate && Number(issAmount) > 0 && issPayee
+  const canReceive = rcvDate && Number(rcvAmount) > 0 && rcvPayer
+
+  const tabBtn = (v: ChequeView, label: string) => (
+    <button onClick={() => setView(v)}
+      className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${view === v ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+      {label}
+    </button>
+  )
+
+  const inputCls2 = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500'
+  const selectCls2 = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500'
 
   return (
     <div className="space-y-4">
+      {/* Summary cards */}
       <div className="grid grid-cols-3 gap-4">
         {[
-          { label: 'Total Cheques', value: payments.length,  icon: FileText,   bg: 'bg-indigo-50', color: 'text-indigo-600' },
-          { label: 'Receipts',      value: npr(totalIn),      icon: TrendingUp,  bg: 'bg-green-50',  color: 'text-green-600'  },
-          { label: 'Payments',      value: npr(totalOut),     icon: TrendingDown, bg: 'bg-red-50',   color: 'text-red-600'    },
+          { label: 'Total Cheques', value: allCheques.length, icon: FileText,    bg: 'bg-indigo-50', color: 'text-indigo-600' },
+          { label: 'Received',      value: npr(totalIn),       icon: TrendingUp,  bg: 'bg-green-50',  color: 'text-green-600'  },
+          { label: 'Issued',        value: npr(totalOut),      icon: TrendingDown, bg: 'bg-red-50',   color: 'text-red-600'    },
         ].map(c => (
           <div key={c.label} className={`${c.bg} rounded-xl p-4 flex items-center gap-3 border border-white`}>
             <c.icon size={20} className={c.color} />
@@ -8483,41 +9126,218 @@ function ChequeRegisterTab() {
           </div>
         ))}
       </div>
-      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-        <div className="px-5 py-3 border-b border-gray-100">
-          <h3 className="font-semibold text-sm text-gray-800 flex items-center gap-2">
-            <FileText size={14} className="text-indigo-500" /> Cheque Register
-          </h3>
-        </div>
-        {isLoading ? <div className="py-12"><Spinner /></div> : (
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-100">
-              <tr>{['Chq/Ref #', 'Date', 'Direction', 'Invoice/Bill', 'Amount', 'Bank', 'Notes'].map(h => (
-                <th key={h} className="px-4 py-2.5 text-left text-xs text-gray-500 font-medium">{h}</th>
-              ))}</tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {payments.length === 0 ? (
-                <tr><td colSpan={7} className="py-12 text-center text-sm text-gray-400">No cheque payments found.</td></tr>
-              ) : payments.map(p => (
-                <tr key={p.id} className="hover:bg-gray-50/60">
-                  <td className="px-4 py-3 font-mono text-xs text-indigo-600">{p.reference || p.payment_number}</td>
-                  <td className="px-4 py-3 text-gray-600"><DateDisplay value={p.date} /></td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${p.type === 'incoming' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-                      {p.type === 'incoming' ? 'Receipt' : 'Payment'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-gray-500">{p.invoice_number || p.bill_number || '—'}</td>
-                  <td className="px-4 py-3 font-medium text-gray-800 tabular-nums">{npr(p.amount)}</td>
-                  <td className="px-4 py-3 text-xs text-gray-500">{p.bank_account_name || '—'}</td>
-                  <td className="px-4 py-3 text-xs text-gray-400 truncate max-w-xs">{p.notes || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+
+      {/* Sub-tab switcher */}
+      <div className="flex items-center gap-2">
+        {tabBtn('register', 'Cheque Register')}
+        {tabBtn('issue',    'Issue Cheque')}
+        {tabBtn('receive',  'Receive Cheque')}
       </div>
+
+      {/* ── Issue Cheque form ────────────────────────────────────────────── */}
+      {view === 'issue' && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 max-w-lg space-y-4">
+          <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+            <TrendingDown size={15} className="text-red-500" /> Issue Cheque (Outgoing Payment)
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Cheque Date *</label>
+              <input type="date" value={issDate} onChange={e => setIssDate(e.target.value)} className={inputCls2} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Bank Account</label>
+              <select value={issBank} onChange={e => setIssBank(e.target.value)} className={selectCls2}>
+                <option value="">Select bank…</option>
+                {bankAccounts.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Payee Name *</label>
+            <input value={issPayee} onChange={e => setIssPayee(e.target.value)} placeholder="Who the cheque is written to"
+              className={inputCls2} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Cheque Number</label>
+              <input value={issChqNum} onChange={e => setIssChqNum(e.target.value)} placeholder="e.g. 002341"
+                className={inputCls2} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Amount *</label>
+              <input type="number" min={0} step="0.01" value={issAmount} onChange={e => setIssAmount(e.target.value)}
+                placeholder="0.00" className={inputCls2} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Notes / Purpose</label>
+            <input value={issNotes} onChange={e => setIssNotes(e.target.value)} placeholder="What this payment is for"
+              className={inputCls2} />
+          </div>
+          <p className="text-xs text-gray-400">A journal entry (Dr: AP/Expense, Cr: Bank) will be created automatically.</p>
+          <div className="flex gap-2">
+            <button onClick={() => issueMut.mutate()} disabled={!canIssue || issueMut.isPending}
+              className="flex-1 py-2.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+              {issueMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <TrendingDown size={14} />} Issue Cheque
+            </button>
+            <button onClick={() => { resetIssue(); setView('register') }}
+              className="px-4 py-2.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Receive Cheque form ──────────────────────────────────────────── */}
+      {view === 'receive' && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 max-w-lg space-y-4">
+          <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+            <TrendingUp size={15} className="text-green-500" /> Receive Cheque (Incoming Payment)
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Cheque Date *</label>
+              <input type="date" value={rcvDate} onChange={e => setRcvDate(e.target.value)} className={inputCls2} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Deposit to Bank</label>
+              <select value={rcvBank} onChange={e => setRcvBank(e.target.value)} className={selectCls2}>
+                <option value="">Select bank…</option>
+                {bankAccounts.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Payer / Drawer Name *</label>
+            <input value={rcvPayer} onChange={e => setRcvPayer(e.target.value)} placeholder="Who issued the cheque"
+              className={inputCls2} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Cheque Number</label>
+              <input value={rcvChqNum} onChange={e => setRcvChqNum(e.target.value)} placeholder="e.g. 100234"
+                className={inputCls2} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Amount *</label>
+              <input type="number" min={0} step="0.01" value={rcvAmount} onChange={e => setRcvAmount(e.target.value)}
+                placeholder="0.00" className={inputCls2} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Notes / Description</label>
+            <input value={rcvNotes} onChange={e => setRcvNotes(e.target.value)} placeholder="e.g. Payment for Invoice INV-00123"
+              className={inputCls2} />
+          </div>
+          <p className="text-xs text-gray-400">A journal entry (Dr: Bank, Cr: AR/Income) will be created automatically.</p>
+          <div className="flex gap-2">
+            <button onClick={() => receiveMut.mutate()} disabled={!canReceive || receiveMut.isPending}
+              className="flex-1 py-2.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+              {receiveMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <TrendingUp size={14} />} Record Receipt
+            </button>
+            <button onClick={() => { resetReceive(); setView('register') }}
+              className="px-4 py-2.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Register table ───────────────────────────────────────────────── */}
+      {view === 'register' && (
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+          <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+            <h3 className="font-semibold text-sm text-gray-800 flex items-center gap-2">
+              <FileText size={14} className="text-indigo-500" /> Cheque Register
+            </h3>
+            <div className="flex items-center gap-2">
+              {(['all', 'incoming', 'outgoing'] as const).map(f => (
+                <button key={f} onClick={() => setFilterType(f)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${filterType === f ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                  {f === 'all' ? 'All' : f === 'incoming' ? 'Received' : 'Issued'}
+                </button>
+              ))}
+            </div>
+          </div>
+          {isLoading ? <div className="py-12"><Spinner /></div> : (
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>{['Chq No.', 'Date', 'Party', 'Direction', 'Amount', 'Bank', 'Status', ''].map(h => (
+                  <th key={h} className="px-4 py-2.5 text-left text-xs text-gray-500 font-medium">{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {payments.length === 0 ? (
+                  <tr><td colSpan={8} className="py-12 text-center text-sm text-gray-400">No cheques found for this period.</td></tr>
+                ) : payments.map(p => (
+                  <tr key={p.id} className="hover:bg-gray-50/60">
+                    <td className="px-4 py-3 font-mono text-xs text-indigo-600">{p.reference || p.payment_number}</td>
+                    <td className="px-4 py-3 text-gray-600"><DateDisplay adDate={p.date} /></td>
+                    <td className="px-4 py-3 text-xs font-medium text-gray-700 max-w-[140px] truncate" title={p.party_name || p.notes || '—'}>
+                      {p.party_name || <span className="text-gray-400">—</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${p.type === 'incoming' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                        {p.type === 'incoming' ? 'Received' : 'Issued'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 font-medium text-gray-800 tabular-nums">{npr(p.amount)}</td>
+                    <td className="px-4 py-3 text-xs text-gray-500">{p.bank_account_name || '—'}</td>
+                    <td className="px-4 py-3">
+                      {p.cheque_status ? (
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${CHEQUE_STATUS_COLORS[p.cheque_status] ?? 'bg-gray-100 text-gray-500'}`}>
+                          {p.cheque_status.charAt(0).toUpperCase() + p.cheque_status.slice(1)}
+                        </span>
+                      ) : <span className="text-gray-300 text-xs">—</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      {p.method === 'cheque' && (
+                        <button onClick={() => { setUpdateTarget(p); setNewChequeStatus(p.cheque_status || 'issued') }}
+                          className="text-xs text-indigo-600 hover:text-indigo-800 underline whitespace-nowrap">
+                          Update
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* ── Update cheque status modal ───────────────────────────────────── */}
+      {updateTarget && (
+        <Modal title="Update Cheque Status" onClose={() => { setUpdateTarget(null); setNewChequeStatus('') }}>
+          <div className="space-y-4">
+            <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-600 space-y-1">
+              <p><span className="font-medium">Cheque No:</span> {updateTarget.reference || updateTarget.payment_number}</p>
+              <p><span className="font-medium">Party:</span> {updateTarget.party_name || '—'}</p>
+              <p><span className="font-medium">Amount:</span> {npr(updateTarget.amount)}</p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">New Status</label>
+              <select value={newChequeStatus} onChange={e => setNewChequeStatus(e.target.value)} className={selectCls2}>
+                <option value="issued">Issued</option>
+                <option value="presented">Presented to Bank</option>
+                <option value="cleared">Cleared</option>
+                <option value="bounced">Bounced</option>
+              </select>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button onClick={() => statusMut.mutate(updateTarget)} disabled={statusMut.isPending}
+                className="flex-1 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2 transition-colors">
+                {statusMut.isPending ? <Loader2 size={14} className="animate-spin" /> : null} Save Status
+              </button>
+              <button onClick={() => { setUpdateTarget(null); setNewChequeStatus('') }}
+                className="px-4 py-2.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }
@@ -8653,7 +9473,7 @@ export default function AccountingPage() {
   const { fyYear, setFyYear } = useFyStore()
 
   // Tabs with their own date-range controls don't need the global FY bar
-  const HIDE_FY_BAR = new Set(['reports', 'ledger', 'day-book', 'accounts', 'tds', 'bank-reconciliation', 'recurring-journals'])
+  const HIDE_FY_BAR = new Set(['ledger', 'day-book', 'accounts', 'tds', 'bank-reconciliation', 'recurring-journals'])
   const showFyBar = !HIDE_FY_BAR.has(activeTab)
 
   function renderTab() {
@@ -8668,7 +9488,6 @@ export default function AccountingPage() {
       case 'accounts':              return <AccountsTab />
       case 'banks':                 return <BanksTab />
       case 'payslips':              return <PayslipsTab />
-      case 'reports':               return <ReportsTab />
       case 'quotations':            return <QuotationsTab />
       case 'debit-notes':           return <DebitNotesTab />
       case 'tds':                   return <TDSTab />

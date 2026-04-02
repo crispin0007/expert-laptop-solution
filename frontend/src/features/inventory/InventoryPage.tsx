@@ -1011,6 +1011,13 @@ function ProductsTab({
         </select>
         {canManage && (
           <div className="ml-auto flex gap-2">
+            <a
+              href="/samples/products_import_sample.csv"
+              download="products_import_sample.csv"
+              className="flex items-center gap-1.5 px-4 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 transition"
+            >
+              <Download size={14} /> Sample CSV
+            </a>
             <label className="flex items-center gap-1.5 px-4 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 transition cursor-pointer">
               <Upload size={14} /> Import CSV
               <input type="file" accept=".csv" className="hidden" onChange={handleCsvImport} />
@@ -2654,27 +2661,27 @@ function ReportsTab() {
 
   const { data: valuation, isLoading: loadingVal } = useQuery({
     queryKey: ['report-valuation'],
-    queryFn: () => apiClient.get(INVENTORY.REPORT_VALUATION).then(r => r.data),
+    queryFn: () => apiClient.get(INVENTORY.REPORT_VALUATION).then(r => r.data?.data ?? r.data),
     enabled: activeReport === 'valuation',
   })
   const { data: deadStock, isLoading: loadingDead } = useQuery({
     queryKey: ['report-dead-stock', deadStockDays],
-    queryFn: () => apiClient.get(`${INVENTORY.REPORT_DEAD_STOCK}?days=${deadStockDays}`).then(r => r.data),
+    queryFn: () => apiClient.get(`${INVENTORY.REPORT_DEAD_STOCK}?days=${deadStockDays}`).then(r => r.data?.data ?? r.data),
     enabled: activeReport === 'dead-stock',
   })
   const { data: abc, isLoading: loadingAbc } = useQuery({
     queryKey: ['report-abc'],
-    queryFn: () => apiClient.get(INVENTORY.REPORT_ABC).then(r => r.data),
+    queryFn: () => apiClient.get(INVENTORY.REPORT_ABC).then(r => r.data?.data ?? r.data),
     enabled: activeReport === 'abc',
   })
   const { data: forecast, isLoading: loadingForecast } = useQuery({
     queryKey: ['report-forecast', forecastDays],
-    queryFn: () => apiClient.get(`${INVENTORY.REPORT_FORECAST}?days=${forecastDays}`).then(r => r.data),
+    queryFn: () => apiClient.get(`${INVENTORY.REPORT_FORECAST}?days=${forecastDays}`).then(r => r.data?.data ?? r.data),
     enabled: activeReport === 'forecast',
   })
   const { data: topSelling, isLoading: loadingTopSelling } = useQuery({
     queryKey: ['report-top-selling', topSellingDays],
-    queryFn: () => apiClient.get(`${INVENTORY.REPORT_TOP_SELLING}?days=${topSellingDays}`).then(r => r.data),
+    queryFn: () => apiClient.get(`${INVENTORY.REPORT_TOP_SELLING}?days=${topSellingDays}`).then(r => r.data?.data ?? r.data),
     enabled: activeReport === 'top-selling',
   })
 
@@ -4019,7 +4026,7 @@ function WarrantyTab({ products, canManage }: { products: Product[]; canManage: 
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-type Tab = 'products' | 'movements' | 'low-stock' | 'categories' | 'uom' | 'variants' | 'suppliers' | 'purchase-orders' | 'returns' | 'reports' | 'supplier-catalog' | 'stock-counts' | 'bundles' | 'supplier-payments' | 'warranty'
+type Tab = 'products' | 'movements' | 'low-stock' | 'categories' | 'uom' | 'variants' | 'suppliers' | 'purchase-orders' | 'returns' | 'supplier-catalog' | 'stock-counts' | 'bundles' | 'supplier-payments' | 'warranty'
 
 export default function InventoryPage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -4063,7 +4070,6 @@ export default function InventoryPage() {
     { id: 'bundles',            label: 'Bundles',            icon: <Package       size={15} /> },
     { id: 'supplier-payments',  label: 'Supplier Payments',  icon: <DollarSign    size={15} /> },
     { id: 'warranty',           label: 'Warranty',           icon: <ShieldCheck   size={15} /> },
-    { id: 'reports',          label: 'Reports',            icon: <FileBarChart2 size={15} /> },
   ]
 
   return (
@@ -4107,7 +4113,6 @@ export default function InventoryPage() {
       {activeTab === 'bundles'            && <BundlesTab          products={products}     canManage={canManage} />}
       {activeTab === 'supplier-payments'  && <SupplierPaymentsTab                         canManage={canManage} />}
       {activeTab === 'warranty'          && <WarrantyTab         products={products}     canManage={canManage} />}
-      {activeTab === 'reports'           && <ReportsTab />}
     </div>
   )
 }
