@@ -6738,8 +6738,12 @@ function RecurringJournalsTab() {
 
 function LedgerTab() {
   const { data: accounts } = useQuery<ApiPage<Account>>({
-    queryKey: ['accounts'],
-    queryFn: () => apiClient.get(ACCOUNTING.ACCOUNTS + '?page_size=500').then(r => toPage<Account>(r.data)),
+    queryKey: ['accounts-ledger-select'],
+    queryFn: () => apiClient.get(ACCOUNTING.ACCOUNTS + '?no_page=1').then(r =>
+      Array.isArray(r.data) ? { results: r.data as Account[], count: r.data.length }
+        : Array.isArray(r.data?.data) ? { results: r.data.data as Account[], count: r.data.data.length }
+        : toPage<Account>(r.data)
+    ),
   })
 
   const [accountCode, setAccountCode] = useState('')
@@ -6812,7 +6816,7 @@ function LedgerTab() {
               <p className="text-xs text-gray-500">Closing: <strong className="text-gray-800">{npr(ledger.closing_balance)}</strong></p>
             </div>
           </div>
-          {ledger.transactions.length === 0 ? (
+          {(ledger.transactions ?? []).length === 0 ? (
             <div className="text-center py-10 text-gray-400 text-sm">No transactions in this period</div>
           ) : (
             <div className="overflow-x-auto">
@@ -6825,7 +6829,7 @@ function LedgerTab() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {ledger.transactions.map((row, i) => (
+                  {(ledger.transactions ?? []).map((row, i) => (
                     <tr key={i} className="hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmt(row.date)}</td>
                       <td className="px-4 py-3 font-mono text-xs text-gray-600">{row.entry_number}</td>
@@ -6894,14 +6898,14 @@ function DayBookTab() {
             </div>
           </div>
 
-          {dayBook.entries.length === 0 ? (
+          {(dayBook.entries ?? []).length === 0 ? (
             <div className="text-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-200">
               <CalendarDays size={36} className="mx-auto text-gray-300 mb-3" />
               <p className="text-sm text-gray-500 font-medium">No journal entries on {fmt(dayBook.date)}</p>
             </div>
           ) : (
             <div className="space-y-2">
-              {dayBook.entries.map(entry => (
+              {(dayBook.entries ?? []).map(entry => (
                 <div key={entry.entry_number} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                   <button className="w-full px-5 py-4 text-left flex items-center gap-4 hover:bg-gray-50 transition-colors"
                     onClick={() => setExpandedEntry(e => e === entry.entry_number ? null : entry.entry_number)}>
