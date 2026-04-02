@@ -85,5 +85,9 @@ uploads/
 *.crt
 firebase-credentials.json
 
+# Celery Beat runtime state
+celerybeat-schedule
+celerybeat.pid
+
 # Migration data scripts & scraped data
 data/
