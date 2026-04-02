@@ -56,4 +56,18 @@ urlpatterns = [
     path('draft/pages/<slug:slug>/', views.DraftPageDetailView.as_view(), name='cms-draft-page'),
     path('draft/blog/', views.DraftBlogListView.as_view(), name='cms-draft-blog-list'),
     path('draft/blog/<slug:slug>/', views.DraftBlogPostDetailView.as_view(), name='cms-draft-blog-detail'),
+
+    # ── Inquiries (private) ───────────────────────────────────────────────────
+    path('inquiries/', views.CMSInquiryListView.as_view(), name='cms-inquiry-list'),
+    path('inquiries/<int:pk>/', views.CMSInquiryDetailView.as_view(), name='cms-inquiry-detail'),
+    path('inquiries/<int:pk>/convert/', views.CMSInquiryConvertView.as_view(), name='cms-inquiry-convert'),
+
+    # ── Analytics (private) ───────────────────────────────────────────────────
+    path('analytics/', views.CMSAnalyticsView.as_view(), name='cms-analytics'),
+
+    # ── Public: contact form, page tracking, sitemap, robots ──────────────────
+    path('public/inquiry/', views.PublicInquirySubmitView.as_view(), name='cms-public-inquiry'),
+    path('public/track/', views.PublicRecordPageViewView.as_view(), name='cms-public-track'),
+    path('public/sitemap.xml', views.PublicSitemapView.as_view(), name='cms-public-sitemap'),
+    path('public/robots.txt', views.PublicRobotsView.as_view(), name='cms-public-robots'),
 ]

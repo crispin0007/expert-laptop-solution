@@ -175,10 +175,13 @@ def unpublish_page(page, user) -> 'CMSPage':
 
 
 def delete_page(page, user) -> None:
-    """Hard-delete a page (and cascade-deletes its blocks)."""
+    """Soft-delete a page."""
+    from django.utils import timezone
     page_id = page.pk
     site = page.site
-    page.delete()
+    page.is_deleted = True
+    page.deleted_at = timezone.now()
+    page.save(update_fields=['is_deleted', 'deleted_at'])
     _fire_event('cms.page.updated', site, user, extra={'page_id': page_id, 'action': 'deleted'})
 
 
@@ -1042,3 +1045,243 @@ def _block_blog_preview(c: dict) -> str:
                 'text-align:center;color:#9CA3AF;font-size:.75rem;margin:24px 0 0')
     wrap = _tag('div', header + grid + note, 'max-width:1120px;margin:0 auto')
     return _section(wrap, 'padding:64px 24px;background:#fff')
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Inquiries
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def submit_inquiry(site, data: dict, ip: str | None = None):
+    """
+    Record a contact form submission from the public website.
+    Fires a push notification to admin staff.
+    """
+    from .models import CMSInquiry
+    inquiry = CMSInquiry.objects.create(
+        tenant=site.tenant,
+        site=site,
+        name=data['name'],
+        email=data['email'],
+        phone=data.get('phone', ''),
+        subject=data.get('subject', ''),
+        message=data['message'],
+        source_page=data.get('source_page', ''),
+        submitter_ip=ip,
+    )
+    _notify_inquiry(site, inquiry)
+    logger.info('New inquiry #%s from %s for tenant %s', inquiry.pk, inquiry.email, site.tenant_id)
+    return inquiry
+
+
+def _notify_inquiry(site, inquiry) -> None:
+    """Push + in-app notification to admin users when a new inquiry arrives."""
+    try:
+        from accounts.models import TenantMembership
+        from notifications.service import NotificationService
+        admins = (
+            TenantMembership.objects
+            .filter(tenant=site.tenant, is_admin=True, is_active=True)
+            .select_related('user')
+        )
+        for membership in admins:
+            NotificationService.send(
+                tenant=site.tenant,
+                user=membership.user,
+                title='New Website Inquiry',
+                body=f"{inquiry.name} ({inquiry.email}): {(inquiry.subject or inquiry.message)[:80]}",
+                data={'type': 'cms', 'id': str(inquiry.pk), 'action': 'view'},
+            )
+    except Exception:
+        logger.exception('Failed to notify admins about inquiry %s', inquiry.pk)
+
+
+def list_inquiries(site, status: str | None = None):
+    """Return active (non-deleted) inquiries for a site, newest first."""
+    from .models import CMSInquiry
+    qs = CMSInquiry.objects.filter(site=site, is_deleted=False).order_by('-created_at')
+    if status:
+        qs = qs.filter(status=status)
+    return qs
+
+
+def mark_inquiry_read(inquiry):
+    """Transition an inquiry from NEW → READ."""
+    from .models import CMSInquiry
+    if inquiry.status == CMSInquiry.STATUS_NEW:
+        inquiry.status = CMSInquiry.STATUS_READ
+        inquiry.save(update_fields=['status'])
+    return inquiry
+
+
+def update_inquiry(inquiry, data: dict):
+    """Update status and/or reply_note on an inquiry."""
+    from .models import CMSInquiry
+    changed = []
+    if 'status' in data:
+        valid = [s[0] for s in CMSInquiry.STATUS_CHOICES]
+        if data['status'] not in valid:
+            raise ValueError(f"Invalid status '{data['status']}'")
+        inquiry.status = data['status']
+        changed.append('status')
+    if 'reply_note' in data:
+        inquiry.reply_note = data['reply_note']
+        changed.append('reply_note')
+    if changed:
+        inquiry.save(update_fields=changed)
+    return inquiry
+
+
+def convert_inquiry_to_customer(inquiry, user):
+    """
+    Create a Customer record from the inquiry and link it.
+    Returns (inquiry, customer).
+    """
+    from .models import CMSInquiry
+    from customers.models import Customer
+
+    if inquiry.converted_customer_id:
+        return inquiry, inquiry.converted_customer
+
+    customer = Customer.objects.create(
+        tenant=inquiry.tenant,
+        type=Customer.TYPE_INDIVIDUAL,
+        name=inquiry.name,
+        email=inquiry.email,
+        phone=inquiry.phone,
+        notes=f"Converted from website inquiry #{inquiry.pk}",
+    )
+    inquiry.status = CMSInquiry.STATUS_CONVERTED
+    inquiry.converted_customer = customer
+    inquiry.converted_at = timezone.now()
+    inquiry.save(update_fields=['status', 'converted_customer', 'converted_at'])
+    return inquiry, customer
+
+
+def delete_inquiry(inquiry) -> None:
+    """Soft-delete an inquiry."""
+    inquiry.soft_delete()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Analytics — page view tracking
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def record_page_view(site, page_slug: str) -> None:
+    """
+    Increment the view counter for (site, page_slug, today) atomically.
+    Uses get_or_create + F() to avoid race conditions.
+    Silently ignores errors — called from public views.
+    """
+    try:
+        from .models import CMSPageView
+        from django.db.models import F
+        from django.utils.timezone import now
+        today = now().date()
+        obj, created = CMSPageView.objects.get_or_create(
+            tenant=site.tenant,
+            site=site,
+            page_slug=page_slug,
+            view_date=today,
+            defaults={'view_count': 1},
+        )
+        if not created:
+            CMSPageView.objects.filter(pk=obj.pk).update(view_count=F('view_count') + 1)
+    except Exception:
+        logger.exception("Failed to record page view for site %s slug='%s'", site.pk, page_slug)
+
+
+def get_analytics_summary(site, days: int = 30) -> dict:
+    """
+    Return analytics summary for the last N days:
+      total_views, views_by_day, top_pages, total_inquiries, new_inquiries
+    """
+    import datetime
+    from .models import CMSInquiry, CMSPageView
+    from django.db.models import Sum
+    from django.utils.timezone import now
+
+    cutoff = now().date() - datetime.timedelta(days=days)
+    pv_qs = CMSPageView.objects.filter(site=site, view_date__gte=cutoff)
+    total_views = pv_qs.aggregate(total=Sum('view_count'))['total'] or 0
+
+    views_by_day = list(
+        pv_qs.values('view_date')
+        .annotate(count=Sum('view_count'))
+        .order_by('view_date')
+    )
+
+    top_pages = list(
+        pv_qs.exclude(page_slug__startswith='product:')
+        .values('page_slug')
+        .annotate(count=Sum('view_count'))
+        .order_by('-count')[:10]
+    )
+
+    total_inquiries = CMSInquiry.objects.filter(
+        site=site, is_deleted=False, created_at__date__gte=cutoff,
+    ).count()
+
+    new_inquiries = CMSInquiry.objects.filter(
+        site=site, is_deleted=False, status=CMSInquiry.STATUS_NEW,
+    ).count()
+
+    return {
+        'days': days,
+        'total_views': total_views,
+        'views_by_day': views_by_day,
+        'top_pages': top_pages,
+        'total_inquiries': total_inquiries,
+        'new_inquiries': new_inquiries,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Sitemap + robots.txt
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def generate_sitemap_xml(site, base_url: str) -> str:
+    """Generate a sitemap.xml string for published pages and blog posts."""
+    from .models import CMSBlogPost, CMSPage
+    from django.utils.timezone import now
+
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ]
+
+    def entry(loc: str, lastmod: str = '', changefreq: str = 'weekly', priority: str = '0.8') -> str:
+        mod_tag = f'<lastmod>{lastmod}</lastmod>' if lastmod else ''
+        return (
+            f'  <url><loc>{loc}</loc>{mod_tag}'
+            f'<changefreq>{changefreq}</changefreq>'
+            f'<priority>{priority}</priority></url>'
+        )
+
+    lines.append(entry(base_url + '/', changefreq='daily', priority='1.0'))
+
+    for page in CMSPage.objects.filter(site=site, is_published=True).exclude(
+        page_type=CMSPage.PAGE_HOME
+    ).order_by('sort_order'):
+        mod = (page.updated_at or now()).strftime('%Y-%m-%d')
+        lines.append(entry(f"{base_url}/{page.slug}", lastmod=mod))
+
+    for post in CMSBlogPost.objects.filter(
+        site=site, is_published=True, is_deleted=False
+    ).order_by('-published_at'):
+        mod = (post.updated_at or now()).strftime('%Y-%m-%d')
+        lines.append(entry(f"{base_url}/blog/{post.slug}", lastmod=mod, changefreq='monthly', priority='0.6'))
+
+    lines.append('</urlset>')
+    return '\n'.join(lines)
+
+
+def generate_robots_txt(site, base_url: str) -> str:
+    """Generate robots.txt content respecting publish state."""
+    if not site.is_published:
+        return 'User-agent: *\nDisallow: /\n'
+    return (
+        'User-agent: *\n'
+        'Allow: /\n'
+        'Disallow: /api/\n'
+        f'Sitemap: {base_url}/sitemap.xml\n'
+    )

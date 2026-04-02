@@ -32,7 +32,7 @@ from core.response import ApiResponse
 from core.throttles import StrictAnonRateThrottle
 
 from . import services
-from .models import CMSSite, CMSPage, CMSBlock, CMSBlogPost, CMSCustomDomain, CMSGenerationJob, NewsletterSubscriber
+from .models import CMSSite, CMSPage, CMSBlock, CMSBlogPost, CMSCustomDomain, CMSGenerationJob, NewsletterSubscriber, CMSInquiry
 from .serializers import (
     CmsSiteSerializer, CmsSiteWriteSerializer,
     CmsPageListSerializer, CmsPageDetailSerializer, CmsPageWriteSerializer,
@@ -45,6 +45,9 @@ from .serializers import (
     PublicBlogPostListSerializer, PublicBlogPostDetailSerializer,
     NewsletterSubscribeSerializer, PublicProductSerializer,
     DraftSiteSerializer,
+    CmsInquiryListSerializer, CmsInquiryDetailSerializer, CmsInquiryUpdateSerializer,
+    CmsAnalyticsSummarySerializer,
+    PublicInquiryCreateSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -1012,3 +1015,194 @@ class PublicProductCatalogView(APIView):
         qs = qs.order_by('name')[:limit]
 
         return ApiResponse.success(data=PublicProductSerializer(qs, many=True).data)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Private: Inquiry management
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class CMSInquiryListView(TenantMixin, APIView):
+    """List all inquiries for the tenant's CMS site."""
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*MANAGER_ROLES)]
+
+    def get(self, request):
+        site = services.get_or_create_site(request.tenant)
+        status_filter = request.query_params.get('status') or None
+        qs = services.list_inquiries(site, status=status_filter)
+        paginator = NexusCursorPagination()
+        page = paginator.paginate_queryset(qs, request)
+        ser = CmsInquiryListSerializer(page, many=True)
+        return paginator.get_paginated_response(ser.data)
+
+
+class CMSInquiryDetailView(TenantMixin, APIView):
+    """Retrieve, update status/reply, or soft-delete a single inquiry."""
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*MANAGER_ROLES)]
+
+    def _get_inquiry(self, request, pk: int):
+        site = services.get_or_create_site(request.tenant)
+        try:
+            return CMSInquiry.objects.get(pk=pk, site=site, is_deleted=False)
+        except CMSInquiry.DoesNotExist:
+            return None
+
+    def get(self, request, pk: int):
+        inquiry = self._get_inquiry(request, pk)
+        if inquiry is None:
+            return ApiResponse.error(message='Inquiry not found', status_code=404)
+        services.mark_inquiry_read(inquiry)
+        return ApiResponse.success(data=CmsInquiryDetailSerializer(inquiry).data)
+
+    def patch(self, request, pk: int):
+        inquiry = self._get_inquiry(request, pk)
+        if inquiry is None:
+            return ApiResponse.error(message='Inquiry not found', status_code=404)
+        ser = CmsInquiryUpdateSerializer(data=request.data)
+        if not ser.is_valid():
+            return ApiResponse.error(errors=ser.errors, message='Validation failed', status_code=400)
+        inquiry = services.update_inquiry(inquiry, ser.validated_data)
+        return ApiResponse.success(data=CmsInquiryDetailSerializer(inquiry).data)
+
+    def delete(self, request, pk: int):
+        inquiry = self._get_inquiry(request, pk)
+        if inquiry is None:
+            return ApiResponse.error(message='Inquiry not found', status_code=404)
+        services.delete_inquiry(inquiry)
+        return ApiResponse.success(message='Inquiry deleted', status_code=204)
+
+
+class CMSInquiryConvertView(TenantMixin, APIView):
+    """Convert an inquiry into a customer record."""
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*MANAGER_ROLES)]
+
+    def post(self, request, pk: int):
+        site = services.get_or_create_site(request.tenant)
+        try:
+            inquiry = CMSInquiry.objects.get(pk=pk, site=site, is_deleted=False)
+        except CMSInquiry.DoesNotExist:
+            return ApiResponse.error(message='Inquiry not found', status_code=404)
+        inquiry, customer = services.convert_inquiry_to_customer(inquiry, request.user)
+        return ApiResponse.success(
+            data={'inquiry_id': inquiry.pk, 'customer_id': customer.pk},
+            message='Converted to customer',
+            status_code=201,
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Private: Analytics
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class CMSAnalyticsView(TenantMixin, APIView):
+    """Return page-view analytics summary for the tenant's site."""
+    permission_classes = [permissions.IsAuthenticated, make_role_permission(*MANAGER_ROLES)]
+
+    def get(self, request):
+        site = services.get_or_create_site(request.tenant)
+        try:
+            days = max(1, min(int(request.query_params.get('days', 30)), 365))
+        except (ValueError, TypeError):
+            days = 30
+        summary = services.get_analytics_summary(site, days=days)
+        ser = CmsAnalyticsSummarySerializer(summary)
+        return ApiResponse.success(data=ser.data)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Public: Contact form submit + page-view tracking + sitemap + robots.txt
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class PublicInquirySubmitView(APIView):
+    """Anonymous contact form submission from the public website."""
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [StrictAnonRateThrottle]
+
+    def post(self, request):
+        subdomain = request.headers.get('X-Site-Subdomain', '').strip()
+        if not subdomain:
+            return ApiResponse.error(message='X-Site-Subdomain header required', status_code=400)
+        try:
+            from tenants.models import Tenant
+            tenant = Tenant.objects.get(subdomain=subdomain, is_active=True)
+        except Exception:
+            return ApiResponse.error(message='Site not found', status_code=404)
+
+        site = services.get_or_create_site(tenant)
+        if not site.is_published:
+            return ApiResponse.error(message='Site not found', status_code=404)
+
+        ser = PublicInquiryCreateSerializer(data=request.data)
+        if not ser.is_valid():
+            return ApiResponse.error(errors=ser.errors, message='Validation failed', status_code=400)
+
+        ip = request.META.get('REMOTE_ADDR')
+        services.submit_inquiry(site, ser.validated_data, ip=ip)
+        return ApiResponse.success(message='Inquiry received', status_code=201)
+
+
+class PublicRecordPageViewView(APIView):
+    """Lightweight endpoint called by the public site renderer to track page views."""
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [StrictAnonRateThrottle]
+
+    def post(self, request):
+        subdomain = request.headers.get('X-Site-Subdomain', '').strip()
+        slug = request.data.get('slug', '').strip()
+        if not subdomain:
+            return ApiResponse.success()  # silent no-op
+        try:
+            from tenants.models import Tenant
+            tenant = Tenant.objects.get(subdomain=subdomain, is_active=True)
+            site = services.get_or_create_site(tenant)
+            services.record_page_view(site, slug)
+        except Exception:
+            pass  # tracking must never break the site
+        return ApiResponse.success()
+
+
+class PublicSitemapView(APIView):
+    """Serve sitemap.xml for a tenant's published website."""
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        subdomain = request.headers.get('X-Site-Subdomain', '').strip()
+        if not subdomain:
+            from django.http import HttpResponse
+            return HttpResponse('Not found', status=404, content_type='text/plain')
+        try:
+            from tenants.models import Tenant
+            tenant = Tenant.objects.get(subdomain=subdomain, is_active=True)
+        except Exception:
+            from django.http import HttpResponse
+            return HttpResponse('Not found', status=404, content_type='text/plain')
+
+        site = services.get_or_create_site(tenant)
+        base_url = request.build_absolute_uri('/').rstrip('/')
+        xml = services.generate_sitemap_xml(site, base_url)
+
+        from django.http import HttpResponse
+        return HttpResponse(xml, content_type='application/xml')
+
+
+class PublicRobotsView(APIView):
+    """Serve robots.txt for a tenant's published website."""
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        subdomain = request.headers.get('X-Site-Subdomain', '').strip()
+        if not subdomain:
+            from django.http import HttpResponse
+            return HttpResponse('User-agent: *\nDisallow: /\n', content_type='text/plain')
+        try:
+            from tenants.models import Tenant
+            tenant = Tenant.objects.get(subdomain=subdomain, is_active=True)
+        except Exception:
+            from django.http import HttpResponse
+            return HttpResponse('User-agent: *\nDisallow: /\n', content_type='text/plain')
+
+        site = services.get_or_create_site(tenant)
+        base_url = request.build_absolute_uri('/').rstrip('/')
+        txt = services.generate_robots_txt(site, base_url)
+
+        from django.http import HttpResponse
+        return HttpResponse(txt, content_type='text/plain')

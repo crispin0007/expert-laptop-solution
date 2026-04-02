@@ -12,7 +12,7 @@ Two serializer namespaces:
 Rule: a view either uses Private OR Public serializers, never both.
 """
 from rest_framework import serializers
-from .models import CMSSite, CMSPage, CMSBlock, CMSBlogPost, CMSCustomDomain, CMSGenerationJob
+from .models import CMSSite, CMSPage, CMSBlock, CMSBlogPost, CMSCustomDomain, CMSGenerationJob, CMSInquiry, CMSPageView
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -107,6 +107,10 @@ class CmsSiteSerializer(serializers.ModelSerializer):
             'custom_head_script',
             'is_published', 'published_at',
             'default_meta_title', 'default_meta_description',
+            'header_nav', 'footer_nav',
+            'social_facebook', 'social_instagram', 'social_twitter',
+            'social_linkedin', 'social_youtube', 'social_tiktok',
+            'announcement_text', 'announcement_active', 'announcement_color',
             'pages', 'custom_domain', 'blog_count',
             'created_at', 'updated_at',
         ]
@@ -133,6 +137,10 @@ class CmsSiteWriteSerializer(serializers.ModelSerializer):
             'theme_key', 'primary_color', 'secondary_color', 'font_family',
             'custom_head_script',
             'default_meta_title', 'default_meta_description',
+            'header_nav', 'footer_nav',
+            'social_facebook', 'social_instagram', 'social_twitter',
+            'social_linkedin', 'social_youtube', 'social_tiktok',
+            'announcement_text', 'announcement_active', 'announcement_color',
         ]
 
     def validate_primary_color(self, value: str) -> str:
@@ -422,3 +430,69 @@ class PublicProductSerializer(serializers.Serializer):
         if stock_qty is not None:
             return int(stock_qty) > 0
         return True  # service / non-tracked items are always "in stock"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Inquiry serializers
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class CmsInquiryListSerializer(serializers.ModelSerializer):
+    """Lightweight — for inquiry list."""
+    class Meta:
+        model  = CMSInquiry
+        fields = [
+            'id', 'name', 'email', 'phone', 'subject', 'status', 'source_page',
+            'created_at',
+        ]
+        read_only_fields = fields
+
+
+class CmsInquiryDetailSerializer(serializers.ModelSerializer):
+    """Full inquiry detail including message and reply."""
+    converted_customer_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = CMSInquiry
+        fields = [
+            'id', 'name', 'email', 'phone', 'subject', 'message', 'source_page',
+            'status', 'reply_note', 'converted_customer', 'converted_customer_name',
+            'converted_at', 'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'name', 'email', 'phone', 'subject', 'message', 'source_page',
+            'converted_customer', 'converted_customer_name', 'converted_at',
+            'created_at', 'updated_at',
+        ]
+
+    def get_converted_customer_name(self, obj):
+        return obj.converted_customer.name if obj.converted_customer_id else None
+
+
+class CmsInquiryUpdateSerializer(serializers.Serializer):
+    """Accepted fields when PATCHing an inquiry."""
+    status     = serializers.ChoiceField(choices=CMSInquiry.STATUS_CHOICES, required=False)
+    reply_note = serializers.CharField(allow_blank=True, required=False)
+
+
+class PublicInquiryCreateSerializer(serializers.Serializer):
+    """Public contact form submission — anonymous, no auth."""
+    name        = serializers.CharField(max_length=200)
+    email       = serializers.EmailField()
+    phone       = serializers.CharField(max_length=30, required=False, allow_blank=True)
+    subject     = serializers.CharField(max_length=300, required=False, allow_blank=True)
+    message     = serializers.CharField(max_length=5000)
+    source_page = serializers.CharField(max_length=200, required=False, allow_blank=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Analytics serializer
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class CmsAnalyticsSummarySerializer(serializers.Serializer):
+    """Shape for get_analytics_summary() response."""
+    days             = serializers.IntegerField()
+    total_views      = serializers.IntegerField()
+    views_by_day     = serializers.ListField(child=serializers.DictField())
+    top_pages        = serializers.ListField(child=serializers.DictField())
+    total_inquiries  = serializers.IntegerField()
+    new_inquiries    = serializers.IntegerField()

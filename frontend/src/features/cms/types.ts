@@ -23,8 +23,28 @@ export interface CMSSite {
   published_at: string | null
   /** Verified custom domain, if any (e.g. "www.acmecorp.com") */
   custom_domain: string | null
+  // Navigation
+  header_nav: NavItem[]
+  footer_nav: NavItem[]
+  // Social media
+  social_facebook: string
+  social_instagram: string
+  social_twitter: string
+  social_linkedin: string
+  social_youtube: string
+  social_tiktok: string
+  // Announcement bar
+  announcement_text: string
+  announcement_active: boolean
+  announcement_color: string
   created_at: string
   updated_at: string
+}
+
+export interface NavItem {
+  label: string
+  url: string
+  open_new_tab?: boolean
 }
 
 export interface CMSSiteWritePayload {
@@ -40,6 +60,17 @@ export interface CMSSiteWritePayload {
   default_meta_description?: string
   default_og_image?: string | null
   custom_head_script?: string
+  header_nav?: NavItem[]
+  footer_nav?: NavItem[]
+  social_facebook?: string
+  social_instagram?: string
+  social_twitter?: string
+  social_linkedin?: string
+  social_youtube?: string
+  social_tiktok?: string
+  announcement_text?: string
+  announcement_active?: boolean
+  announcement_color?: string
 }
 
 // ── Pages ─────────────────────────────────────────────────────────────────────
@@ -203,4 +234,41 @@ export interface CMSGenerationStartPayload {
 export interface CMSDesignSelectPayload {
   design_index: number
   apply_to_site: boolean
+}
+
+// ── Inquiries ─────────────────────────────────────────────────────────────────
+
+export type InquiryStatus = 'new' | 'read' | 'replied' | 'converted' | 'archived'
+
+export interface CMSInquiry {
+  id: number
+  name: string
+  email: string
+  phone: string
+  subject: string
+  message: string
+  source_page: string
+  status: InquiryStatus
+  reply_note: string
+  converted_customer: number | null
+  converted_customer_name: string | null
+  converted_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CMSInquiryUpdatePayload {
+  status?: InquiryStatus
+  reply_note?: string
+}
+
+// ── Analytics ─────────────────────────────────────────────────────────────────
+
+export interface CMSAnalyticsSummary {
+  days: number
+  total_views: number
+  views_by_day: { view_date: string; count: number }[]
+  top_pages: { page_slug: string; count: number }[]
+  total_inquiries: number
+  new_inquiries: number
 }

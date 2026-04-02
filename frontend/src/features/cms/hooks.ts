@@ -13,6 +13,8 @@ import type {
   CMSBlogPost, CMSBlogPostWritePayload,
   CMSCustomDomain, CMSCustomDomainWritePayload,
   CMSGenerationJob, CMSGenerationStartPayload, CMSDesignSelectPayload,
+  CMSInquiry, CMSInquiryUpdatePayload,
+  CMSAnalyticsSummary,
 } from './types'
 
 // Helper — unwrap ApiResponse envelope
@@ -333,5 +335,64 @@ export function useSelectCMSDesign(jobId: number) {
       qc.invalidateQueries({ queryKey: ['cms', 'site'] })
       qc.invalidateQueries({ queryKey: ['cms', 'pages'] })
     },
+  })
+}
+
+// ── Inquiries ─────────────────────────────────────────────────────────────────
+
+export function useCMSInquiries(status?: string) {
+  return useQuery<CMSInquiry[]>({
+    queryKey: ['cms', 'inquiries', status],
+    queryFn: () =>
+      apiClient.get(CMS.INQUIRIES, { params: status ? { status } : {} }).then(r => {
+        const d = (r.data as { data: { results: CMSInquiry[] } }).data
+        return d?.results ?? (d as unknown as CMSInquiry[]) ?? []
+      }),
+  })
+}
+
+export function useCMSInquiry(id: number) {
+  return useQuery<CMSInquiry>({
+    queryKey: ['cms', 'inquiry', id],
+    queryFn: () => apiClient.get(CMS.INQUIRY_DETAIL(id)).then(unwrap<CMSInquiry>),
+    enabled: !!id,
+  })
+}
+
+export function useUpdateCMSInquiry(id: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: CMSInquiryUpdatePayload) =>
+      apiClient.patch(CMS.INQUIRY_DETAIL(id), payload).then(unwrap<CMSInquiry>),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cms', 'inquiries'] })
+      qc.invalidateQueries({ queryKey: ['cms', 'inquiry', id] })
+    },
+  })
+}
+
+export function useDeleteCMSInquiry() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => apiClient.delete(CMS.INQUIRY_DETAIL(id)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cms', 'inquiries'] }),
+  })
+}
+
+export function useConvertCMSInquiry() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => apiClient.post(CMS.INQUIRY_CONVERT(id)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['cms', 'inquiries'] }),
+  })
+}
+
+// ── Analytics ─────────────────────────────────────────────────────────────────
+
+export function useCMSAnalytics(days: number = 30) {
+  return useQuery<CMSAnalyticsSummary>({
+    queryKey: ['cms', 'analytics', days],
+    queryFn: () =>
+      apiClient.get(CMS.ANALYTICS, { params: { days } }).then(unwrap<CMSAnalyticsSummary>),
   })
 }

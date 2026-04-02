@@ -65,6 +65,28 @@ class CMSSite(TenantModel):
     default_meta_title       = models.CharField(max_length=255, blank=True)
     default_meta_description = models.TextField(blank=True)
 
+    # Navigation — list of {label, url, open_new_tab} dicts
+    header_nav  = models.JSONField(default=list, blank=True,
+                      help_text='Header navigation links: [{label, url, open_new_tab}]')
+    footer_nav  = models.JSONField(default=list, blank=True,
+                      help_text='Footer navigation links: [{label, url}]')
+
+    # Social links
+    social_facebook  = models.URLField(blank=True)
+    social_instagram = models.URLField(blank=True)
+    social_twitter   = models.URLField(blank=True)
+    social_linkedin  = models.URLField(blank=True)
+    social_youtube   = models.URLField(blank=True)
+    social_tiktok    = models.URLField(blank=True)
+
+    # Announcement bar
+    announcement_text   = models.CharField(max_length=500, blank=True,
+                              help_text='Site-wide announcement banner text')
+    announcement_active = models.BooleanField(default=False,
+                              help_text='Show the announcement bar on the public site')
+    announcement_color  = models.CharField(max_length=7, default='#4F46E5',
+                              help_text='Background hex colour for the announcement bar')
+
     class Meta:
         ordering = ['-created_at']
         verbose_name     = 'CMS Site'
@@ -131,6 +153,8 @@ class CMSPage(TenantModel):
         blank=True,
         help_text='Rendered CSS from GrapeJS.'
     )
+    is_deleted        = models.BooleanField(default=False)
+    deleted_at        = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering           = ['sort_order', 'title']
@@ -445,3 +469,106 @@ class NewsletterSubscriber(TenantModel):
 
     def __str__(self):
         return f"{self.email} [{self.status}]"
+
+
+# ── Inquiries ────────────────────────────────────────────────────────────────
+
+class CMSInquiry(TenantModel):
+    """
+    Contact/inquiry form submission captured from the public website.
+
+    On submission the site fires a notification to admin staff.
+    Optionally converted to a Customer record via convert_to_customer().
+    Never hard-deleted — soft delete only.
+    """
+    STATUS_NEW         = 'new'
+    STATUS_READ        = 'read'
+    STATUS_REPLIED     = 'replied'
+    STATUS_CONVERTED   = 'converted'
+    STATUS_ARCHIVED    = 'archived'
+
+    STATUS_CHOICES = [
+        (STATUS_NEW,       'New'),
+        (STATUS_READ,      'Read'),
+        (STATUS_REPLIED,   'Replied'),
+        (STATUS_CONVERTED, 'Converted to Customer'),
+        (STATUS_ARCHIVED,  'Archived'),
+    ]
+
+    site                = models.ForeignKey(
+        CMSSite, on_delete=models.CASCADE, related_name='inquiries',
+    )
+    name                = models.CharField(max_length=200)
+    email               = models.EmailField()
+    phone               = models.CharField(max_length=30, blank=True)
+    subject             = models.CharField(max_length=255, blank=True)
+    message             = models.TextField()
+    source_page         = models.CharField(max_length=128, blank=True,
+                              help_text='Page slug where the form was submitted')
+    status              = models.CharField(max_length=20, choices=STATUS_CHOICES,
+                              default=STATUS_NEW, db_index=True)
+    # If converted, link to the created customer
+    converted_customer  = models.ForeignKey(
+        'customers.Customer',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='cms_inquiry_source',
+    )
+    converted_at        = models.DateTimeField(null=True, blank=True)
+    reply_note          = models.TextField(blank=True,
+                              help_text='Internal note from staff when replying')
+    # Soft delete
+    is_deleted          = models.BooleanField(default=False)
+    deleted_at          = models.DateTimeField(null=True, blank=True)
+    # IP for spam detection (never expose in API)
+    submitter_ip        = models.GenericIPAddressField(null=True, blank=True)
+
+    class Meta:
+        ordering            = ['-created_at']
+        verbose_name        = 'CMS Inquiry'
+        verbose_name_plural = 'CMS Inquiries'
+        indexes = [
+            models.Index(fields=['tenant', 'site', 'status'], name='cms_inq_tenant_status_idx'),
+            models.Index(fields=['tenant', 'is_deleted'],     name='cms_inq_tenant_del_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.name} <{self.email}> — {self.subject or self.message[:40]}"
+
+    def soft_delete(self):
+        from django.utils import timezone
+        self.is_deleted = True
+        self.deleted_at = timezone.now()
+        self.save(update_fields=['is_deleted', 'deleted_at'])
+
+
+# ── Analytics ────────────────────────────────────────────────────────────────
+
+class CMSPageView(TenantModel):
+    """
+    Lightweight page-view counter for the public website.
+
+    One row per (tenant, site, date, page_slug).  Count is incremented
+    atomically via F() expression rather than creating a new row per hit,
+    keeping table size manageable.
+
+    Product views are tracked separately on the same model with a special
+    slug convention: 'product:<product_id>'.
+    """
+    site        = models.ForeignKey(CMSSite, on_delete=models.CASCADE, related_name='page_views')
+    page_slug   = models.CharField(max_length=200, db_index=True,
+                      help_text="Page slug, '' for home, 'product:42' for product views")
+    view_date   = models.DateField(db_index=True)
+    view_count  = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering        = ['-view_date', '-view_count']
+        unique_together = [('tenant', 'site', 'page_slug', 'view_date')]
+        verbose_name        = 'CMS Page View'
+        verbose_name_plural = 'CMS Page Views'
+        indexes = [
+            models.Index(fields=['tenant', 'site', 'view_date'], name='cms_pv_tenant_date_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.page_slug} {self.view_date} × {self.view_count}"

@@ -6,7 +6,7 @@
  * Tabs: Site Settings | Pages | Blog | Domain | AI Generator
  */
 import { useSearchParams } from 'react-router-dom'
-import { Globe, Layout, BookOpen, Link2, Sparkles, ExternalLink, Eye } from 'lucide-react'
+import { Globe, Layout, BookOpen, Link2, Sparkles, ExternalLink, Eye, MessageSquare, BarChart2 } from 'lucide-react'
 import { useCMSSite } from './hooks'
 import { useTenantStore } from '../../store/tenantStore'
 import SiteSettingsPanel from './SiteSettingsPanel'
@@ -14,6 +14,8 @@ import PageListPanel from './PageListPanel'
 import BlogManager from './BlogManager'
 import DomainSetup from './DomainSetup'
 import AIGenerator from './AIGenerator'
+import InquiriesPanel from './InquiriesPanel'
+import AnalyticsPanel from './AnalyticsPanel'
 
 /**
  * Derive the public website URL for the current tenant.
@@ -43,14 +45,16 @@ function useWebsiteUrls(customDomain: string | null) {
   }
 }
 
-type Tab = 'settings' | 'pages' | 'blog' | 'domain' | 'ai'
+type Tab = 'settings' | 'pages' | 'blog' | 'domain' | 'ai' | 'inquiries' | 'analytics'
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
-  { id: 'settings', label: 'Site Settings', icon: Globe },
-  { id: 'pages',    label: 'Pages',         icon: Layout },
-  { id: 'blog',     label: 'Blog',          icon: BookOpen },
-  { id: 'domain',   label: 'Domain',        icon: Link2 },
-  { id: 'ai',       label: 'AI Generator',  icon: Sparkles },
+  { id: 'settings',  label: 'Site Settings', icon: Globe },
+  { id: 'pages',     label: 'Pages',         icon: Layout },
+  { id: 'blog',      label: 'Blog',          icon: BookOpen },
+  { id: 'domain',    label: 'Domain',        icon: Link2 },
+  { id: 'ai',        label: 'AI Generator',  icon: Sparkles },
+  { id: 'inquiries', label: 'Inquiries',     icon: MessageSquare },
+  { id: 'analytics', label: 'Analytics',     icon: BarChart2 },
 ]
 
 export default function CMSSitePage() {
@@ -140,11 +144,13 @@ export default function CMSSitePage() {
 
       {/* Tab content */}
       <div className="max-w-5xl mx-auto px-6 py-8">
-        {activeTab === 'settings' && <SiteSettingsPanel />}
-        {activeTab === 'pages'    && <PageListPanel />}
-        {activeTab === 'blog'     && <BlogManager />}
-        {activeTab === 'domain'   && <DomainSetup />}
-        {activeTab === 'ai'       && <AIGenerator />}
+        {activeTab === 'settings'  && <SiteSettingsPanel />}
+        {activeTab === 'pages'      && <PageListPanel />}
+        {activeTab === 'blog'       && <BlogManager />}
+        {activeTab === 'domain'     && <DomainSetup />}
+        {activeTab === 'ai'         && <AIGenerator />}
+        {activeTab === 'inquiries'  && <InquiriesPanel />}
+        {activeTab === 'analytics'  && <AnalyticsPanel />}
       </div>
     </div>
   )
