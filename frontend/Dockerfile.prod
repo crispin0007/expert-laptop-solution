@@ -16,8 +16,8 @@ RUN npm config set fetch-retry-mintimeout 20000 \
     && npm install --frozen-lockfile --prefer-offline || npm install
 
 COPY . .
-# Skip tsc type-check in prod build (pre-existing TS errors in Phase 3 stubs)
-RUN npx vite build
+# Raise Node heap to 3 GB — 512 MB was too low for 1929-module bundle (OOM at chunk-render stage)
+RUN NODE_OPTIONS="--max-old-space-size=3072" npx vite build
 
 # Stage 2: Serve with Nginx
 FROM nginx:alpine

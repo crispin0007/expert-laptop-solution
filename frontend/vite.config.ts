@@ -10,6 +10,21 @@ const API_TARGET = process.env.VITE_API_BASE ?? 'http://localhost:8000'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    // Split into smaller chunks so Node doesn't need to hold the entire bundle
+    // in memory at once during the render-chunks stage (prevents OOM on servers
+    // with limited RAM).
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react':   ['react', 'react-dom', 'react-router-dom'],
+          'vendor-query':   ['@tanstack/react-query'],
+          'vendor-ui':      ['lucide-react', 'react-hot-toast', 'date-fns'],
+          'vendor-axios':   ['axios'],
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     host: true,                          // listen on all interfaces (0.0.0.0)
