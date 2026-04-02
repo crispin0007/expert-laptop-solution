@@ -186,6 +186,12 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'accounting.tasks.task_generate_monthly_payslips',
         'schedule': crontab(day_of_month=1, hour=0, minute=5),
     },
+    # Check all tenants for low-stock products daily at 07:00 UTC.
+    # Dispatches individual per-tenant tasks so each is retried independently.
+    'check-low-stock-daily': {
+        'task': 'inventory.tasks.task_dispatch_low_stock_checks',
+        'schedule': crontab(hour=7, minute=0),
+    },
 }
 
 AUTH_PASSWORD_VALIDATORS = [

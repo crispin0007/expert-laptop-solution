@@ -95,6 +95,7 @@ EVENT_CATALOGUE: dict[str, str] = {
     # ── PROJECTS ──────────────────────────────────────────────────────────────
     'project.created':           'Project created',
     'project.completed':         'Project completed',
+    'project.cancelled':         'Project cancelled',
     'task.created':              'Task created',
     'task.assigned':             'Task assigned',
     'task.completed':            'Task completed',

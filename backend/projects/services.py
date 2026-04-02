@@ -43,7 +43,8 @@ def create_project(*, tenant, created_by, validated_data: dict):
 
 def update_project(*, instance, tenant, validated_data: dict):
     """Apply updates to a Project. Sets completed_at and publishes project.completed
-    when the status transitions to 'completed'.
+    when the status transitions to 'completed'. Publishes project.cancelled when
+    transitioning to 'cancelled'.
 
     Args:
         instance:       The existing Project instance.
@@ -61,6 +62,9 @@ def update_project(*, instance, tenant, validated_data: dict):
     new_status = instance.status
     transitioning_to_complete = (
         old_status != 'completed' and new_status == 'completed'
+    )
+    transitioning_to_cancelled = (
+        old_status != 'cancelled' and new_status == 'cancelled'
     )
     if transitioning_to_complete and not instance.completed_at:
         instance.completed_at = timezone.now()
@@ -80,6 +84,13 @@ def update_project(*, instance, tenant, validated_data: dict):
             'manager_id': instance.manager_id,
             'completed_at': instance.completed_at.isoformat() if instance.completed_at else None,
         }, tenant=tenant)
+
+    if transitioning_to_cancelled:
+        EventBus.publish('project.cancelled', {
+            'id': instance.id,
+            'tenant_id': tenant.id,
+        }, tenant=tenant)
+
     return instance
 
 

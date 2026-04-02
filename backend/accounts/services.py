@@ -85,6 +85,10 @@ def deactivate_staff(*, tenant, membership):
     membership.is_active = False
     membership.save(update_fields=['is_active'])
     _bust_availability_cache(tenant)
+    EventBus.publish('staff.deleted', {
+        'id': membership.user_id,
+        'tenant_id': tenant.pk,
+    }, tenant=tenant)
     EventBus.publish('staff.updated', {
         'id': membership.user_id,
         'tenant_id': tenant.pk,
