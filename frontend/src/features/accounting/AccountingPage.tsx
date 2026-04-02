@@ -5005,7 +5005,7 @@ ${el.innerHTML}
     setTimeout(() => { w.print() }, 500)
   }
 
-  const { data: reportData, isLoading, refetch } = useQuery<Record<string, unknown>>({
+  const { data: reportData, isLoading, isError, error, refetch } = useQuery<Record<string, unknown>>({
     queryKey: ['report', reportKey, dateFrom, dateTo],
     queryFn: () => apiClient.get(report.endpoint + params).then(r => r.data?.data ?? r.data),
     enabled: false,
@@ -5108,6 +5108,18 @@ ${el.innerHTML}
 
       {isLoading && <div className="py-12"><Spinner /></div>}
 
+      {isError && !isLoading && (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-5 py-4 flex items-start gap-3">
+          <AlertCircle size={16} className="text-red-500 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-red-700">Failed to load report</p>
+            <p className="text-xs text-red-500 mt-0.5">
+              {(error as Error)?.message ?? 'An error occurred. Check your date range and try again.'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {reportData && !isLoading && (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
           {/* Report header */}
@@ -5138,7 +5150,7 @@ ${el.innerHTML}
         </div>
       )}
 
-      {!reportData && !isLoading && (
+      {!reportData && !isLoading && !isError && (
         <div className="bg-gray-50 border border-dashed border-gray-200 rounded-xl py-14 text-center">
           <BarChart2 size={32} className="mx-auto text-gray-300 mb-3" />
           <p className="text-sm text-gray-500 font-medium">Select a report above and click <strong>Run Report</strong></p>

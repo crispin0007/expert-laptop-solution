@@ -244,18 +244,23 @@ def trial_balance(tenant, date_from, date_to):
 def aged_receivables(tenant, as_of_date):
     """Unpaid invoices bucketed by days overdue: current, 1-30, 31-60, 61-90, 90+."""
     from accounting.models import Invoice
-    from django.utils.timezone import datetime
+    from django.db.models import Sum as DSum, Value, DecimalField
+    from django.db.models.functions import Coalesce
 
+    # Annotate with total paid amount in a single JOIN query to avoid N+1.
+    # .amount_due is a @property that calls payments.aggregate() per invoice.
     invoices = Invoice.objects.filter(
         tenant=tenant,
         status=Invoice.STATUS_ISSUED,
-    ).select_related('customer')
+    ).select_related('customer').annotate(
+        paid_sum=Coalesce(DSum('payments__amount'), Value(Decimal('0')), output_field=DecimalField()),
+    )
 
     buckets = {'current': [], '1_30': [], '31_60': [], '61_90': [], '90_plus': []}
 
     for inv in invoices:
         due = inv.due_date
-        remaining = float(inv.amount_due) if hasattr(inv, 'amount_due') else float(inv.total or 0)
+        remaining = float(max(inv.total - inv.paid_sum, Decimal('0')))
         entry = {
             'id':             inv.pk,
             'invoice_number': inv.invoice_number,
@@ -297,17 +302,22 @@ def aged_receivables(tenant, as_of_date):
 def aged_payables(tenant, as_of_date):
     """Unpaid bills bucketed by days overdue."""
     from accounting.models import Bill
+    from django.db.models import Sum as DSum, Value, DecimalField
+    from django.db.models.functions import Coalesce
 
+    # Annotate with total paid amount in a single JOIN query to avoid N+1.
     bills = Bill.objects.filter(
         tenant=tenant,
         status=Bill.STATUS_APPROVED,
-    ).select_related('supplier')
+    ).select_related('supplier').annotate(
+        paid_sum=Coalesce(DSum('payments__amount'), Value(Decimal('0')), output_field=DecimalField()),
+    )
 
     buckets = {'current': [], '1_30': [], '31_60': [], '61_90': [], '90_plus': []}
 
     for bill in bills:
         due = bill.due_date
-        remaining = float(bill.amount_due)
+        remaining = float(max(bill.total - bill.paid_sum, Decimal('0')))
         entry = {
             'id':          bill.pk,
             'bill_number': bill.bill_number,
