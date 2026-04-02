@@ -7,6 +7,7 @@ from .views import (
     UnitOfMeasureViewSet, ProductVariantViewSet,
     ReturnOrderViewSet, ReportViewSet,
     SupplierProductViewSet, StockCountViewSet,
+    ProductBundleViewSet, SupplierPaymentViewSet,
 )
 
 router = DefaultRouter()
@@ -24,5 +25,7 @@ router.register(r'return-orders',     ReturnOrderViewSet,     basename='returnor
 router.register(r'reports',           ReportViewSet,          basename='report')
 router.register(r'supplier-products', SupplierProductViewSet, basename='supplierproduct')
 router.register(r'stock-counts',      StockCountViewSet,      basename='stockcount')
+router.register(r'product-bundles',   ProductBundleViewSet,   basename='productbundle')
+router.register(r'supplier-payments', SupplierPaymentViewSet, basename='supplierpayment')
 
 urlpatterns = [path('', include(router.urls))]

@@ -41,6 +41,7 @@ interface Product {
   cost_price?: string
   weight?: string
   is_service: boolean
+  is_bundle: boolean
   is_active: boolean
   track_stock?: boolean
   reorder_level?: number
@@ -1792,6 +1793,10 @@ function PurchaseOrdersTab({ products, canManage }: { products: Product[]; canMa
                           {(po.status === 'draft' || po.status === 'sent') && (
                             <button onClick={() => cancelMut.mutate(po.id)} title="Cancel PO" className="p-1.5 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition"><Ban size={14} /></button>
                           )}
+                          <a href={`/api/v1${INVENTORY.PO_PDF(po.id)}`} target="_blank" rel="noopener noreferrer" title="Download PDF"
+                            className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition inline-flex">
+                            <FileDown size={14} />
+                          </a>
                         </div>
                       )}
                     </td>
@@ -2642,9 +2647,10 @@ function ReturnsTab({ products, canManage }: { products: Product[]; canManage: b
 // ── Reports Tab ───────────────────────────────────────────────────────────────
 
 function ReportsTab() {
-  const [activeReport, setActiveReport] = useState<'valuation' | 'dead-stock' | 'abc' | 'forecast'>('valuation')
+  const [activeReport, setActiveReport] = useState<'valuation' | 'dead-stock' | 'abc' | 'forecast' | 'top-selling'>('valuation')
   const [deadStockDays, setDeadStockDays] = useState(60)
   const [forecastDays, setForecastDays]   = useState(30)
+  const [topSellingDays, setTopSellingDays] = useState(90)
 
   const { data: valuation, isLoading: loadingVal } = useQuery({
     queryKey: ['report-valuation'],
@@ -2666,6 +2672,11 @@ function ReportsTab() {
     queryFn: () => apiClient.get(`${INVENTORY.REPORT_FORECAST}?days=${forecastDays}`).then(r => r.data),
     enabled: activeReport === 'forecast',
   })
+  const { data: topSelling, isLoading: loadingTopSelling } = useQuery({
+    queryKey: ['report-top-selling', topSellingDays],
+    queryFn: () => apiClient.get(`${INVENTORY.REPORT_TOP_SELLING}?days=${topSellingDays}`).then(r => r.data),
+    enabled: activeReport === 'top-selling',
+  })
 
   const handleExportCsv = async () => {
     try {
@@ -2682,10 +2693,11 @@ function ReportsTab() {
   }
 
   const REPORT_TABS = [
-    { id: 'valuation' as const, label: 'Stock Valuation', icon: <DollarSign size={14} /> },
-    { id: 'dead-stock' as const, label: 'Dead Stock', icon: <Archive size={14} /> },
-    { id: 'abc' as const, label: 'ABC Analysis', icon: <TrendingUp size={14} /> },
-    { id: 'forecast' as const, label: 'Forecast', icon: <TrendingDown size={14} /> },
+    { id: 'valuation' as const,   label: 'Stock Valuation', icon: <DollarSign size={14} /> },
+    { id: 'dead-stock' as const,  label: 'Dead Stock',      icon: <Archive size={14} /> },
+    { id: 'abc' as const,         label: 'ABC Analysis',    icon: <TrendingUp size={14} /> },
+    { id: 'forecast' as const,    label: 'Forecast',        icon: <TrendingDown size={14} /> },
+    { id: 'top-selling' as const, label: 'Top Selling',     icon: <BarChart2 size={14} /> },
   ]
 
   const ABC_STYLE: Record<string, string> = {
@@ -2865,6 +2877,54 @@ function ReportsTab() {
                 </tbody>
               </table>
             </div>
+          ) : null}
+        </div>
+      )}
+
+      {/* Top Selling */}
+      {activeReport === 'top-selling' && (
+        <div>
+          <div className="flex items-center gap-3 mb-4">
+            <span className="text-sm text-gray-600">Based on ticket usage over last</span>
+            <input type="number" value={topSellingDays} onChange={e => setTopSellingDays(Number(e.target.value))} min={7} max={365}
+              className="w-20 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <span className="text-sm text-gray-600">days</span>
+          </div>
+          {loadingTopSelling ? (
+            <div className="p-8 text-center text-gray-400 flex items-center justify-center gap-2"><Loader2 size={16} className="animate-spin" /> Loading…</div>
+          ) : topSelling ? (
+            topSelling.rows.length === 0 ? (
+              <div className="p-10 text-center"><Package size={32} className="text-gray-200 mx-auto mb-2" /><p className="text-gray-400 text-sm">No ticket product usage found in this period</p></div>
+            ) : (
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
+                    <tr>
+                      <th className="px-5 py-3 text-center">#</th>
+                      <th className="px-5 py-3 text-left">Product</th>
+                      <th className="px-5 py-3 text-left">SKU</th>
+                      <th className="px-5 py-3 text-left">Category</th>
+                      <th className="px-5 py-3 text-right">Unit Price</th>
+                      <th className="px-5 py-3 text-center">Qty Sold</th>
+                      <th className="px-5 py-3 text-center">On Hand</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {topSelling.rows.map((r: {id: number; name: string; sku: string; category: string | null; unit_price: number; quantity_sold: number; quantity_on_hand: number}, i: number) => (
+                      <tr key={r.id}>
+                        <td className="px-5 py-3 text-center text-gray-400 text-xs font-medium">{i + 1}</td>
+                        <td className="px-5 py-3 font-medium text-gray-800">{r.name}</td>
+                        <td className="px-5 py-3 font-mono text-xs text-gray-400">{r.sku}</td>
+                        <td className="px-5 py-3 text-gray-500 text-xs">{r.category ?? '—'}</td>
+                        <td className="px-5 py-3 text-right text-gray-600">Rs. {r.unit_price.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-5 py-3 text-center font-semibold text-indigo-600">{r.quantity_sold}</td>
+                        <td className="px-5 py-3 text-center text-gray-600">{r.quantity_on_hand}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
           ) : null}
         </div>
       )}
@@ -3341,6 +3401,368 @@ function StockCountsTab({ categories, canManage }: { categories: Category[]; can
   )
 }
 
+// ── Product Bundles Tab ───────────────────────────────────────────────────────
+
+interface ProductBundle {
+  id: number
+  bundle: number
+  bundle_name?: string
+  component: number
+  component_name: string
+  component_sku: string
+  quantity: number
+}
+
+function BundlesTab({ products, canManage }: { products: Product[]; canManage: boolean }) {
+  const qc = useQueryClient()
+  const [filterBundle, setFilterBundle] = useState<number | ''>('')
+  const [modal, setModal] = useState(false)
+  const [form, setForm] = useState({ bundle: '' as number | '', component: '' as number | '', quantity: '1' })
+
+  const bundleProducts = products.filter(p => p.is_bundle)
+
+  const { data: components = [], isLoading } = useQuery<ProductBundle[]>({
+    queryKey: ['product-bundles', filterBundle],
+    queryFn: () => {
+      const url = filterBundle ? `${INVENTORY.PRODUCT_BUNDLES}?bundle=${filterBundle}` : INVENTORY.PRODUCT_BUNDLES
+      return apiClient.get(url).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? [])
+    },
+  })
+
+  const createMut = useMutation({
+    mutationFn: (data: object) => apiClient.post(INVENTORY.PRODUCT_BUNDLES, data),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['product-bundles'] }); setModal(false); setForm({ bundle: '', component: '', quantity: '1' }); toast.success('Component added') },
+    onError: () => toast.error('Failed to add component'),
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: (id: number) => apiClient.delete(INVENTORY.PRODUCT_BUNDLE_DETAIL(id)),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['product-bundles'] }); toast.success('Removed') },
+    onError: () => toast.error('Failed to remove'),
+  })
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="font-semibold text-gray-700 flex items-center gap-2"><Package size={16} className="text-indigo-400" /> Product Bundles</h2>
+        {canManage && (
+          <button onClick={() => setModal(true)}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition">
+            <Plus size={14} /> Add Component
+          </button>
+        )}
+      </div>
+
+      <div className="mb-4 flex items-center gap-3">
+        <span className="text-sm text-gray-500">Filter by bundle:</span>
+        <select value={filterBundle} onChange={e => setFilterBundle(e.target.value ? Number(e.target.value) : '')}
+          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          <option value="">All bundles</option>
+          {bundleProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+      </div>
+
+      {bundleProducts.length === 0 && (
+        <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-700">
+          No bundle products yet. Create a product with <strong>is_bundle</strong> enabled, then add its components here.
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="p-10 text-center text-gray-400 flex items-center justify-center gap-2"><Loader2 size={16} className="animate-spin" /> Loading…</div>
+      ) : components.length === 0 ? (
+        <div className="p-10 text-center"><Package size={32} className="text-gray-200 mx-auto mb-2" /><p className="text-gray-400 text-sm">No bundle components yet</p></div>
+      ) : (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
+              <tr>
+                <th className="px-5 py-3 text-left">Bundle</th>
+                <th className="px-5 py-3 text-left">Component</th>
+                <th className="px-5 py-3 text-left">SKU</th>
+                <th className="px-5 py-3 text-center">Qty</th>
+                {canManage && <th className="px-5 py-3 text-right">Actions</th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {components.map(c => {
+                const bundleProd = bundleProducts.find(p => p.id === c.bundle)
+                return (
+                  <tr key={c.id}>
+                    <td className="px-5 py-3 font-medium text-gray-700">{bundleProd?.name ?? `#${c.bundle}`}</td>
+                    <td className="px-5 py-3 text-gray-800">{c.component_name}</td>
+                    <td className="px-5 py-3 font-mono text-xs text-gray-400">{c.component_sku}</td>
+                    <td className="px-5 py-3 text-center font-medium text-indigo-600">{c.quantity}</td>
+                    {canManage && (
+                      <td className="px-5 py-3 text-right">
+                        <button onClick={() => deleteMut.mutate(c.id)} title="Remove" className="p-1.5 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition"><Trash2 size={14} /></button>
+                      </td>
+                    )}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modal && (
+        <Modal open title="Add Bundle Component" onClose={() => { setModal(false); setForm({ bundle: '', component: '', quantity: '1' }) }}>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Bundle Product</label>
+              <select value={form.bundle} onChange={e => setForm(f => ({ ...f, bundle: e.target.value ? Number(e.target.value) : '' }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="">Select bundle…</option>
+                {bundleProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Component Product</label>
+              <select value={form.component} onChange={e => setForm(f => ({ ...f, component: e.target.value ? Number(e.target.value) : '' }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="">Select component…</option>
+                {products.filter(p => !p.is_bundle || p.id !== form.bundle).map(p => <option key={p.id} value={p.id}>{p.name} {p.sku ? `(${p.sku})` : ''}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+              <input type="number" min={1} value={form.quantity} onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button onClick={() => createMut.mutate({ bundle: form.bundle, component: form.component, quantity: Number(form.quantity) })}
+                disabled={!form.bundle || !form.component || createMut.isPending}
+                className="flex-1 bg-indigo-600 text-white rounded-lg py-2 text-sm font-medium hover:bg-indigo-700 transition disabled:opacity-50">
+                {createMut.isPending ? 'Adding…' : 'Add Component'}
+              </button>
+              <button onClick={() => { setModal(false); setForm({ bundle: '', component: '', quantity: '1' }) }}
+                className="flex-1 border border-gray-300 text-gray-600 rounded-lg py-2 text-sm font-medium hover:bg-gray-50 transition">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+// ── Supplier Payments Tab ─────────────────────────────────────────────────────
+
+interface SupplierPaymentRecord {
+  id: number
+  supplier: number
+  supplier_name: string
+  purchase_order: number | null
+  po_number: string | null
+  amount: string
+  payment_date: string
+  payment_method: string
+  reference: string
+  notes: string
+  recorded_by_name: string | null
+  created_at: string
+}
+
+function SupplierPaymentsTab({ canManage }: { canManage: boolean }) {
+  const qc = useQueryClient()
+  const [filterSupplier, setFilterSupplier] = useState<number | ''>('')
+  const [modal, setModal] = useState(false)
+  const emptyForm = { supplier: '' as number | '', purchase_order: '' as number | '', amount: '', payment_date: new Date().toISOString().slice(0, 10), payment_method: 'bank_transfer', reference: '', notes: '' }
+  const [form, setForm] = useState({ ...emptyForm })
+
+  const { data: suppliers = [] } = useQuery<Supplier[]>({
+    queryKey: ['suppliers'],
+    queryFn: () => apiClient.get(INVENTORY.SUPPLIERS).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
+  })
+
+  const { data: pos = [] } = useQuery<PurchaseOrder[]>({
+    queryKey: ['purchase-orders'],
+    queryFn: () => apiClient.get(INVENTORY.PURCHASE_ORDERS).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []),
+    enabled: !!form.supplier,
+  })
+
+  const filteredPos = pos.filter(po => po.supplier === form.supplier && po.status !== 'cancelled')
+
+  const { data: payments = [], isLoading } = useQuery<SupplierPaymentRecord[]>({
+    queryKey: ['supplier-payments', filterSupplier],
+    queryFn: () => {
+      const url = filterSupplier ? `${INVENTORY.SUPPLIER_PAYMENTS}?supplier=${filterSupplier}` : INVENTORY.SUPPLIER_PAYMENTS
+      return apiClient.get(url).then(r => Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? [])
+    },
+  })
+
+  const { data: summary } = useQuery({
+    queryKey: ['supplier-payment-summary'],
+    queryFn: () => apiClient.get(INVENTORY.SUPPLIER_PAYMENT_SUMMARY).then(r => r.data),
+  })
+
+  const createMut = useMutation({
+    mutationFn: (data: object) => apiClient.post(INVENTORY.SUPPLIER_PAYMENTS, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['supplier-payments'] })
+      qc.invalidateQueries({ queryKey: ['supplier-payment-summary'] })
+      setModal(false)
+      setForm({ ...emptyForm })
+      toast.success('Payment recorded')
+    },
+    onError: () => toast.error('Failed to record payment'),
+  })
+
+  const METHOD_LABELS: Record<string, string> = {
+    cash: 'Cash', bank_transfer: 'Bank Transfer', cheque: 'Cheque',
+    mobile_banking: 'Mobile Banking', other: 'Other',
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="font-semibold text-gray-700 flex items-center gap-2"><DollarSign size={16} className="text-indigo-400" /> Supplier Payments</h2>
+        {canManage && (
+          <button onClick={() => setModal(true)}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition">
+            <Plus size={14} /> Record Payment
+          </button>
+        )}
+      </div>
+
+      {/* Outstanding Summary */}
+      {summary?.rows?.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
+          {summary.rows.filter((r: {outstanding: number}) => r.outstanding > 0).slice(0, 6).map((r: {supplier_id: number; supplier_name: string; total_po_amount: number; total_paid: number; outstanding: number}) => (
+            <div key={r.supplier_id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+              <div className="text-sm font-medium text-gray-700 mb-1">{r.supplier_name}</div>
+              <div className="flex justify-between text-xs text-gray-400 mb-1">
+                <span>PO Total</span><span>Rs. {r.total_po_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+              </div>
+              <div className="flex justify-between text-xs text-gray-400 mb-2">
+                <span>Paid</span><span>Rs. {r.total_paid.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+              </div>
+              <div className="flex justify-between text-sm font-semibold text-red-600">
+                <span>Outstanding</span><span>Rs. {r.outstanding.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="mb-4 flex items-center gap-3">
+        <span className="text-sm text-gray-500">Filter by supplier:</span>
+        <select value={filterSupplier} onChange={e => setFilterSupplier(e.target.value ? Number(e.target.value) : '')}
+          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          <option value="">All suppliers</option>
+          {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      </div>
+
+      {isLoading ? (
+        <div className="p-10 text-center text-gray-400 flex items-center justify-center gap-2"><Loader2 size={16} className="animate-spin" /> Loading…</div>
+      ) : payments.length === 0 ? (
+        <div className="p-10 text-center"><DollarSign size={32} className="text-gray-200 mx-auto mb-2" /><p className="text-gray-400 text-sm">No payments recorded yet</p></div>
+      ) : (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
+              <tr>
+                <th className="px-5 py-3 text-left">Supplier</th>
+                <th className="px-5 py-3 text-left">PO</th>
+                <th className="px-5 py-3 text-right">Amount</th>
+                <th className="px-5 py-3 text-left">Date</th>
+                <th className="px-5 py-3 text-left">Method</th>
+                <th className="px-5 py-3 text-left">Reference</th>
+                <th className="px-5 py-3 text-left">Recorded By</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {payments.map(p => (
+                <tr key={p.id}>
+                  <td className="px-5 py-3 font-medium text-gray-800">{p.supplier_name}</td>
+                  <td className="px-5 py-3 font-mono text-xs text-indigo-600">{p.po_number ?? '—'}</td>
+                  <td className="px-5 py-3 text-right font-semibold text-gray-800">Rs. {parseFloat(p.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                  <td className="px-5 py-3 text-gray-600"><DateDisplay adDate={p.payment_date} compact /></td>
+                  <td className="px-5 py-3 text-gray-500">{METHOD_LABELS[p.payment_method] ?? p.payment_method}</td>
+                  <td className="px-5 py-3 text-gray-400 font-mono text-xs">{p.reference || '—'}</td>
+                  <td className="px-5 py-3 text-gray-400 text-xs">{p.recorded_by_name ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modal && (
+        <Modal open title="Record Supplier Payment" onClose={() => { setModal(false); setForm({ ...emptyForm }) }}>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Supplier</label>
+              <select value={form.supplier} onChange={e => setForm(f => ({ ...f, supplier: e.target.value ? Number(e.target.value) : '', purchase_order: '' }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="">Select supplier…</option>
+                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Order (optional)</label>
+              <select value={form.purchase_order} onChange={e => setForm(f => ({ ...f, purchase_order: e.target.value ? Number(e.target.value) : '' }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="">No specific PO</option>
+                {filteredPos.map(po => <option key={po.id} value={po.id}>{po.po_number} — {po.status}</option>)}
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Amount (Rs.)</label>
+                <input type="number" min={0} step="0.01" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Date</label>
+                <input type="date" value={form.payment_date} onChange={e => setForm(f => ({ ...f, payment_date: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
+                <select value={form.payment_method} onChange={e => setForm(f => ({ ...f, payment_method: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                  <option value="cash">Cash</option>
+                  <option value="bank_transfer">Bank Transfer</option>
+                  <option value="cheque">Cheque</option>
+                  <option value="mobile_banking">Mobile Banking</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Reference</label>
+                <input type="text" placeholder="Cheque no., txn ID…" value={form.reference} onChange={e => setForm(f => ({ ...f, reference: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+              <textarea rows={2} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button onClick={() => createMut.mutate({ ...form, purchase_order: form.purchase_order || null })}
+                disabled={!form.supplier || !form.amount || createMut.isPending}
+                className="flex-1 bg-indigo-600 text-white rounded-lg py-2 text-sm font-medium hover:bg-indigo-700 transition disabled:opacity-50">
+                {createMut.isPending ? 'Saving…' : 'Record Payment'}
+              </button>
+              <button onClick={() => { setModal(false); setForm({ ...emptyForm }) }}
+                className="flex-1 border border-gray-300 text-gray-600 rounded-lg py-2 text-sm font-medium hover:bg-gray-50 transition">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
 // ── Warranty Tab ──────────────────────────────────────────────────────────────
 
 function WarrantyTab({ products, canManage }: { products: Product[]; canManage: boolean }) {
@@ -3597,7 +4019,7 @@ function WarrantyTab({ products, canManage }: { products: Product[]; canManage: 
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-type Tab = 'products' | 'movements' | 'low-stock' | 'categories' | 'uom' | 'variants' | 'suppliers' | 'purchase-orders' | 'returns' | 'reports' | 'supplier-catalog' | 'stock-counts' | 'warranty'
+type Tab = 'products' | 'movements' | 'low-stock' | 'categories' | 'uom' | 'variants' | 'suppliers' | 'purchase-orders' | 'returns' | 'reports' | 'supplier-catalog' | 'stock-counts' | 'bundles' | 'supplier-payments' | 'warranty'
 
 export default function InventoryPage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -3637,8 +4059,10 @@ export default function InventoryPage() {
     { id: 'purchase-orders', label: 'Purchase Orders',  icon: <ShoppingCart  size={15} /> },
     { id: 'returns',          label: 'Returns',            icon: <RotateCcw     size={15} /> },
     { id: 'supplier-catalog', label: 'Supplier Catalog',   icon: <Truck         size={15} /> },
-    { id: 'stock-counts',     label: 'Stock Counts',       icon: <ClipboardList size={15} /> },
-    { id: 'warranty',         label: 'Warranty',            icon: <ShieldCheck   size={15} /> },
+    { id: 'stock-counts',       label: 'Stock Counts',       icon: <ClipboardList size={15} /> },
+    { id: 'bundles',            label: 'Bundles',            icon: <Package       size={15} /> },
+    { id: 'supplier-payments',  label: 'Supplier Payments',  icon: <DollarSign    size={15} /> },
+    { id: 'warranty',           label: 'Warranty',           icon: <ShieldCheck   size={15} /> },
     { id: 'reports',          label: 'Reports',            icon: <FileBarChart2 size={15} /> },
   ]
 
@@ -3680,6 +4104,8 @@ export default function InventoryPage() {
       {activeTab === 'returns'           && <ReturnsTab          products={products} canManage={canManage} />}
       {activeTab === 'supplier-catalog'  && <SupplierCatalogTab  products={products} canManage={canManage} />}
       {activeTab === 'stock-counts'      && <StockCountsTab      categories={categories} canManage={canManage} />}
+      {activeTab === 'bundles'            && <BundlesTab          products={products}     canManage={canManage} />}
+      {activeTab === 'supplier-payments'  && <SupplierPaymentsTab                         canManage={canManage} />}
       {activeTab === 'warranty'          && <WarrantyTab         products={products}     canManage={canManage} />}
       {activeTab === 'reports'           && <ReportsTab />}
     </div>

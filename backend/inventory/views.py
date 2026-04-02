@@ -23,6 +23,7 @@ from .models import (
     StockMovement, Supplier, PurchaseOrder, PurchaseOrderItem,
     UnitOfMeasure, ProductVariant, ReturnOrder, ReturnOrderItem,
     SupplierProduct, StockCount, StockCountItem,
+    ProductBundle, SupplierPayment,
 )
 from .serializers import (
     CategorySerializer, CategoryTreeSerializer,
@@ -35,6 +36,7 @@ from .serializers import (
     ReturnOrderSerializer, ReturnOrderWriteSerializer,
     SupplierProductSerializer,
     StockCountSerializer, StockCountWriteSerializer, StockCountItemSerializer,
+    ProductBundleSerializer, SupplierPaymentSerializer,
 )
 from .services import (
     receive_purchase_order,
@@ -417,6 +419,26 @@ class PurchaseOrderViewSet(NexusViewSet):
         po.save(update_fields=['status'])
         return ApiResponse.success(data=PurchaseOrderSerializer(po).data)
 
+    @action(detail=True, methods=['get'], url_path='pdf')
+    def pdf(self, request, pk=None):
+        """GET /inventory/purchase-orders/{id}/pdf/ — download PO as PDF."""
+        po = self.get_object()
+        try:
+            from weasyprint import HTML
+            from django.template.loader import render_to_string
+        except ImportError:
+            return HttpResponse(b'%PDF stub - install weasyprint', content_type='application/pdf')
+
+        items = po.items.select_related('product', 'variant').all()
+        html_string = render_to_string(
+            'inventory/po_pdf.html',
+            {'po': po, 'items': items, 'tenant': self.tenant},
+        )
+        pdf_bytes = HTML(string=html_string).write_pdf()
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="PO-{po.po_number}.pdf"'
+        return response
+
 
 # ── Unit of Measure ───────────────────────────────────────────────────────────
 
@@ -788,6 +810,59 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
             return ApiResponse.success(data=result)
         return ApiResponse.created(data=result)
 
+    # ── Top Selling ───────────────────────────────────────────────────────────
+    @action(detail=False, methods=['get'], url_path='top-selling')
+    def top_selling(self, request):
+        """
+        GET /inventory/reports/top-selling/?limit=20&days=90
+        Products ranked by total quantity used in tickets (TicketProduct) over
+        the last N days (default 90).  Returns at most `limit` rows (default 20).
+        """
+        self.ensure_tenant()
+        days  = int(request.query_params.get('days', 90))
+        limit = min(int(request.query_params.get('limit', 20)), 100)
+        since = timezone.now() - timedelta(days=days)
+
+        try:
+            from tickets.models import TicketProduct
+        except ImportError:
+            return ApiResponse.success(data={'days': days, 'rows': []})
+
+        # Aggregate total quantity sold via tickets in the window
+        usage = (
+            TicketProduct.objects
+            .filter(tenant=self.tenant, created_at__gte=since)
+            .values('product_id')
+            .annotate(total_qty=Sum('quantity'))
+            .order_by('-total_qty')[:limit]
+        )
+        product_ids = [r['product_id'] for r in usage]
+        qty_map = {r['product_id']: r['total_qty'] for r in usage}
+
+        products = (
+            Product.objects
+            .filter(tenant=self.tenant, id__in=product_ids)
+            .select_related('category', 'stock_level')
+        )
+        product_map = {p.id: p for p in products}
+
+        rows = []
+        for pid in product_ids:   # preserve ranking order
+            p = product_map.get(pid)
+            if not p:
+                continue
+            qty_on_hand = getattr(getattr(p, 'stock_level', None), 'quantity_on_hand', 0) or 0
+            rows.append({
+                'id': p.id,
+                'name': p.name,
+                'sku': p.sku,
+                'category': p.category.name if p.category else None,
+                'unit_price': float(p.unit_price),
+                'quantity_sold': qty_map[pid],
+                'quantity_on_hand': qty_on_hand,
+            })
+        return ApiResponse.success(data={'days': days, 'rows': rows})
+
 
 # ── Supplier–Product Catalog ──────────────────────────────────────────────────
 
@@ -953,3 +1028,112 @@ class StockCountViewSet(NexusViewSet):
         sc.status = StockCount.STATUS_CANCELLED
         sc.save(update_fields=['status'])
         return ApiResponse.success(data=StockCountSerializer(sc).data)
+
+
+# ── Product Bundle ────────────────────────────────────────────────────────────
+
+class ProductBundleViewSet(NexusViewSet):
+    """
+    Bundle composition — component list for a bundle product.
+    GET  /inventory/product-bundles/?bundle=<id>
+    POST /inventory/product-bundles/
+    """
+    required_module = 'inventory'
+    serializer_class = ProductBundleSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['bundle']
+    ordering = ['component__name']
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        return ProductBundle.objects.filter(
+            tenant=self.tenant
+        ).select_related('bundle', 'component')
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='inventory.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='inventory.manage')()]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save(tenant=self.tenant)
+        return ApiResponse.created(data=self.get_serializer(instance).data)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        updated = serializer.save()
+        return ApiResponse.success(data=self.get_serializer(updated).data)
+
+
+# ── Supplier Payment ──────────────────────────────────────────────────────────
+
+class SupplierPaymentViewSet(NexusViewSet):
+    """
+    Payments made to suppliers.
+    GET  /inventory/supplier-payments/?supplier=<id>&purchase_order=<id>
+    POST /inventory/supplier-payments/
+    """
+    required_module = 'inventory'
+    serializer_class = SupplierPaymentSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['supplier', 'purchase_order', 'payment_method']
+    ordering = ['-payment_date']
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        return SupplierPayment.objects.filter(
+            tenant=self.tenant
+        ).select_related('supplier', 'purchase_order', 'recorded_by')
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='inventory.view')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='inventory.manage')()]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save(tenant=self.tenant, recorded_by=request.user)
+        return ApiResponse.created(data=self.get_serializer(instance).data)
+
+    @action(detail=False, methods=['get'], url_path='summary')
+    def summary(self, request):
+        """
+        GET /inventory/supplier-payments/summary/?supplier=<id>
+        Returns per-supplier totals: total_ordered (PO amounts) vs total_paid.
+        """
+        self.ensure_tenant()
+        from django.db.models import Q
+
+        supplier_filter = request.query_params.get('supplier')
+        qs = Supplier.objects.filter(tenant=self.tenant, is_active=True)
+        if supplier_filter:
+            qs = qs.filter(id=supplier_filter)
+
+        rows = []
+        for supplier in qs:
+            total_po_amount = sum(
+                po.total_amount
+                for po in supplier.purchase_orders.filter(
+                    tenant=self.tenant,
+                ).exclude(status=PurchaseOrder.STATUS_CANCELLED)
+            )
+            total_paid = (
+                SupplierPayment.objects
+                .filter(tenant=self.tenant, supplier=supplier)
+                .aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+            )
+            rows.append({
+                'supplier_id': supplier.id,
+                'supplier_name': supplier.name,
+                'total_po_amount': float(total_po_amount),
+                'total_paid': float(total_paid),
+                'outstanding': float(total_po_amount - total_paid),
+            })
+        rows.sort(key=lambda r: r['outstanding'], reverse=True)
+        return ApiResponse.success(data={'rows': rows})

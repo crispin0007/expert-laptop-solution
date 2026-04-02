@@ -5,6 +5,7 @@ from .models import (
     UnitOfMeasure, ProductVariant, VariantStockLevel,
     ReturnOrder, ReturnOrderItem,
     SupplierProduct, StockCount, StockCountItem,
+    ProductBundle, SupplierPayment,
 )
 
 
@@ -478,4 +479,67 @@ class StockCountWriteSerializer(serializers.ModelSerializer):
         tenant = _tenant_from_context(self)
         category = attrs.get('category', getattr(self.instance, 'category', None))
         _ensure_same_tenant(category, tenant, 'category')
+        return attrs
+
+
+# ── Product Bundle ────────────────────────────────────────────────────────────
+
+class ProductBundleSerializer(serializers.ModelSerializer):
+    component_name = serializers.CharField(source='component.name', read_only=True)
+    component_sku  = serializers.CharField(source='component.sku', read_only=True)
+
+    class Meta:
+        model  = ProductBundle
+        fields = (
+            'id', 'bundle', 'component', 'component_name', 'component_sku',
+            'quantity', 'created_at',
+        )
+        read_only_fields = ('id', 'created_at', 'component_name', 'component_sku')
+
+    def validate(self, attrs):
+        tenant = _tenant_from_context(self)
+        _ensure_same_tenant(attrs.get('bundle'), tenant, 'bundle')
+        _ensure_same_tenant(attrs.get('component'), tenant, 'component')
+        bundle = attrs.get('bundle', getattr(self.instance, 'bundle', None))
+        if bundle and not bundle.is_bundle:
+            raise serializers.ValidationError({'bundle': 'Product must have is_bundle=True.'})
+        component = attrs.get('component', getattr(self.instance, 'component', None))
+        if bundle and component and bundle.pk == component.pk:
+            raise serializers.ValidationError({'component': 'A bundle cannot include itself as a component.'})
+        return attrs
+
+
+# ── Supplier Payment ──────────────────────────────────────────────────────────
+
+class SupplierPaymentSerializer(serializers.ModelSerializer):
+    supplier_name  = serializers.CharField(source='supplier.name', read_only=True)
+    po_number      = serializers.CharField(source='purchase_order.po_number', read_only=True)
+    recorded_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = SupplierPayment
+        fields = (
+            'id', 'supplier', 'supplier_name',
+            'purchase_order', 'po_number',
+            'amount', 'payment_date', 'payment_method',
+            'reference', 'notes',
+            'recorded_by', 'recorded_by_name',
+            'created_at',
+        )
+        read_only_fields = ('id', 'created_at', 'supplier_name', 'po_number', 'recorded_by_name', 'recorded_by')
+
+    def get_recorded_by_name(self, obj):
+        if obj.recorded_by_id:
+            return obj.recorded_by.get_full_name() or obj.recorded_by.email
+        return None
+
+    def validate(self, attrs):
+        tenant = _tenant_from_context(self)
+        _ensure_same_tenant(attrs.get('supplier'), tenant, 'supplier')
+        po = attrs.get('purchase_order')
+        if po is not None:
+            _ensure_same_tenant(po, tenant, 'purchase_order')
+            supplier = attrs.get('supplier', getattr(self.instance, 'supplier', None))
+            if supplier and po.supplier_id != supplier.pk:
+                raise serializers.ValidationError({'purchase_order': 'PO does not belong to this supplier.'})
         return attrs

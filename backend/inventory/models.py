@@ -93,6 +93,7 @@ class Product(TenantModel):
         help_text='Warranty terms, conditions, or coverage details',
     )
     is_service = models.BooleanField(default=False)  # services have no stock
+    is_bundle = models.BooleanField(default=False, help_text='Bundle product — composed of component products')
     is_published = models.BooleanField(default=False, help_text='Show on website CMS (Phase 3)')
     is_active = models.BooleanField(default=True)
     is_deleted = models.BooleanField(default=False)
@@ -687,3 +688,107 @@ class StockCountItem(TenantModel):
         if self.counted_qty is None:
             return 0
         return self.counted_qty - self.expected_qty
+
+
+# ── Product Bundle ────────────────────────────────────────────────────────────
+
+class ProductBundle(TenantModel):
+    """
+    Bundle composition — defines which products make up a bundle product.
+    The parent product must have is_bundle=True.
+    Example: "Laptop Repair Kit" bundle = [Screen x1, Battery x1, Keyboard x1].
+    """
+
+    bundle = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name='bundle_components',
+        limit_choices_to={'is_bundle': True},
+        help_text='The parent bundle product',
+    )
+    component = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name='included_in_bundles',
+        help_text='Component product included in this bundle',
+    )
+    quantity = models.PositiveIntegerField(
+        default=1,
+        help_text='Quantity of this component per bundle unit',
+    )
+
+    class Meta(TenantModel.Meta):
+        ordering = ['component__name']
+        unique_together = ('tenant', 'bundle', 'component')
+        indexes = [
+            models.Index(fields=['tenant', 'bundle']),
+        ]
+
+    def __str__(self):
+        return f"{self.bundle.name} → {self.component.name} ×{self.quantity}"
+
+
+# ── Supplier Payment ──────────────────────────────────────────────────────────
+
+class SupplierPayment(TenantModel):
+    """
+    Record of a payment made to a supplier.
+    Tracks how much has been paid per PO so the outstanding balance is visible.
+    """
+
+    PAYMENT_CASH         = 'cash'
+    PAYMENT_BANK         = 'bank_transfer'
+    PAYMENT_CHEQUE       = 'cheque'
+    PAYMENT_MOBILE       = 'mobile_banking'
+    PAYMENT_OTHER        = 'other'
+
+    PAYMENT_METHOD_CHOICES = [
+        (PAYMENT_CASH,   'Cash'),
+        (PAYMENT_BANK,   'Bank Transfer'),
+        (PAYMENT_CHEQUE, 'Cheque'),
+        (PAYMENT_MOBILE, 'Mobile Banking'),
+        (PAYMENT_OTHER,  'Other'),
+    ]
+
+    supplier = models.ForeignKey(
+        Supplier,
+        on_delete=models.PROTECT,
+        related_name='payments',
+    )
+    purchase_order = models.ForeignKey(
+        PurchaseOrder,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='payments',
+        help_text='Leave blank for a general supplier payment not tied to a PO',
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_date = models.DateField()
+    payment_method = models.CharField(
+        max_length=20,
+        choices=PAYMENT_METHOD_CHOICES,
+        default=PAYMENT_BANK,
+    )
+    reference = models.CharField(
+        max_length=128,
+        blank=True,
+        help_text='Cheque number, transaction ID, or other reference',
+    )
+    notes = models.TextField(blank=True)
+    recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='recorded_supplier_payments',
+    )
+
+    class Meta(TenantModel.Meta):
+        ordering = ['-payment_date', '-created_at']
+        indexes = [
+            models.Index(fields=['tenant', 'supplier']),
+            models.Index(fields=['tenant', 'purchase_order']),
+            models.Index(fields=['tenant', 'payment_date']),
+        ]
+
+    def __str__(self):
+        return f"Payment {self.amount} to {self.supplier.name} on {self.payment_date}"

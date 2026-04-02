@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-size: 9pt;
+      color: #1a1a1a;
+      background: #fff;
+    }
+
+    @page {
+      size: A4;
+      margin: 18mm 18mm 22mm 18mm;
+      @bottom-center {
+        content: "Page " counter(page) " of " counter(pages);
+        font-size: 8pt;
+        color: #888;
+      }
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border-bottom: 2px solid #16a34a;
+      padding-bottom: 12px;
+      margin-bottom: 20px;
+    }
+
+    .logo-area h1 {
+      font-size: 18pt;
+      font-weight: 800;
+      color: #16a34a;
+      letter-spacing: -0.5px;
+    }
+    .logo-area .tagline {
+      font-size: 8pt;
+      color: #6b7280;
+      margin-top: 2px;
+    }
+
+    .po-meta { text-align: right; }
+    .po-meta .po-label {
+      font-size: 16pt;
+      font-weight: 700;
+      color: #111827;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+    .po-meta table { margin-top: 6px; margin-left: auto; }
+    .po-meta td { padding: 1px 0 1px 12px; font-size: 8pt; }
+    .po-meta td:first-child { color: #6b7280; text-align: left; }
+    .po-meta td:last-child  { font-weight: 600; text-align: right; }
+
+    .status-badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 4px;
+      font-size: 8pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .status-draft    { background: #fef3c7; color: #92400e; }
+    .status-sent     { background: #dbeafe; color: #1e40af; }
+    .status-partial  { background: #fef9c3; color: #713f12; }
+    .status-received { background: #d1fae5; color: #065f46; }
+    .status-cancelled{ background: #fee2e2; color: #991b1b; }
+
+    .addresses {
+      display: flex;
+      gap: 40px;
+      margin-bottom: 20px;
+    }
+    .address-block { flex: 1; }
+    .address-block .label {
+      font-size: 7pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #6b7280;
+      margin-bottom: 4px;
+    }
+    .address-block .name {
+      font-size: 10pt;
+      font-weight: 700;
+      color: #111827;
+      margin-bottom: 2px;
+    }
+    .address-block p { font-size: 8.5pt; color: #374151; line-height: 1.5; }
+
+    table.items {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 20px;
+    }
+    table.items thead tr {
+      background: #f3f4f6;
+    }
+    table.items th {
+      padding: 6px 8px;
+      font-size: 7.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #374151;
+      text-align: left;
+      border-bottom: 1px solid #d1d5db;
+    }
+    table.items th.right,
+    table.items td.right { text-align: right; }
+    table.items td {
+      padding: 6px 8px;
+      font-size: 9pt;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    table.items tr:last-child td { border-bottom: none; }
+
+    .totals {
+      float: right;
+      width: 260px;
+      margin-bottom: 30px;
+    }
+    .totals table { width: 100%; border-collapse: collapse; }
+    .totals td { padding: 3px 0; font-size: 9pt; }
+    .totals td:last-child { text-align: right; font-weight: 600; }
+    .totals tr.grand-total td {
+      border-top: 2px solid #16a34a;
+      padding-top: 6px;
+      font-size: 11pt;
+      font-weight: 800;
+      color: #16a34a;
+    }
+
+    .notes-section { clear: both; margin-top: 20px; }
+    .notes-section .label {
+      font-size: 7.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #6b7280;
+      margin-bottom: 4px;
+    }
+    .notes-section p { font-size: 8.5pt; color: #374151; }
+
+    .footer {
+      border-top: 1px solid #e5e7eb;
+      margin-top: 30px;
+      padding-top: 8px;
+      font-size: 7.5pt;
+      color: #9ca3af;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="logo-area">
+      <h1>{{ tenant.name }}</h1>
+      {% if tenant.address %}<p class="tagline">{{ tenant.address }}</p>{% endif %}
+      {% if tenant.email %}<p class="tagline">{{ tenant.email }}</p>{% endif %}
+    </div>
+    <div class="po-meta">
+      <div class="po-label">Purchase Order</div>
+      <table>
+        <tr><td>PO Number</td><td>{{ po.po_number }}</td></tr>
+        <tr><td>Date</td><td>{{ po.created_at|date:"d M Y" }}</td></tr>
+        {% if po.expected_delivery %}
+        <tr><td>Expected Delivery</td><td>{{ po.expected_delivery|date:"d M Y" }}</td></tr>
+        {% endif %}
+        <tr><td>Status</td><td>
+          <span class="status-badge status-{{ po.status }}">{{ po.get_status_display }}</span>
+        </td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- Addresses -->
+  <div class="addresses">
+    <div class="address-block">
+      <div class="label">From (Buyer)</div>
+      <div class="name">{{ tenant.name }}</div>
+      {% if tenant.address %}<p>{{ tenant.address }}</p>{% endif %}
+      {% if tenant.email %}<p>{{ tenant.email }}</p>{% endif %}
+    </div>
+    <div class="address-block">
+      <div class="label">To (Supplier)</div>
+      <div class="name">{{ po.supplier.name }}</div>
+      {% if po.supplier.contact_person %}<p>Attn: {{ po.supplier.contact_person }}</p>{% endif %}
+      {% if po.supplier.address %}<p>{{ po.supplier.address }}</p>{% endif %}
+      {% if po.supplier.email %}<p>{{ po.supplier.email }}</p>{% endif %}
+      {% if po.supplier.phone %}<p>{{ po.supplier.phone }}</p>{% endif %}
+      {% if po.supplier.payment_terms %}<p>Terms: {{ po.supplier.payment_terms }}</p>{% endif %}
+    </div>
+  </div>
+
+  <!-- Line Items -->
+  <table class="items">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Product / Description</th>
+        <th>SKU</th>
+        <th class="right">Qty Ordered</th>
+        <th class="right">Qty Received</th>
+        <th class="right">Unit Cost</th>
+        <th class="right">Subtotal</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      <tr>
+        <td>{{ forloop.counter }}</td>
+        <td>
+          {{ item.product.name }}
+          {% if item.variant %} — {{ item.variant.name }}{% endif %}
+        </td>
+        <td>{{ item.product.sku }}</td>
+        <td class="right">{{ item.quantity_ordered }}</td>
+        <td class="right">{{ item.quantity_received }}</td>
+        <td class="right">{{ item.unit_cost }}</td>
+        <td class="right">{{ item.subtotal }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7" style="text-align:center;color:#9ca3af;">No items.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <!-- Totals -->
+  <div class="totals">
+    <table>
+      <tr class="grand-total">
+        <td>Total</td>
+        <td>{{ po.total_amount }}</td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- Notes -->
+  {% if po.notes %}
+  <div class="notes-section">
+    <div class="label">Notes</div>
+    <p>{{ po.notes }}</p>
+  </div>
+  {% endif %}
+
+  <div class="footer">
+    Generated by NEXUS BMS &mdash; {{ po.po_number }}
+  </div>
+
+</div>
+</body>
+</html>
