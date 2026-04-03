@@ -8,7 +8,7 @@ class HrmModule(BMSModule):
     description = 'Leave management, staff profiles, attendance, and performance reviews'
     icon = 'users'
     version = '1.0.0'
-    is_premium = False
+    is_premium = True
     base_price = 0
     requires = ['core']
     permissions = [
