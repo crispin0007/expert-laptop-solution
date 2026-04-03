@@ -3428,6 +3428,7 @@ function BankAccountCreateModal({ onClose }: { onClose: () => void }) {
     onSuccess: () => {
       toast.success('Bank account created')
       qc.invalidateQueries({ queryKey: ['bank-accounts'] })
+      qc.invalidateQueries({ queryKey: ['accounts'] })
       onClose()
     },
     onError: (e: { response?: { data?: { detail?: string } } }) =>
@@ -3493,7 +3494,7 @@ function BankAccountEditModal({ bank, onClose }: { bank: BankAccount; onClose: (
   })
   const mutateSave = useMutation({
     mutationFn: (d: typeof form) => apiClient.patch(ACCOUNTING.BANK_ACCOUNT_DETAIL(bank.id), d),
-    onSuccess: () => { toast.success('Bank account updated'); qc.invalidateQueries({ queryKey: ['bank-accounts'] }); onClose() },
+    onSuccess: () => { toast.success('Bank account updated'); qc.invalidateQueries({ queryKey: ['bank-accounts'] }); qc.invalidateQueries({ queryKey: ['accounts'] }); onClose() },
     onError: () => toast.error('Update failed'),
   })
   return (
@@ -3548,7 +3549,7 @@ function BanksTab() {
 
   const mutateDeleteBank = useMutation({
     mutationFn: (id: number) => apiClient.delete(ACCOUNTING.BANK_ACCOUNT_DETAIL(id)),
-    onSuccess: () => { toast.success('Bank account deleted'); qc.invalidateQueries({ queryKey: ['bank-accounts'] }) },
+    onSuccess: () => { toast.success('Bank account deleted'); qc.invalidateQueries({ queryKey: ['bank-accounts'] }); qc.invalidateQueries({ queryKey: ['accounts'] }) },
     onError: () => toast.error('Delete failed'),
   })
 
