@@ -76,6 +76,9 @@ INSTALLED_APPS = [
 
     # local — Phase 3 stubs
     'ai_assistant',
+
+    # local — HRM
+    'hrm',
 ]
 
 # Use a custom user model provided by the accounts app
@@ -203,6 +206,12 @@ CELERY_BEAT_SCHEDULE = {
     'flag-overdue-pdcs-daily': {
         'task': 'accounting.tasks.task_flag_overdue_pdcs',
         'schedule': crontab(hour=8, minute=0),
+    },
+    # Seed HRM leave balances for all tenants on Nepal New Year (Baisakh 1 ≈ April 14).
+    # Runs daily in April only — idempotent get_or_create means retries are safe.
+    'seed-yearly-leave-balances': {
+        'task': 'hrm.tasks.task_seed_yearly_leave_balances_all_tenants',
+        'schedule': crontab(hour=1, minute=0, month_of_year='4', day_of_month='14,15,16'),
     },
 }
 

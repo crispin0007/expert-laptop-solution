@@ -78,6 +78,9 @@ urlpatterns = [
     path('api/v1/projects/', include('projects.urls')),
     path('api/v1/notifications/', include('notifications.urls')),
 
+    # HRM
+    path('api/v1/hrm/', include('hrm.urls')),
+
     # CMS & Website Builder
     path('api/v1/cms/', include('cms.urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

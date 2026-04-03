@@ -46,3 +46,10 @@ def create_owner_membership(sender, instance, created, **kwargs):
                 'created_by': instance.created_by,
             },
         )
+
+    # Seed Nepal default leave types for the new tenant
+    try:
+        from hrm.services.leave_service import seed_leave_types
+        seed_leave_types(instance)
+    except Exception:
+        pass  # hrm may not be installed in all deployments

@@ -172,7 +172,33 @@ class PayslipService:
         if tds_rate_dec > 0:
             tds_amount = ((base + bon) * tds_rate_dec).quantize(Decimal('0.01'))
 
-        net = base + bon + gross - tds_amount - other_ded
+        # HRM: compute unpaid leave deduction for this pay period
+        unpaid_leave_days = Decimal('0')
+        leave_deduction   = Decimal('0')
+        try:
+            from hrm.models import LeaveRequest
+            working_days = getattr(self.tenant, 'working_days_per_month', None) or Decimal('26')
+            working_days = Decimal(str(working_days))
+            daily_rate = (base / working_days).quantize(Decimal('0.01')) if working_days > 0 else Decimal('0')
+
+            unpaid_requests = LeaveRequest.objects.filter(
+                tenant=self.tenant,
+                staff=staff,
+                status=LeaveRequest.STATUS_APPROVED,
+                leave_type__is_paid=False,
+                start_date__gte=ps,
+                start_date__lte=pe,
+            ).select_related('leave_type')
+
+            for req in unpaid_requests:
+                unpaid_leave_days += req.days
+            leave_deduction = (unpaid_leave_days * daily_rate).quantize(Decimal('0.01'))
+        except Exception as exc:
+            logger.warning('HRM leave deduction lookup failed for staff=%s: %s', staff_id, exc)
+            unpaid_leave_days = Decimal('0')
+            leave_deduction   = Decimal('0')
+
+        net = base + bon + gross - tds_amount - other_ded - leave_deduction
 
         payslip, created = Payslip.objects.get_or_create(
             tenant=self.tenant,
@@ -180,15 +206,17 @@ class PayslipService:
             period_start=ps,
             period_end=pe,
             defaults={
-                'total_coins':       coins,
+                'total_coins':        coins,
                 'coin_to_money_rate': rate,
-                'gross_amount':      gross,
-                'base_salary':       base,
-                'bonus':             bon,
-                'tds_amount':        tds_amount,
-                'deductions':        other_ded,
-                'net_pay':           net,
-                'created_by':        self.user,
+                'gross_amount':       gross,
+                'base_salary':        base,
+                'bonus':              bon,
+                'tds_amount':         tds_amount,
+                'deductions':         other_ded,
+                'net_pay':            net,
+                'created_by':         self.user,
+                'unpaid_leave_days':  unpaid_leave_days,
+                'leave_deduction':    leave_deduction,
             },
         )
         if not created:
@@ -206,6 +234,8 @@ class PayslipService:
             payslip.tds_amount         = tds_amount
             payslip.deductions         = other_ded
             payslip.net_pay            = net
+            payslip.unpaid_leave_days  = unpaid_leave_days
+            payslip.leave_deduction    = leave_deduction
             payslip.save()
 
         # ── Auto-create / replace TDSEntry for this salary ────────────────────

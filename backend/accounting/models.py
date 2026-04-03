@@ -587,6 +587,15 @@ class Payslip(TenantModel):
                      ),
                    )
     net_pay      = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    # HRM integration: unpaid leave deduction computed from hrm.LeaveRequest
+    unpaid_leave_days = models.DecimalField(
+                          max_digits=5, decimal_places=1, default=0,
+                          help_text='Number of unpaid leave days in this pay period.',
+                        )
+    leave_deduction   = models.DecimalField(
+                          max_digits=14, decimal_places=2, default=0,
+                          help_text='Amount deducted for unpaid leave (unpaid_days × daily_rate).',
+                        )
     status       = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_DRAFT)
     approved_by  = models.ForeignKey(
                      settings.AUTH_USER_MODEL,

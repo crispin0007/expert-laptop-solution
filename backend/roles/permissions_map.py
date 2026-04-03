@@ -62,6 +62,16 @@ PERMISSION_MAP: dict[str, str] = {
     "staff.view":   "View staff list, profiles and availability",
     "staff.manage": "Invite, update, deactivate and reset passwords for staff",
 
+    # ── HRM ───────────────────────────────────────────────────────────────────
+    "hrm.view":               "View staff directory and leave calendar",
+    "hrm.manage":             "Manage leave types and HR configuration",
+    "hrm.leave.apply":        "Submit leave requests",
+    "hrm.leave.approve":      "Approve or reject leave requests",
+    "hrm.attendance.view":    "View attendance records",
+    "hrm.attendance.manage":  "Edit and add attendance records",
+    "hrm.performance.view":   "View performance reviews",
+    "hrm.performance.manage": "Create and submit performance reviews",
+
     # ── Reports ───────────────────────────────────────────────────────────────
     "reports.view": "Access reports and analytics dashboard",
 }
@@ -91,6 +101,10 @@ PERMISSION_GROUPS: list[dict] = [
     {
         "group": "Staff & HR",
         "keys": [k for k in PERMISSION_MAP if k.startswith("staff.")],
+    },
+    {
+        "group": "HRM",
+        "keys": [k for k in PERMISSION_MAP if k.startswith("hrm.")],
     },
     {
         "group": "Reports",
