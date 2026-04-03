@@ -322,22 +322,33 @@ class TenantMiddleware(MiddlewareMixin):
         # Return a response that is indistinguishable from a real tenant with
         # unauthenticated access — same status, same body, same headers.
         # Log the probe for the security audit trail.
+        #
+        # Exempt: public discovery endpoints whose sole purpose is tenant
+        # lookup. Returning 401 on these breaks the login page (public-info
+        # fetches branding before auth) and causes an infinite reload loop
+        # in the frontend. These paths are intentionally public — returning
+        # 404 from the view itself is the correct signal for "no such tenant".
+        _ENUM_DEFENSE_EXEMPT = (
+            '/api/v1/tenants/public-info/',
+            '/api/v1/tenants/resolve/',
+        )
         if _probed_slug is not None and tenant is None:
             from django.conf import settings as _settings
             if not _settings.DEBUG:  # only enforce in production; dev uses header
-                try:
-                    from core.audit import log_event, AuditEvent
-                    log_event(
-                        AuditEvent.TENANT_ENUM_PROBE,
-                        request=request,
-                        extra={'probed_slug': _probed_slug},
-                    )
-                except Exception:
-                    pass
-                import json
-                from django.http import HttpResponse
-                body = json.dumps({'detail': 'Authentication credentials were not provided.'})
-                return HttpResponse(body, status=401, content_type='application/json')
+                if not any(_path.startswith(p) for p in _ENUM_DEFENSE_EXEMPT):
+                    try:
+                        from core.audit import log_event, AuditEvent
+                        log_event(
+                            AuditEvent.TENANT_ENUM_PROBE,
+                            request=request,
+                            extra={'probed_slug': _probed_slug},
+                        )
+                    except Exception:
+                        pass
+                    import json
+                    from django.http import HttpResponse
+                    body = json.dumps({'detail': 'Authentication credentials were not provided.'})
+                    return HttpResponse(body, status=401, content_type='application/json')
 
         request.tenant = tenant
         request.is_main_domain = (tenant is None)

@@ -5,7 +5,7 @@ import { useAuthStore } from '../../store/authStore'
 import { useTenantStore } from '../../store/tenantStore'
 import apiClient from '../../api/client'
 import toast from 'react-hot-toast'
-import { ShieldCheck, ArrowLeft, KeyRound } from 'lucide-react'
+import { ShieldCheck, ArrowLeft, KeyRound, AlertTriangle } from 'lucide-react'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -15,6 +15,8 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [tenantName, setTenantName] = useState<string | null>(null)
+  /** true = public-info returned 404/4xx for the current subdomain → workspace doesn't exist */
+  const [workspaceNotFound, setWorkspaceNotFound] = useState(false)
 
   // 2FA pending state
   const [twoFAToken, setTwoFAToken] = useState<string | null>(null)
@@ -40,7 +42,15 @@ export default function LoginPage() {
 
     apiClient.get('/tenants/public-info/')
       .then((r) => { if (r.data?.name) setTenantName(r.data.name) })
-      .catch(() => {})
+      .catch((err) => {
+        // 404 = this subdomain has no matching tenant workspace.
+        // Any other error (network, 5xx) is also treated as "not found" to
+        // prevent the login form appearing on a broken/unknown subdomain.
+        const status = err?.response?.status
+        if (!status || status === 404 || status === 401) {
+          setWorkspaceNotFound(true)
+        }
+      })
   }, [])
 
   async function handleSubmit(e: FormEvent) {
@@ -77,6 +87,27 @@ export default function LoginPage() {
       toast.success('Welcome back!')
     }
     navigate('/')
+  }
+
+  // ── Workspace not found ───────────────────────────────────────────────────
+  if (workspaceNotFound) {
+    const slug = window.location.hostname.split('.')[0]
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="bg-white rounded-2xl shadow-lg p-10 w-full max-w-md text-center">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-amber-50 mb-6">
+            <AlertTriangle size={28} className="text-amber-500" />
+          </div>
+          <h1 className="text-xl font-bold text-gray-900 mb-2">Workspace not found</h1>
+          <p className="text-sm text-gray-500 mb-1">
+            <span className="font-mono font-medium text-gray-700">{slug}</span> is not a registered workspace.
+          </p>
+          <p className="text-sm text-gray-400">
+            Check the URL or contact your administrator.
+          </p>
+        </div>
+      </div>
+    )
   }
 
   // ── OTP step ─────────────────────────────────────────────────────────────

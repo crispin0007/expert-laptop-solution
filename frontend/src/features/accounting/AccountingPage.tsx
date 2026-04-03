@@ -28,6 +28,8 @@ import {
   Clock, Users, Truck, UserCheck, ShoppingBag,
   // 7-stubs tab icons
   ShoppingCart, ArrowDownLeft, ArrowUpRight, PackageCheck, Package, Link2, CircleDollarSign, Save,
+  // Expand / collapse all
+  ChevronsUpDown, ChevronsDownUp,
 } from 'lucide-react'
 import DateDisplay from '../../components/DateDisplay'
 import NepaliDatePicker from '../../components/NepaliDatePicker'
@@ -188,7 +190,7 @@ interface CoinTx {
 }
 interface Customer { id: number; name: string }
 interface Expense {
-  id: number; category: string; category_display: string; description: string
+  id: number; category: string; category_display: string; custom_category: string; description: string
   amount: string; date: string; account: number | null; account_name: string
   payment_account: number | null; payment_account_name: string; payment_account_code: string
   receipt_url: string; notes: string; status: string; status_display: string
@@ -197,6 +199,7 @@ interface Expense {
   rejected_by: number | null; rejected_by_name: string | null; rejected_at: string | null
   rejection_note: string; is_recurring: boolean; recur_interval: number | null
   next_recur_date: string | null; journal_entry: number | null; created_at: string
+  service: number | null; service_name: string
 }
 
 // ── New entity types ──────────────────────────────────────────────────────────
@@ -527,7 +530,8 @@ function DashboardTab() {
 
 // ─── Invoice Create Modal ──────────────────────────────────────────────────
 
-interface LineItemDraft { description: string; qty: string; unit_price: string; discount: string; line_type: 'service' | 'product'; product_id?: number }
+interface LineItemDraft { description: string; qty: string; unit_price: string; discount: string; line_type: 'service' | 'product'; product_id?: number; service_id?: number }
+interface ServiceItem { id: number; name: string; unit_price: string }
 const emptyLine = (): LineItemDraft => ({ description: '', qty: '1', unit_price: '', discount: '0', line_type: 'service' })
 
 interface InventoryProduct { id: number; name: string; unit_price: string; sku: string }
@@ -553,6 +557,11 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
     }),
   })
 
+  const { data: services = [] } = useQuery<ServiceItem[]>({
+    queryKey: ['services-all'],
+    queryFn: () => apiClient.get(INVENTORY.SERVICES + '?all=true').then(r => r.data?.data ?? r.data?.results ?? r.data ?? []),
+  })
+
   const mutation = useMutation({
     mutationFn: (payload: unknown) => apiClient.post(ACCOUNTING.INVOICES, payload),
     onSuccess: () => {
@@ -573,6 +582,15 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
     if (!p) return
     setLines(ls => ls.map((l, i) => i === lineIdx
       ? { ...l, product_id: p.id, description: p.name, unit_price: p.unit_price }
+      : l
+    ))
+  }
+
+  function selectService(lineIdx: number, serviceId: number) {
+    const s = services.find(x => x.id === serviceId)
+    if (!s) return
+    setLines(ls => ls.map((l, i) => i === lineIdx
+      ? { ...l, service_id: s.id, description: s.name, unit_price: s.unit_price }
       : l
     ))
   }
@@ -658,15 +676,28 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
                           ))}
                         </select>
                       ) : (
-                        <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
-                          placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" required />
+                        <div className="flex flex-col gap-0.5">
+                          {services.length > 0 && (
+                            <select
+                              value={l.service_id?.toString() ?? ''}
+                              onChange={e => e.target.value ? selectService(i, Number(e.target.value)) : setLines(ls => ls.map((ln, j) => j === i ? { ...ln, service_id: undefined } : ln))}
+                              className="border-0 outline-none text-xs bg-transparent text-gray-400 w-full"
+                            >
+                              <option value="">From catalog…</option>
+                              {services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                          )}
+                          {l.service_id
+                            ? <span className="text-xs text-gray-700 truncate">{l.description}</span>
+                            : <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)} placeholder="Or enter description" className="border-0 outline-none text-xs bg-transparent w-full" required />}
+                        </div>
                       )}
                     </td>
                     <td className="px-2 py-1.5">
                       <select value={l.line_type} onChange={e => {
                         const t = e.target.value as 'service' | 'product'
                         setLines(ls => ls.map((ln, j) => j === i
-                          ? { ...ln, line_type: t, product_id: undefined, description: '', unit_price: '' }
+                          ? { ...ln, line_type: t, product_id: undefined, service_id: undefined, description: '', unit_price: '' }
                           : ln
                         ))
                       }}
@@ -908,8 +939,22 @@ function InvoiceEditModal({ inv, onClose }: { inv: Invoice; onClose: () => void 
       toast.error(e?.response?.data?.detail ?? 'Failed to update invoice'),
   })
 
+  const { data: editInvServices = [] } = useQuery<ServiceItem[]>({
+    queryKey: ['services-all'],
+    queryFn: () => apiClient.get(INVENTORY.SERVICES + '?all=true').then(r => r.data?.data ?? r.data?.results ?? r.data ?? []),
+  })
+
   function setLine<K extends keyof LineItemDraft>(idx: number, key: K, val: string) {
     setLines(ls => ls.map((l, i) => i === idx ? { ...l, [key]: val } : l))
+  }
+
+  function selectEditInvService(lineIdx: number, serviceId: number) {
+    const s = editInvServices.find(x => x.id === serviceId)
+    if (!s) return
+    setLines(ls => ls.map((l, i) => i === lineIdx
+      ? { ...l, service_id: s.id, description: s.name, unit_price: s.unit_price }
+      : l
+    ))
   }
 
   function submit(e: React.FormEvent) {
@@ -980,12 +1025,32 @@ function InvoiceEditModal({ inv, onClose }: { inv: Invoice; onClose: () => void 
                 {lines.map((l, i) => (
                   <tr key={i}>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
-                        placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" required />
+                      {l.line_type === 'service' ? (
+                        <div className="flex flex-col gap-0.5">
+                          {editInvServices.length > 0 && (
+                            <select
+                              value={l.service_id?.toString() ?? ''}
+                              onChange={e => e.target.value ? selectEditInvService(i, Number(e.target.value)) : setLines(ls => ls.map((ln, j) => j === i ? { ...ln, service_id: undefined } : ln))}
+                              className="border-0 outline-none text-xs bg-transparent text-gray-400 w-full"
+                            >
+                              <option value="">From catalog…</option>
+                              {editInvServices.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                          )}
+                          {l.service_id
+                            ? <span className="text-xs text-gray-700 truncate">{l.description}</span>
+                            : <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)} placeholder="Or enter description" className="border-0 outline-none text-xs bg-transparent w-full" required />}
+                        </div>
+                      ) : (
+                        <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
+                          placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" required />
+                      )}
                     </td>
                     <td className="px-2 py-1.5">
-                      <select value={l.line_type} onChange={e => setLine(i, 'line_type', e.target.value as 'service' | 'product')}
-                        className="w-full border-0 outline-none text-xs bg-transparent">
+                      <select value={l.line_type} onChange={e => {
+                        const t = e.target.value as 'service' | 'product'
+                        setLines(ls => ls.map((ln, j) => j === i ? { ...ln, line_type: t, service_id: undefined, description: '', unit_price: '' } : ln))
+                      }} className="w-full border-0 outline-none text-xs bg-transparent">
                         <option value="service">Service</option>
                         <option value="product">Product</option>
                       </select>
@@ -1255,6 +1320,11 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
     queryFn: () => apiClient.get(`${INVENTORY.PRODUCTS}?page_size=500`).then(r => toPage<InventoryProduct>(r.data).results),
   })
 
+  const { data: billCreateServices = [] } = useQuery<ServiceItem[]>({
+    queryKey: ['services-all'],
+    queryFn: () => apiClient.get(INVENTORY.SERVICES + '?all=true').then(r => r.data?.data ?? r.data?.results ?? r.data ?? []),
+  })
+
   // Live total preview
   const subtotal = lines.reduce((acc, l) => {
     const qty   = Number(l.qty) || 0
@@ -1284,6 +1354,15 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
     if (!p) return
     setLines(ls => ls.map((l, i) => i === lineIdx
       ? { ...l, product_id: p.id, description: p.name, unit_price: p.unit_price, line_type: 'product' as const }
+      : l
+    ))
+  }
+
+  function selectBillCreateService(lineIdx: number, serviceId: number) {
+    const s = billCreateServices.find(x => x.id === serviceId)
+    if (!s) return
+    setLines(ls => ls.map((l, i) => i === lineIdx
+      ? { ...l, service_id: s.id, description: s.name, unit_price: s.unit_price }
       : l
     ))
   }
@@ -1395,15 +1474,28 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
                           ))}
                         </select>
                       ) : (
-                        <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
-                          placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" />
+                        <div className="flex flex-col gap-0.5">
+                          {billCreateServices.length > 0 && (
+                            <select
+                              value={l.service_id?.toString() ?? ''}
+                              onChange={e => e.target.value ? selectBillCreateService(i, Number(e.target.value)) : setLines(ls => ls.map((ln, j) => j === i ? { ...ln, service_id: undefined } : ln))}
+                              className="border-0 outline-none text-xs bg-transparent text-gray-400 w-full"
+                            >
+                              <option value="">From catalog…</option>
+                              {billCreateServices.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                          )}
+                          {l.service_id
+                            ? <span className="text-xs text-gray-700 truncate">{l.description}</span>
+                            : <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)} placeholder="Item description" className="border-0 outline-none text-xs bg-transparent w-full" />}
+                        </div>
                       )}
                     </td>
                     <td className="px-2 py-1.5">
                       <select value={l.line_type} onChange={e => {
                         const t = e.target.value as 'service' | 'product'
                         setLines(ls => ls.map((ln, j) => j === i
-                          ? { ...ln, line_type: t, product_id: undefined, description: '', unit_price: '' }
+                          ? { ...ln, line_type: t, product_id: undefined, service_id: undefined, description: '', unit_price: '' }
                           : ln
                         ))
                       }}
@@ -2560,11 +2652,72 @@ function PurposeBadge({ purpose }: { purpose: string }) {
   return <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium capitalize ${cls}`}>{label}</span>
 }
 
+function printJournalVoucher(je: JournalEntry) {
+  const bsDate = adStringToBsDisplay(je.date)?.bs ?? je.date
+  const rows = (je.lines ?? []).map(l => `
+    <tr>
+      <td>${l.account_code} — ${l.account_name}</td>
+      <td>${l.description ?? ''}</td>
+      <td class="num">${Number(l.debit) > 0 ? Number(l.debit).toLocaleString('en-IN', { minimumFractionDigits: 2 }) : ''}</td>
+      <td class="num">${Number(l.credit) > 0 ? Number(l.credit).toLocaleString('en-IN', { minimumFractionDigits: 2 }) : ''}</td>
+    </tr>`).join('')
+  const total = Number(je.total_debit).toLocaleString('en-IN', { minimumFractionDigits: 2 })
+  const win = window.open('', '_blank', 'width=800,height=600')
+  if (!win) return
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
+  <title>Journal Voucher — ${je.entry_number}</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 12px; margin: 24px; color: #111; }
+    h2 { font-size: 16px; margin: 0 0 2px; }
+    .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; margin: 12px 0; font-size: 11px; }
+    .meta span { color: #555; } .meta strong { color: #111; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th { background: #f3f4f6; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+         padding: 6px 8px; text-align: left; border: 1px solid #e5e7eb; }
+    td { padding: 5px 8px; border: 1px solid #e5e7eb; vertical-align: top; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .total-row td { font-weight: 700; background: #f9fafb; }
+    .footer { margin-top: 32px; display: flex; justify-content: space-between; font-size: 11px; color: #555; }
+    .sig-line { border-top: 1px solid #999; width: 160px; text-align: center; padding-top: 4px; margin-top: 40px; }
+    @media print { body { margin: 12px; } }
+  </style></head><body>
+  <h2>Journal Voucher</h2>
+  <p style="margin:0;font-size:11px;color:#555;">${je.entry_number}${je.is_reversal ? ' &nbsp;[REVERSING ENTRY]' : ''}</p>
+  <div class="meta">
+    <div><span>Date (BS): </span><strong>${bsDate}</strong></div>
+    <div><span>Date (AD): </span><strong>${je.date}</strong></div>
+    <div><span>Purpose: </span><strong>${(je.purpose ?? '').replace(/_/g, ' ')}</strong></div>
+    <div><span>Ref Type: </span><strong>${(je.reference_type ?? '').replace(/_/g, ' ')}</strong></div>
+    <div style="grid-column:1/-1"><span>Description: </span><strong>${je.description ?? ''}</strong></div>
+    ${je.created_by_name ? `<div><span>Created by: </span><strong>${je.created_by_name}</strong></div>` : ''}
+  </div>
+  <table>
+    <thead><tr>
+      <th>Account</th><th>Narration</th>
+      <th class="num">Debit (NPR)</th><th class="num">Credit (NPR)</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr class="total-row">
+      <td colspan="2" style="text-align:right;">Total</td>
+      <td class="num">${total}</td><td class="num">${total}</td>
+    </tr></tfoot>
+  </table>
+  <div class="footer">
+    <div><div class="sig-line">Prepared By</div></div>
+    <div><div class="sig-line">Checked By</div></div>
+    <div><div class="sig-line">Approved By</div></div>
+  </div>
+  </body></html>`)
+  win.document.close()
+  win.focus()
+  setTimeout(() => win.print(), 400)
+}
+
 function JournalsTab() {
   const qc = useQueryClient()
   const { can } = usePermissions()
   const confirm = useConfirm()
-  const [expanded, setExpanded] = useState<number | null>(null)
+  const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [purposeFilter, setPurposeFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [editJournal, setEditJournal] = useState<JournalEntry | null>(null)
@@ -2607,6 +2760,17 @@ function JournalsTab() {
               <option key={p} value={p}>{p.replace(/_/g, ' ')}</option>
             ))}
           </select>
+          {(data?.results?.length ?? 0) > 0 && (
+            expanded.size === (data?.results?.length ?? 0)
+              ? <button onClick={() => setExpanded(new Set())}
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                  <ChevronsDownUp size={14} /> Collapse All
+                </button>
+              : <button onClick={() => setExpanded(new Set(data?.results?.map(je => je.id) ?? []))}
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                  <ChevronsUpDown size={14} /> Expand All
+                </button>
+          )}
           <button onClick={() => setShowCreate(true)}
             className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 transition-colors">
             <Plus size={15} /> Manual Entry
@@ -2626,9 +2790,9 @@ function JournalsTab() {
             <tbody className="divide-y divide-gray-50">
               {data?.results?.map(je => (
                 <Fragment key={je.id}>
-                  <tr className="hover:bg-gray-50/50 cursor-pointer" onClick={() => setExpanded(expanded === je.id ? null : je.id)}>
+                  <tr className="hover:bg-gray-50/50 cursor-pointer" onClick={() => setExpanded(s => { const n = new Set(s); n.has(je.id) ? n.delete(je.id) : n.add(je.id); return n })}>
                     <td className="px-3 py-3">
-                      <ChevronRight size={14} className={`text-gray-400 transition-transform ${expanded === je.id ? 'rotate-90' : ''}`} />
+                      <ChevronRight size={14} className={`text-gray-400 transition-transform ${expanded.has(je.id) ? 'rotate-90' : ''}`} />
                     </td>
                     <td className="px-4 py-3 font-mono text-xs font-medium text-indigo-600">
                       {je.entry_number}
@@ -2647,21 +2811,27 @@ function JournalsTab() {
                       }
                     </td>
                     <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                      {!je.is_posted && can('can_manage_accounting') && (
-                        <div className="flex items-center gap-1.5">
-                          <button onClick={() => setEditJournal(je)}
-                            className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors" title="Edit entry">
-                            <Pencil size={13} />
-                          </button>
-                          <button onClick={() => confirm({ title: 'Delete Journal Entry', message: `Delete ${je.entry_number}? This cannot be undone.`, confirmLabel: 'Delete', variant: 'danger' }).then(ok => { if (ok) mutateDelete.mutate(je.id) })}
-                            className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Delete entry">
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={() => printJournalVoucher(je)}
+                          className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors" title="Print Voucher">
+                          <Printer size={13} />
+                        </button>
+                        {!je.is_posted && can('can_manage_accounting') && (
+                          <>
+                            <button onClick={() => setEditJournal(je)}
+                              className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors" title="Edit entry">
+                              <Pencil size={13} />
+                            </button>
+                            <button onClick={() => confirm({ title: 'Delete Journal Entry', message: `Delete ${je.entry_number}? This cannot be undone.`, confirmLabel: 'Delete', variant: 'danger' }).then(ok => { if (ok) mutateDelete.mutate(je.id) })}
+                              className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Delete entry">
+                              <Trash2 size={13} />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
-                  {expanded === je.id && (
+                  {expanded.has(je.id) && (
                     <tr>
                       <td colSpan={10} className="px-8 py-3 bg-gray-50">
                         <table className="w-full text-xs mb-2">
@@ -6304,6 +6474,11 @@ function QuotationCreateModal({ onClose }: { onClose: () => void }) {
     queryFn: () => apiClient.get('/customers/?page_size=200').then(r => toPage<Customer>(r.data)),
   })
 
+  const { data: quoCreateServices = [] } = useQuery<ServiceItem[]>({
+    queryKey: ['services-all'],
+    queryFn: () => apiClient.get(INVENTORY.SERVICES + '?all=true').then(r => r.data?.data ?? r.data?.results ?? r.data ?? []),
+  })
+
   const mutation = useMutation({
     mutationFn: (payload: unknown) => apiClient.post(ACCOUNTING.QUOTATIONS, payload),
     onSuccess: () => { toast.success('Quotation created'); qc.invalidateQueries({ queryKey: ['quotations'] }); onClose() },
@@ -6312,6 +6487,15 @@ function QuotationCreateModal({ onClose }: { onClose: () => void }) {
 
   function setLine<K extends keyof LineItemDraft>(idx: number, key: K, val: string) {
     setLines(ls => ls.map((l, i) => i === idx ? { ...l, [key]: val } : l))
+  }
+
+  function selectQuoCreateService(lineIdx: number, serviceId: number) {
+    const s = quoCreateServices.find(x => x.id === serviceId)
+    if (!s) return
+    setLines(ls => ls.map((l, i) => i === lineIdx
+      ? { ...l, service_id: s.id, description: s.name, unit_price: s.unit_price }
+      : l
+    ))
   }
 
   const subtotal = lines.reduce((s, l) => {
@@ -6369,8 +6553,25 @@ function QuotationCreateModal({ onClose }: { onClose: () => void }) {
               <tbody className="divide-y divide-gray-100">
                 {lines.map((l, i) => (
                   <tr key={i}>
-                    <td className="px-2 py-1.5"><input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)} placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" required /></td>
-                    <td className="px-2 py-1.5"><select value={l.line_type} onChange={e => setLine(i, 'line_type', e.target.value as 'service' | 'product')} className="w-full border-0 outline-none text-xs bg-transparent"><option value="service">Service</option><option value="product">Product</option></select></td>
+                    <td className="px-2 py-1.5">
+                      {l.line_type === 'service' && quoCreateServices.length > 0 ? (
+                        <div className="flex flex-col gap-0.5">
+                          <select value={l.service_id?.toString() ?? ''} onChange={e => e.target.value ? selectQuoCreateService(i, Number(e.target.value)) : setLines(ls => ls.map((ln, j) => j === i ? { ...ln, service_id: undefined } : ln))} className="border-0 outline-none text-xs bg-transparent text-gray-400 w-full">
+                            <option value="">From catalog…</option>
+                            {quoCreateServices.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                          </select>
+                          {l.service_id
+                            ? <span className="text-xs text-gray-700 truncate">{l.description}</span>
+                            : <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)} placeholder="Or enter description" className="border-0 outline-none text-xs bg-transparent w-full" required />}
+                        </div>
+                      ) : (
+                        <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)} placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" required />
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5"><select value={l.line_type} onChange={e => {
+                      const t = e.target.value as 'service' | 'product'
+                      setLines(ls => ls.map((ln, j) => j === i ? { ...ln, line_type: t, service_id: undefined, description: '', unit_price: '' } : ln))
+                    }} className="w-full border-0 outline-none text-xs bg-transparent"><option value="service">Service</option><option value="product">Product</option></select></td>
                     <td className="px-2 py-1.5"><input data-lpignore="true" type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)} className="w-full border-0 outline-none text-xs text-right bg-transparent" /></td>
                     <td className="px-2 py-1.5"><input data-lpignore="true" type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)} placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" required /></td>
                     <td className="px-2 py-1.5"><input data-lpignore="true" type="number" min="0" max="100" step="0.01" value={l.discount} onChange={e => setLine(i, 'discount', e.target.value)} className="w-full border-0 outline-none text-xs text-right bg-transparent" /></td>
@@ -6422,8 +6623,22 @@ function QuotationEditModal({ quo, onClose }: { quo: Quotation; onClose: () => v
     onError: (e: { response?: { data?: { detail?: string } } }) => toast.error(e?.response?.data?.detail ?? 'Update failed'),
   })
 
+  const { data: quoEditServices = [] } = useQuery<ServiceItem[]>({
+    queryKey: ['services-all'],
+    queryFn: () => apiClient.get(INVENTORY.SERVICES + '?all=true').then(r => r.data?.data ?? r.data?.results ?? r.data ?? []),
+  })
+
   function setLine<K extends keyof LineItemDraft>(idx: number, key: K, val: string) {
     setLines(ls => ls.map((l, i) => i === idx ? { ...l, [key]: val } : l))
+  }
+
+  function selectQuoEditService(lineIdx: number, serviceId: number) {
+    const s = quoEditServices.find(x => x.id === serviceId)
+    if (!s) return
+    setLines(ls => ls.map((l, i) => i === lineIdx
+      ? { ...l, service_id: s.id, description: s.name, unit_price: s.unit_price }
+      : l
+    ))
   }
 
   const subtotal = lines.reduce((s, l) => {
@@ -6480,8 +6695,25 @@ function QuotationEditModal({ quo, onClose }: { quo: Quotation; onClose: () => v
               <tbody className="divide-y divide-gray-100">
                 {lines.map((l, i) => (
                   <tr key={i}>
-                    <td className="px-2 py-1.5"><input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)} placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" /></td>
-                    <td className="px-2 py-1.5"><select value={l.line_type} onChange={e => setLine(i, 'line_type', e.target.value as 'service' | 'product')} className="w-full border-0 outline-none text-xs bg-transparent"><option value="service">Service</option><option value="product">Product</option></select></td>
+                    <td className="px-2 py-1.5">
+                      {l.line_type === 'service' && quoEditServices.length > 0 ? (
+                        <div className="flex flex-col gap-0.5">
+                          <select value={l.service_id?.toString() ?? ''} onChange={e => e.target.value ? selectQuoEditService(i, Number(e.target.value)) : setLines(ls => ls.map((ln, j) => j === i ? { ...ln, service_id: undefined } : ln))} className="border-0 outline-none text-xs bg-transparent text-gray-400 w-full">
+                            <option value="">From catalog…</option>
+                            {quoEditServices.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                          </select>
+                          {l.service_id
+                            ? <span className="text-xs text-gray-700 truncate">{l.description}</span>
+                            : <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)} placeholder="Or enter description" className="border-0 outline-none text-xs bg-transparent w-full" />}
+                        </div>
+                      ) : (
+                        <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)} placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" />
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5"><select value={l.line_type} onChange={e => {
+                      const t = e.target.value as 'service' | 'product'
+                      setLines(ls => ls.map((ln, j) => j === i ? { ...ln, line_type: t, service_id: undefined, description: '', unit_price: '' } : ln))
+                    }} className="w-full border-0 outline-none text-xs bg-transparent"><option value="service">Service</option><option value="product">Product</option></select></td>
                     <td className="px-2 py-1.5"><input data-lpignore="true" type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)} className="w-full border-0 outline-none text-xs text-right bg-transparent" /></td>
                     <td className="px-2 py-1.5"><input data-lpignore="true" type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)} placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" /></td>
                     <td className="px-2 py-1.5"><input data-lpignore="true" type="number" min="0" max="100" step="0.01" value={l.discount} onChange={e => setLine(i, 'discount', e.target.value)} className="w-full border-0 outline-none text-xs text-right bg-transparent" /></td>
@@ -7697,7 +7929,7 @@ function DayBookTab() {
   const today = new Date().toISOString().slice(0, 10)
   const [date, setDate]          = useState(today)
   const [submitted, setSubmitted] = useState(false)
-  const [expandedEntry, setExpandedEntry] = useState<string | null>(null)
+  const [expandedEntry, setExpandedEntry] = useState<Set<string>>(new Set())
 
   const { data: dayBook, isLoading, isFetching } = useQuery<DayBookReport>({
     queryKey: ['day-book', date],
@@ -7718,6 +7950,17 @@ function DayBookTab() {
             {(isLoading || isFetching) ? <Loader2 size={14} className="animate-spin" /> : <CalendarDays size={14} />}
             Load Day Book
           </button>
+          {dayBook && !isLoading && (dayBook.entries ?? []).length > 0 && (
+            expandedEntry.size === (dayBook.entries ?? []).length
+              ? <button onClick={() => setExpandedEntry(new Set())}
+                  className="flex items-center gap-2 px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                  <ChevronsDownUp size={14} /> Collapse All
+                </button>
+              : <button onClick={() => setExpandedEntry(new Set((dayBook.entries ?? []).map(e => e.entry_number)))}
+                  className="flex items-center gap-2 px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                  <ChevronsUpDown size={14} /> Expand All
+                </button>
+          )}
         </div>
       </div>
 
@@ -7750,7 +7993,7 @@ function DayBookTab() {
               {(dayBook.entries ?? []).map(entry => (
                 <div key={entry.entry_number} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                   <button className="w-full px-5 py-4 text-left flex items-center gap-4 hover:bg-gray-50 transition-colors"
-                    onClick={() => setExpandedEntry(e => e === entry.entry_number ? null : entry.entry_number)}>
+                    onClick={() => setExpandedEntry(s => { const n = new Set(s); n.has(entry.entry_number) ? n.delete(entry.entry_number) : n.add(entry.entry_number); return n })}>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono text-xs text-gray-500">{entry.entry_number}</span>
@@ -7767,9 +8010,9 @@ function DayBookTab() {
                       <span className="text-xs text-gray-500">Cr: </span>
                       <span className="text-xs font-semibold text-red-600">{npr(entry.total_credit)}</span>
                     </div>
-                    <ChevronDown size={15} className={`shrink-0 text-gray-400 transition-transform ${expandedEntry === entry.entry_number ? '' : '-rotate-90'}`} />
+                    <ChevronDown size={15} className={`shrink-0 text-gray-400 transition-transform ${expandedEntry.has(entry.entry_number) ? '' : '-rotate-90'}`} />
                   </button>
-                  {expandedEntry === entry.entry_number && (
+                  {expandedEntry.has(entry.entry_number) && (
                     <div className="border-t border-gray-100">
                       <table className="w-full text-xs">
                         <thead className="bg-gray-50">
@@ -7813,6 +8056,7 @@ const EXPENSE_CATEGORIES = [
   { value: 'marketing',       label: 'Marketing' },
   { value: 'training',        label: 'Training' },
   { value: 'other',           label: 'Other' },
+  { value: 'custom',          label: 'Custom...' },
 ] as const
 
 interface ExpenseModalProps {
@@ -7825,6 +8069,7 @@ function ExpenseCreateModal({ expense, onClose }: ExpenseModalProps) {
   const isEdit = !!expense
   const [form, setForm] = useState({
     category: expense?.category ?? 'other',
+    custom_category: expense?.custom_category ?? '',
     description: expense?.description ?? '',
     amount: expense?.amount ?? '',
     date: expense?.date ?? new Date().toISOString().slice(0, 10),
@@ -7834,11 +8079,16 @@ function ExpenseCreateModal({ expense, onClose }: ExpenseModalProps) {
     is_recurring: expense?.is_recurring ?? false,
     recur_interval: expense?.recur_interval?.toString() ?? '',
     next_recur_date: expense?.next_recur_date ?? '',
+    service: expense?.service?.toString() ?? '',
   })
 
   const { data: coaData } = useQuery({
     queryKey: ['expense-coa'],
     queryFn: () => apiClient.get(ACCOUNTING.ACCOUNTS + '?page_size=200&type=expense').then(r => r.data?.results ?? r.data?.data ?? []),
+  })
+  const { data: expenseServices = [] } = useQuery<ServiceItem[]>({
+    queryKey: ['services-all'],
+    queryFn: () => apiClient.get(INVENTORY.SERVICES + '?all=true').then(r => r.data?.data ?? r.data?.results ?? r.data ?? []),
   })
 
   const mutate = useMutation({
@@ -7859,6 +8109,7 @@ function ExpenseCreateModal({ expense, onClose }: ExpenseModalProps) {
     ev.preventDefault()
     const payload: Record<string, unknown> = {
       category: form.category,
+      custom_category: form.category === 'custom' ? form.custom_category : '',
       description: form.description,
       amount: form.amount,
       date: form.date,
@@ -7867,6 +8118,8 @@ function ExpenseCreateModal({ expense, onClose }: ExpenseModalProps) {
       is_recurring: form.is_recurring,
     }
     if (form.account) payload.account = Number(form.account)
+    if (form.service) payload.service = Number(form.service)
+    else payload.service = null
     if (form.is_recurring) {
       if (form.recur_interval) payload.recur_interval = Number(form.recur_interval)
       if (form.next_recur_date) payload.next_recur_date = form.next_recur_date
@@ -7897,6 +8150,21 @@ function ExpenseCreateModal({ expense, onClose }: ExpenseModalProps) {
               <input data-lpignore="true" type="number" step="0.01" min="0.01" value={form.amount} onChange={set('amount')} required className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="0.00" />
             </div>
           </div>
+          {form.category === 'custom' && (
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Custom Category Name</label>
+              <input data-lpignore="true" type="text" value={form.custom_category} onChange={set('custom_category')} required maxLength={100} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g. Team Event, Software License" />
+            </div>
+          )}
+          {expenseServices.length > 0 && (
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Linked Service <span className="font-normal text-gray-400">(optional)</span></label>
+              <select value={form.service} onChange={set('service')} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="">— No service link —</option>
+                {expenseServices.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+          )}
           <div>
             <label className="block text-xs font-semibold text-gray-500 mb-1">Description</label>
             <input data-lpignore="true" type="text" value={form.description} onChange={set('description')} required maxLength={300} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="What was this expense for?" />
@@ -7904,7 +8172,7 @@ function ExpenseCreateModal({ expense, onClose }: ExpenseModalProps) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1">Date</label>
-              <input data-lpignore="true" type="date" value={form.date} onChange={set('date')} required className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <NepaliDatePicker value={form.date} onChange={v => setForm(p => ({ ...p, date: v }))} />
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1">Expense Account (optional)</label>
@@ -7934,7 +8202,7 @@ function ExpenseCreateModal({ expense, onClose }: ExpenseModalProps) {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">First recurrence date</label>
-                <input data-lpignore="true" type="date" value={form.next_recur_date} onChange={set('next_recur_date')} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                <NepaliDatePicker value={form.next_recur_date} onChange={v => setForm(p => ({ ...p, next_recur_date: v }))} />
               </div>
             </div>
           )}
@@ -9998,6 +10266,133 @@ function SupplierPaymentsTab() {
   )
 }
 
+// ─── Service Ledger Tab ───────────────────────────────────────────────────────
+
+interface ServiceLedgerRow {
+  date: string; doc_type: string; doc_number: string; party: string
+  description: string; revenue: string; cost: string
+}
+interface ServiceLedgerReport {
+  service: { id: number; name: string }
+  date_from: string; date_to: string
+  rows: ServiceLedgerRow[]
+  revenue_total: string; cost_total: string; net: string
+}
+
+function ServiceLedgerTab() {
+  const { data: services = [] } = useQuery<ServiceItem[]>({
+    queryKey: ['services-all'],
+    queryFn: () => apiClient.get(INVENTORY.SERVICES + '?all=true').then(r => r.data?.data ?? r.data?.results ?? r.data ?? []),
+  })
+  const [serviceId, setServiceId] = useState('')
+  const [dateFrom, setDateFrom]   = useState(() => fiscalYearAdParams(currentFiscalYear()).date_from)
+  const [dateTo, setDateTo]       = useState(() => new Date().toISOString().slice(0, 10))
+  const [submitted, setSubmitted] = useState(false)
+
+  const { data: report, isLoading, isFetching } = useQuery<ServiceLedgerReport>({
+    queryKey: ['service-ledger', serviceId, dateFrom, dateTo],
+    queryFn: () => apiClient.get(
+      `${ACCOUNTING.REPORT_SERVICE_LEDGER}?service_id=${serviceId}&date_from=${dateFrom}&date_to=${dateTo}`
+    ).then(r => r.data?.data ?? r.data),
+    enabled: submitted && !!serviceId,
+  })
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-end">
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Service</label>
+            <select value={serviceId} onChange={e => { setServiceId(e.target.value); setSubmitted(false) }}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              <option value="">Select service…</option>
+              {services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
+            <NepaliDatePicker value={dateFrom} onChange={v => { setDateFrom(v); setSubmitted(false) }} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
+            <NepaliDatePicker value={dateTo} onChange={v => { setDateTo(v); setSubmitted(false) }} />
+          </div>
+        </div>
+        <div className="flex items-center gap-2 mt-4">
+          <button onClick={() => { if (!serviceId) { toast.error('Select a service'); return } setSubmitted(true) }}
+            disabled={!serviceId || isFetching}
+            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">
+            {(isLoading || isFetching) ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+            Run Ledger
+          </button>
+          <button onClick={() => { const p = fiscalYearAdParams(currentFiscalYear()); setDateFrom(p.date_from); setDateTo(new Date().toISOString().slice(0, 10)); setSubmitted(false) }}
+            className="px-3 py-2 text-xs font-semibold border border-indigo-300 text-indigo-700 bg-indigo-50 rounded-lg hover:bg-indigo-100">
+            This FY
+          </button>
+        </div>
+      </div>
+
+      {submitted && (isLoading || isFetching) && <div className="flex justify-center py-10"><Loader2 size={28} className="animate-spin text-indigo-400" /></div>}
+
+      {report && !isLoading && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-start justify-between flex-wrap gap-3">
+            <div>
+              <p className="text-xs text-gray-400 uppercase tracking-widest font-semibold">Service Ledger</p>
+              <h2 className="text-base font-bold text-gray-800">{report.service.name}</h2>
+              <p className="text-xs text-gray-500 mt-0.5">{fmt(report.date_from)} → {fmt(report.date_to)}</p>
+            </div>
+            <div className="flex gap-6 text-right text-sm">
+              <div><p className="text-xs text-gray-400">Revenue</p><p className="font-bold text-green-700">{npr(report.revenue_total)}</p></div>
+              <div><p className="text-xs text-gray-400">Cost</p><p className="font-bold text-red-600">{npr(report.cost_total)}</p></div>
+              <div><p className="text-xs text-gray-400">Net</p><p className={`font-bold ${Number(report.net) >= 0 ? 'text-gray-800' : 'text-red-700'}`}>{npr(report.net)}</p></div>
+            </div>
+          </div>
+          {report.rows.length === 0 ? (
+            <div className="text-center py-10 text-gray-400 text-sm">No transactions in this period</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-100">
+                  <tr>
+                    {['Date', 'Type', 'Doc #', 'Party', 'Description', 'Revenue', 'Cost'].map(h => (
+                      <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {report.rows.map((row, i) => (
+                    <tr key={i} className="hover:bg-gray-50">
+                      <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">{fmt(row.date)}</td>
+                      <td className="px-4 py-2.5 text-xs">
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${row.doc_type === 'Invoice' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                          {row.doc_type}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-xs font-mono text-gray-700">{row.doc_number}</td>
+                      <td className="px-4 py-2.5 text-xs text-gray-600">{row.party}</td>
+                      <td className="px-4 py-2.5 text-xs text-gray-700 max-w-xs truncate">{row.description}</td>
+                      <td className="px-4 py-2.5 text-xs text-right font-medium text-green-700">{Number(row.revenue) > 0 ? npr(row.revenue) : '—'}</td>
+                      <td className="px-4 py-2.5 text-xs text-right font-medium text-red-600">{Number(row.cost) > 0 ? npr(row.cost) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="border-t-2 border-gray-200 bg-gray-50">
+                  <tr>
+                    <td colSpan={5} className="px-4 py-2.5 text-xs font-bold text-gray-700">Totals</td>
+                    <td className="px-4 py-2.5 text-xs text-right font-bold text-green-700">{npr(report.revenue_total)}</td>
+                    <td className="px-4 py-2.5 text-xs text-right font-bold text-red-600">{npr(report.cost_total)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main Page ──────────────────────────────────────────────────────────────
 
 export default function AccountingPage() {
@@ -10006,7 +10401,7 @@ export default function AccountingPage() {
   const { fyYear: _fyYear, setFyYear: _setFyYear } = useFyStore()
 
   // Tabs with their own date-range controls don't need the global FY bar
-  const HIDE_FY_BAR = new Set(['ledger', 'day-book', 'accounts', 'tds', 'bank-reconciliation', 'recurring-journals'])
+  const HIDE_FY_BAR = new Set(['ledger', 'day-book', 'accounts', 'tds', 'bank-reconciliation', 'recurring-journals', 'service-ledger'])
   const showFyBar = !HIDE_FY_BAR.has(activeTab)
 
   function renderTab() {
@@ -10029,6 +10424,8 @@ export default function AccountingPage() {
       case 'ledger':                return <LedgerTab />
       case 'day-book':              return <DayBookTab />
       case 'expenses':              return <ExpensesTab />
+      // Services
+      case 'service-ledger':        return <ServiceLedgerTab />
       // Sales
       case 'sales-orders':          return <SalesOrdersTab />
       case 'customer-payments':     return <CustomerPaymentsTab />

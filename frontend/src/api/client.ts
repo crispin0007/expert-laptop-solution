@@ -92,12 +92,18 @@ apiClient.interceptors.request.use((config) => {
 // Never intercept auth/pre-login endpoints — those 401s must propagate to
 // the caller so it can show a toast (not trigger a hard page reload via logout).
 //
+// Also never intercept public discovery endpoints (public-info, resolve) —
+// they can legitimately return 401/404 for unknown tenant slugs and the
+// caller handles that gracefully (shows "workspace not found" UI).
+//
 // NOTE: originalRequest.url is the path RELATIVE to baseURL (/api/v1), so
 // these must NOT include the /api/v1 prefix.
 const AUTH_ENDPOINTS = [
   '/accounts/token/',
   '/accounts/token/refresh/',
   '/accounts/2fa/verify/',   // pre-auth: 401 = wrong/expired token, not session expiry
+  '/tenants/public-info/',   // public discovery — 404 = unknown tenant, must not trigger reload
+  '/tenants/resolve/',       // public discovery
 ]
 
 apiClient.interceptors.response.use(

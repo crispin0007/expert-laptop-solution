@@ -44,6 +44,7 @@ import {
   ExternalLink,
   Wallet,
   AlignLeft,
+  ReceiptText,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { useTenantStore } from '../store/tenantStore'
@@ -429,17 +430,18 @@ function SidebarContent({
                   <SubNavItem to="/accounting?tab=bank-reconciliation"  label="Reconciliation"     icon={<ArrowRightLeft size={13} />} />
                 </NavSubSection>
 
-                <NavSubSection label="Ledger" icon={<BookOpen size={11} />} matchTabs={['journals','accounts','recurring-journals','ledger','day-book','journal-voucher']}>
+                <NavSubSection label="Account Voucher" icon={<BookOpen size={11} />} matchTabs={['journals','accounts','recurring-journals','ledger','day-book','journal-voucher','service-ledger']}>
                   <SubNavItem to="/accounting?tab=journal-voucher"      label="Journal Voucher"    icon={<AlignLeft     size={13} />} />
                   <SubNavItem to="/accounting?tab=journals"             label="Journal Entries"    icon={<BookOpen      size={13} />} />
                   <SubNavItem to="/accounting?tab=accounts"             label="Chart of Accounts"  icon={<Layers        size={13} />} />
                   <SubNavItem to="/accounting?tab=recurring-journals"   label="Recurring Journals" icon={<Repeat2       size={13} />} />
                   <SubNavItem to="/accounting?tab=ledger"               label="Ledger"             icon={<BookMarked    size={13} />} />
                   <SubNavItem to="/accounting?tab=day-book"             label="Day Book"           icon={<CalendarDays  size={13} />} />
+                  <SubNavItem to="/accounting?tab=service-ledger"       label="Service Ledger"     icon={<ReceiptText   size={13} />} />
                 </NavSubSection>
 
                 <NavSubSection label="Payroll" icon={<Coins size={11} />} matchTabs={['payslips']}>
-                  <SubNavItem to="/accounting?tab=payslips" label="Payslips & Coins" icon={<Coins size={13} />} />
+                  <SubNavItem to="/accounting?tab=payslips" label="Employee" icon={<Coins size={13} />} />
                 </NavSubSection>
 
               </NavSection>

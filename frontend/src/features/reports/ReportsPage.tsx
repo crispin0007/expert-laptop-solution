@@ -56,7 +56,7 @@ type ReportType =
   | 'pl' | 'balance-sheet' | 'trial-balance' | 'gl-summary' | 'gl-master' | 'cash-flow'
   | 'aged-receivables' | 'customer-receivable-summary' | 'invoice-age' | 'customer-statement'
   | 'aged-payables' | 'supplier-payable-summary' | 'bill-age' | 'supplier-statement'
-  | 'sales-by-customer' | 'sales-by-item' | 'sales-by-customer-monthly' | 'sales-by-item-monthly' | 'sales-master' | 'sales-summary'
+  | 'sales-by-customer' | 'sales-by-item' | 'sales-by-customer-monthly' | 'sales-by-item-monthly' | 'sales-master' | 'sales-summary' | 'service-report'
   | 'purchase-by-supplier' | 'purchase-by-item' | 'purchase-by-supplier-monthly' | 'purchase-by-item-monthly' | 'purchase-master'
   | 'sales-register' | 'sales-return-register' | 'purchase-register' | 'purchase-return-register' | 'vat' | 'tds-report' | 'annex-13' | 'annex-5'
   | 'inventory-position' | 'inventory-movement' | 'inventory-master' | 'product-profitability'
@@ -122,6 +122,7 @@ const REPORTS: ReportMeta[] = [
   { key: 'sales-by-item',             label: 'By Item',             endpoint: ACCOUNTING.REPORT_SALES_BY_ITEM,             icon: ShoppingBag,  category: 'sales', dateMode: 'range' },
   { key: 'sales-by-customer-monthly', label: 'By Customer Monthly', endpoint: ACCOUNTING.REPORT_SALES_BY_CUSTOMER_MONTHLY, icon: CalendarDays, category: 'sales', dateMode: 'range' },
   { key: 'sales-by-item-monthly',     label: 'By Item Monthly',     endpoint: ACCOUNTING.REPORT_SALES_BY_ITEM_MONTHLY,     icon: CalendarDays, category: 'sales', dateMode: 'range' },
+  { key: 'service-report',             label: 'Service Report',      endpoint: ACCOUNTING.REPORT_SERVICE_REPORT,            icon: BarChart2,    category: 'sales', dateMode: 'range' },
   // ── Purchases ─────────────────────────────────────────────────────────────
   { key: 'purchase-master',              label: 'Purchase Master',       endpoint: ACCOUNTING.REPORT_PURCHASE_MASTER,              icon: FileText,     category: 'purchases', dateMode: 'range' },
   { key: 'purchase-by-supplier',         label: 'By Supplier',           endpoint: ACCOUNTING.REPORT_PURCHASE_BY_SUPPLIER,         icon: Truck,        category: 'purchases', dateMode: 'range' },
@@ -1483,6 +1484,13 @@ function toCSV(key: ReportType, data: Record<string, unknown>): string {
       }
       break
     }
+    case 'service-report': {
+      const sd = data as unknown as { rows: { name: string; invoice_count: number; revenue: string; expense_count: number; cost: string; net: string }[]; total_revenue: string; total_cost: string; total_net: string }
+      row('Service', 'Invoices', 'Revenue', 'Expenses', 'Cost', 'Net')
+      sd.rows.forEach(r => row(r.name, r.invoice_count, r.revenue, r.expense_count, r.cost, r.net))
+      row('Total', '', sd.total_revenue, '', sd.total_cost, sd.total_net)
+      break
+    }
     default: {
       const rowsArr = (data.rows as Record<string, unknown>[] | undefined) ?? []
       if (rowsArr.length) {
@@ -1967,6 +1975,53 @@ ${el.innerHTML}
         return <MonthlyCrossTableView data={d as unknown as MonthlyCrossData} entityKey="supplier" />
       case 'purchase-by-item-monthly':
         return <MonthlyCrossTableView data={d as unknown as MonthlyCrossData} entityKey="item" />
+      case 'service-report': {
+        const sd = d as unknown as { date_from: string; date_to: string; rows: { id: number; name: string; invoice_count: number; revenue: string; expense_count: number; cost: string; net: string }[]; total_revenue: string; total_cost: string; total_net: string }
+        return (
+          <div className="overflow-x-auto">
+            <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-start justify-between flex-wrap gap-3">
+              <div className="flex gap-6 text-right text-sm">
+                <div><p className="text-xs text-gray-400">Total Revenue</p><p className="font-bold text-green-700">{npr(sd.total_revenue)}</p></div>
+                <div><p className="text-xs text-gray-400">Total Cost</p><p className="font-bold text-red-600">{npr(sd.total_cost)}</p></div>
+                <div><p className="text-xs text-gray-400">Net</p><p className={`font-bold ${Number(sd.total_net) >= 0 ? 'text-gray-800' : 'text-red-700'}`}>{npr(sd.total_net)}</p></div>
+              </div>
+            </div>
+            {sd.rows.length === 0 ? (
+              <EmptyState message="No service data in this period" />
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-100">
+                  <tr>{['Service','Invoices','Revenue','Expenses','Cost','Net'].map(h => (
+                    <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                  ))}</tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {sd.rows.map(row => (
+                    <tr key={row.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 text-sm font-medium text-gray-800">{row.name}</td>
+                      <td className="px-4 py-3 text-xs text-center text-gray-500">{row.invoice_count}</td>
+                      <td className="px-4 py-3 text-sm text-right font-medium text-green-700">{npr(row.revenue)}</td>
+                      <td className="px-4 py-3 text-xs text-center text-gray-500">{row.expense_count}</td>
+                      <td className="px-4 py-3 text-sm text-right font-medium text-red-600">{npr(row.cost)}</td>
+                      <td className="px-4 py-3 text-sm text-right font-bold" style={{ color: Number(row.net) >= 0 ? '#166534' : '#b91c1c' }}>{npr(row.net)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="border-t-2 border-gray-200 bg-gray-50">
+                  <tr>
+                    <td className="px-4 py-2.5 text-xs font-bold text-gray-700">Total</td>
+                    <td />
+                    <td className="px-4 py-2.5 text-sm text-right font-bold text-green-700">{npr(sd.total_revenue)}</td>
+                    <td />
+                    <td className="px-4 py-2.5 text-sm text-right font-bold text-red-600">{npr(sd.total_cost)}</td>
+                    <td className="px-4 py-2.5 text-sm text-right font-bold" style={{ color: Number(sd.total_net) >= 0 ? '#166534' : '#b91c1c' }}>{npr(sd.total_net)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            )}
+          </div>
+        )
+      }
     }
 
     // Generic table
