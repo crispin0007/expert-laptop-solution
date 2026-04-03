@@ -120,7 +120,7 @@ class LeaveBalanceViewSet(NexusViewSet):
         )
 
         # Staff see only their own balances; managers/admins see everyone
-        if self.request.user.tenantmemberships.filter(
+        if self.request.user.memberships.filter(
             tenant=self.tenant, role__in=MANAGER_ROLES
         ).exists():
             staff_id = self.request.query_params.get('staff_id')
@@ -151,7 +151,7 @@ class LeaveBalanceViewSet(NexusViewSet):
             return ApiResponse.error(message='year must be an integer.')
 
         # Only admins/managers can seed
-        if not request.user.tenantmemberships.filter(
+        if not request.user.memberships.filter(
             tenant=self.tenant, role__in=MANAGER_ROLES
         ).exists():
             return ApiResponse.error(message='Permission denied.', status_code=403)
@@ -206,7 +206,7 @@ class LeaveRequestViewSet(NexusViewSet):
         )
 
         request = self.request
-        is_manager = request.user.tenantmemberships.filter(
+        is_manager = request.user.memberships.filter(
             tenant=self.tenant, role__in=MANAGER_ROLES
         ).exists()
 
@@ -273,7 +273,7 @@ class LeaveRequestViewSet(NexusViewSet):
         self.ensure_tenant()
         leave_request = self.get_object()
         # Staff can cancel own; admin/manager can cancel any
-        is_manager = request.user.tenantmemberships.filter(
+        is_manager = request.user.memberships.filter(
             tenant=self.tenant, role__in=MANAGER_ROLES
         ).exists()
         if not is_manager and leave_request.staff != request.user:
@@ -325,7 +325,7 @@ class StaffProfileViewSet(NexusViewSet):
             'membership__user', 'membership__department'
         )
 
-        is_manager = self.request.user.tenantmemberships.filter(
+        is_manager = self.request.user.memberships.filter(
             tenant=self.tenant, role__in=MANAGER_ROLES
         ).exists()
 
@@ -347,7 +347,7 @@ class StaffProfileViewSet(NexusViewSet):
         self.ensure_tenant()
         profile = self.get_object()
 
-        is_admin = request.user.tenantmemberships.filter(
+        is_admin = request.user.memberships.filter(
             tenant=self.tenant, role__in=ADMIN_ROLES
         ).exists()
         is_own = profile.membership.user == request.user
