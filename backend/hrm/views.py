@@ -61,11 +61,13 @@ class LeaveTypeViewSet(NexusViewSet):
     pagination_class = NexusPageNumberPagination
 
     def get_permissions(self):
-        if self.action in ('list', 'retrieve', 'seed_defaults'):
+        if self.action in ('list', 'retrieve'):
+            # All roles can list/view leave types (needed for the Apply form)
             return [
                 permissions.IsAuthenticated(),
-                make_role_permission(*MANAGER_ROLES, permission_key='hrm.view')(),
+                make_role_permission(*ALL_ROLES, permission_key='hrm.view')(),
             ]
+        # create, update, delete, seed_defaults — admin/manager only
         return [
             permissions.IsAuthenticated(),
             make_role_permission(*ADMIN_ROLES, permission_key='hrm.manage')(),

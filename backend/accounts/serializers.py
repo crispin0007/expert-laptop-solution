@@ -166,6 +166,11 @@ class MeSerializer(serializers.ModelSerializer):
             # Settings & roles
             'can_manage_settings': _perm(is_admin, 'settings.manage'),
             'can_manage_roles': _perm(is_admin, 'roles.manage'),
+            # HRM
+            'can_view_hrm': _perm(True, 'hrm.view'),
+            'can_manage_hrm': _perm(is_manager, 'hrm.manage'),
+            'can_apply_leave': _perm(is_staff, 'hrm.leave.apply'),
+            'can_approve_leave': _perm(is_manager, 'hrm.leave.approve'),
         }
 
         return {

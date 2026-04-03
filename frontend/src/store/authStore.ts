@@ -40,6 +40,11 @@ export interface UserPermissions {
   // Settings & roles
   can_manage_settings: boolean
   can_manage_roles: boolean
+  // HRM
+  can_view_hrm: boolean
+  can_manage_hrm: boolean
+  can_apply_leave: boolean
+  can_approve_leave: boolean
 }
 
 export interface Membership {

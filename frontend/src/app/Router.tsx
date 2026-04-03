@@ -29,6 +29,7 @@ import AccountingPage from '../features/accounting/AccountingPage'
 import ReportsPage from '../features/reports/ReportsPage'
 import InventoryPage from '../features/inventory/InventoryPage'
 import DepartmentListPage from '../features/departments/DepartmentListPage'
+import HrmPage from '../features/hrm/HrmPage'
 import StaffListPage from '../features/staff/StaffListPage'
 import RolesListPage from '../features/roles/RolesListPage'
 import TenantManagementPage from '../features/admin/TenantManagementPage'
@@ -146,6 +147,18 @@ export default function Router() {
               <ModuleGuard module="departments">
                 <RoleGuard require="can_view_departments">
                   <DepartmentListPage />
+                </RoleGuard>
+              </ModuleGuard>
+            }
+          />
+
+          {/* HRM module */}
+          <Route
+            path="hrm"
+            element={
+              <ModuleGuard module="hrm">
+                <RoleGuard require="can_view_hrm">
+                  <HrmPage />
                 </RoleGuard>
               </ModuleGuard>
             }

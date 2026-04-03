@@ -512,6 +512,13 @@ function SidebarContent({
             {perms.can('can_manage_roles') && (
               <NavItem to="/roles"       label="Roles"       icon={Shield}     collapsed={collapsed} />
             )}
+            {/* HRM module nav */}
+            {modules.has('hrm') && perms.can('can_view_hrm') && (
+              <NavSection label="HR Management" icon={Users} basePath="/hrm" collapsed={collapsed}>
+                <SubNavItem to="/hrm?tab=directory" label="Staff Directory" icon={<UserCircle size={13} />} />
+                <SubNavItem to="/hrm?tab=leaves"    label="Leaves"          icon={<CalendarDays size={13} />} />
+              </NavSection>
+            )}
             {/* Auto-rendered people-section module items. */}
             {SIMPLE_MODULE_NAV
               .filter(m => m.section === 'people' && modules.has(m.key) && (!m.perm || perms.can(m.perm)))

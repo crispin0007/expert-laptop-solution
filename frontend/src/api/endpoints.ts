@@ -386,6 +386,20 @@ export const INVENTORY = {
   PO_PDF: (id: number) => `/inventory/purchase-orders/${id}/pdf/`,
 } as const
 
+export const HRM = {
+  LEAVE_TYPES:          '/hrm/leave-types/',
+  LEAVE_TYPE_SEED:      '/hrm/leave-types/seed_defaults/',
+  LEAVE_BALANCES:       '/hrm/leave-balances/',
+  LEAVE_BALANCE_SEED:   '/hrm/leave-balances/seed_year/',
+  LEAVE_REQUESTS:       '/hrm/leave-requests/',
+  LEAVE_REQUEST_DETAIL: (id: number) => `/hrm/leave-requests/${id}/`,
+  LEAVE_REQUEST_APPROVE:(id: number) => `/hrm/leave-requests/${id}/approve/`,
+  LEAVE_REQUEST_REJECT: (id: number) => `/hrm/leave-requests/${id}/reject/`,
+  LEAVE_REQUEST_CANCEL: (id: number) => `/hrm/leave-requests/${id}/cancel/`,
+  PROFILES:             '/hrm/profiles/',
+  PROFILE_DETAIL:       (id: number) => `/hrm/profiles/${id}/`,
+} as const
+
 export const CMS = {
   // Site
   SITE:            '/cms/site/',
