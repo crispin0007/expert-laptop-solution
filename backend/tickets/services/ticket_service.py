@@ -133,6 +133,12 @@ class TicketService:
         customer_id=None,
         fiscal_year_start=None,
         fiscal_year_end=None,
+        ticket_type_id=None,
+        category_id=None,
+        created_by_id=None,
+        date_from=None,
+        date_to=None,
+        party_name=None,
     ):
         """Return filtered, tenant-scoped ticket queryset."""
         return self.repo.list(
@@ -143,6 +149,12 @@ class TicketService:
             customer_id=customer_id,
             fiscal_year_start=fiscal_year_start,
             fiscal_year_end=fiscal_year_end,
+            ticket_type_id=ticket_type_id,
+            category_id=category_id,
+            created_by_id=created_by_id,
+            date_from=date_from,
+            date_to=date_to,
+            party_name=party_name,
         )
 
     def get_timeline(self, ticket):

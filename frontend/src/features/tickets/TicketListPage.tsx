@@ -5,7 +5,7 @@ import { useAuthStore } from '../../store/authStore'
 import {
   Ticket as TicketIcon, Plus, Search, Filter, AlertCircle,
   Clock, CheckCircle2, CircleDot, Settings2,
-  ChevronLeft, ChevronRight, X, History, User,
+  ChevronLeft, ChevronRight, X, History, User, CalendarDays,
 } from 'lucide-react'
 import apiClient from '../../api/client'
 import { TICKETS, STAFF } from '../../api/endpoints'
@@ -25,15 +25,23 @@ interface Ticket {
   title: string
   status: string
   priority: string
+  ticket_type: number | null
   ticket_type_name: string
+  category: number | null
+  category_name: string
   customer_name: string
   department_name: string
   assigned_to?: number | null
   assigned_to_name: string
+  created_by: number | null
+  created_by_name: string
   sla_breached: boolean
   sla_deadline: string | null
   created_at: string
 }
+
+interface TicketType { id: number; name: string }
+interface TicketCat  { id: number; name: string }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -372,6 +380,12 @@ export default function TicketListPage() {
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all')
   const [staffFilter, setStaffFilter] = useState<number | null>(null)
   const [historyStaff, setHistoryStaff] = useState<StaffAvail | null>(null)
+  const [typeFilter, setTypeFilter] = useState<string>('')
+  const [categoryFilter, setCategoryFilter] = useState<string>('')
+  const [createdByFilter, setCreatedByFilter] = useState<string>('')
+  const [dateFrom, setDateFrom] = useState<string>('')
+  const [dateTo, setDateTo] = useState<string>('')
+  const [partyName, setPartyName] = useState<string>('')
   const assignedToMe  = urlParams.get('assigned') === 'me'
   const slaBreached   = urlParams.get('sla_breached') === 'true'
   const deptFilter    = urlParams.get('department') ?? null
@@ -392,6 +406,22 @@ export default function TicketListPage() {
     staleTime: 60_000,
   })
 
+  const { data: ticketTypes = [] } = useQuery<TicketType[]>({
+    queryKey: ['ticket-types-list'],
+    queryFn: () => apiClient.get(TICKETS.TYPES).then(r => {
+      const d = r.data; return Array.isArray(d) ? d : d.data ?? d.results ?? []
+    }),
+    staleTime: 300_000,
+  })
+
+  const { data: ticketCategories = [] } = useQuery<TicketCat[]>({
+    queryKey: ['ticket-categories-list'],
+    queryFn: () => apiClient.get(TICKETS.CATEGORIES).then(r => {
+      const d = r.data; return Array.isArray(d) ? d : d.data ?? d.results ?? []
+    }),
+    staleTime: 300_000,
+  })
+
   const queryParams = useMemo(() => {
     const p: Record<string, string | number> = {
       page,
@@ -406,8 +436,15 @@ export default function TicketListPage() {
     if (staffFilter)                      p.assigned_to   = staffFilter
     if (slaBreached)                      p.sla_breached  = 'true'
     if (deptFilter)                       p.department    = deptFilter
+    if (typeFilter)                       p.ticket_type   = typeFilter
+    if (categoryFilter)                   p.category      = categoryFilter
+    if (createdByFilter)                  p.created_by    = createdByFilter
+    if (dateFrom)                         p.date_from     = dateFrom
+    if (dateTo)                           p.date_to       = dateTo
+    if (partyName.trim())                 p.party_name    = partyName.trim()
     return p
-  }, [page, fyYear, statusFilter, priorityFilter, search, assignedToMe, currentUser, slaBreached, deptFilter])
+  }, [page, fyYear, statusFilter, priorityFilter, search, assignedToMe, currentUser, slaBreached, deptFilter,
+      typeFilter, categoryFilter, createdByFilter, dateFrom, dateTo, partyName])
 
   const { data: response, isLoading } = useQuery({
     queryKey: ['tickets', queryParams],
@@ -562,6 +599,99 @@ export default function TicketListPage() {
         </div>
       </div>
 
+      {/* Advanced filters row */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Ticket Type */}
+        <select
+          value={typeFilter}
+          onChange={e => { setTypeFilter(e.target.value); resetPage() }}
+          className={`py-2 pl-3 pr-8 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white ${
+            typeFilter ? 'border-indigo-400 text-indigo-700 font-medium' : 'border-gray-300 text-gray-600'
+          }`}
+        >
+          <option value="">All Types</option>
+          {ticketTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+
+        {/* Category */}
+        <select
+          value={categoryFilter}
+          onChange={e => { setCategoryFilter(e.target.value); resetPage() }}
+          className={`py-2 pl-3 pr-8 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white ${
+            categoryFilter ? 'border-indigo-400 text-indigo-700 font-medium' : 'border-gray-300 text-gray-600'
+          }`}
+        >
+          <option value="">All Categories</option>
+          {ticketCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+
+        {/* Party Name */}
+        <div className="relative">
+          <User size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Party name…"
+            value={partyName}
+            onChange={e => { setPartyName(e.target.value); resetPage() }}
+            className={`pl-8 pr-4 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 w-44 ${
+              partyName ? 'border-indigo-400' : 'border-gray-300'
+            }`}
+          />
+        </div>
+
+        {/* Created By */}
+        {isManager && availability.length > 0 && (
+          <select
+            value={createdByFilter}
+            onChange={e => { setCreatedByFilter(e.target.value); resetPage() }}
+            className={`py-2 pl-3 pr-8 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white ${
+              createdByFilter ? 'border-indigo-400 text-indigo-700 font-medium' : 'border-gray-300 text-gray-600'
+            }`}
+          >
+            <option value="">Created By</option>
+            {availability.map(s => <option key={s.id} value={s.id}>{s.full_name}</option>)}
+          </select>
+        )}
+
+        {/* From Date */}
+        <div className="relative">
+          <CalendarDays size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={e => { setDateFrom(e.target.value); resetPage() }}
+            placeholder="From date"
+            className={`pl-8 pr-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 w-40 ${
+              dateFrom ? 'border-indigo-400' : 'border-gray-300'
+            }`}
+          />
+        </div>
+
+        {/* To Date */}
+        <div className="relative">
+          <CalendarDays size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          <input
+            type="date"
+            value={dateTo}
+            onChange={e => { setDateTo(e.target.value); resetPage() }}
+            placeholder="To date"
+            className={`pl-8 pr-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 w-40 ${
+              dateTo ? 'border-indigo-400' : 'border-gray-300'
+            }`}
+          />
+        </div>
+
+        {/* Clear advanced filters */}
+        {(typeFilter || categoryFilter || partyName || createdByFilter || dateFrom || dateTo) && (
+          <button
+            onClick={() => { setTypeFilter(''); setCategoryFilter(''); setPartyName(''); setCreatedByFilter(''); setDateFrom(''); setDateTo(''); resetPage() }}
+            className="flex items-center gap-1 px-3 py-2 text-xs text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition"
+          >
+            <X size={12} /> Clear
+          </button>
+        )}
+      </div>
+
       {/* Table */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
         <table className="w-full text-sm">
@@ -590,7 +720,7 @@ export default function TicketListPage() {
             {!isLoading && tickets.length === 0 && (
               <tr>
                 <td colSpan={9} className="px-4 py-10 text-center text-gray-400">
-                  {search || statusFilter !== 'all' || priorityFilter !== 'all'
+                  {search || statusFilter !== 'all' || priorityFilter !== 'all' || typeFilter || categoryFilter || partyName || createdByFilter || dateFrom || dateTo
                     ? 'No tickets match your filters.'
                     : 'No tickets yet. Create one to get started.'}
                 </td>

@@ -211,6 +211,12 @@ class TicketViewSet(NexusViewSet):
             customer_id=params.get('customer'),
             fiscal_year_start=fy_start,
             fiscal_year_end=fy_end,
+            ticket_type_id=params.get('ticket_type'),
+            category_id=params.get('category'),
+            created_by_id=params.get('created_by'),
+            date_from=params.get('date_from'),
+            date_to=params.get('date_to'),
+            party_name=params.get('party_name'),
         )
 
     # ── CRUD overrides ────────────────────────────────────────────────────────

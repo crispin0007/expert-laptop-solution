@@ -37,6 +37,12 @@ class TicketRepository(BaseRepository):
         customer_id=None,
         fiscal_year_start=None,
         fiscal_year_end=None,
+        ticket_type_id=None,
+        category_id=None,
+        created_by_id=None,
+        date_from=None,
+        date_to=None,
+        party_name=None,
     ):
         """Return a filtered, tenant-scoped queryset of non-deleted tickets."""
         from tickets.models import Ticket
@@ -67,6 +73,18 @@ class TicketRepository(BaseRepository):
                 created_at__date__gte=fiscal_year_start,
                 created_at__date__lte=fiscal_year_end,
             )
+        if ticket_type_id:
+            qs = qs.filter(ticket_type_id=ticket_type_id)
+        if category_id:
+            qs = qs.filter(category_id=category_id)
+        if created_by_id:
+            qs = qs.filter(created_by_id=created_by_id)
+        if date_from:
+            qs = qs.filter(created_at__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(created_at__date__lte=date_to)
+        if party_name:
+            qs = qs.filter(customer__name__icontains=party_name)
         return qs
 
     # ── SLA queries ───────────────────────────────────────────────────────────
