@@ -22,7 +22,7 @@ import type { DesignOption } from './types'
 
 function DesignCard({
   design,
-  index,
+  index: _index,
   selected,
   onSelect,
 }: {

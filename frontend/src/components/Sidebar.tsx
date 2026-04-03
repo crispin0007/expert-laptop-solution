@@ -42,8 +42,6 @@ import {
   Link2,
   Sparkles,
   ExternalLink,
-  Pencil,
-  FileImage,
   Wallet,
   AlignLeft,
 } from 'lucide-react'
@@ -496,7 +494,7 @@ function SidebarContent({
             {/* Auto-rendered simple module nav items (main section). */}
             {/* Register new simple modules in SIMPLE_MODULE_NAV above. */}
             {SIMPLE_MODULE_NAV
-              .filter(m => m.section === 'main' && modules.has(m.key) && (!m.perm || perms.can(m.perm)))
+              .filter(m => m.section === 'main' && modules.has(m.key) && (!m.perm || perms.can(m.perm as keyof UserPermissions)))
               .map(m => (
                 <NavItem key={m.key} to={m.to} label={m.label} icon={m.icon} collapsed={collapsed} />
               ))
@@ -527,7 +525,7 @@ function SidebarContent({
             }
             {/* Auto-rendered people-section module items. */}
             {SIMPLE_MODULE_NAV
-              .filter(m => m.section === 'people' && modules.has(m.key) && (!m.perm || perms.can(m.perm)))
+              .filter(m => m.section === 'people' && modules.has(m.key) && (!m.perm || perms.can(m.perm as keyof UserPermissions)))
               .map(m => (
                 <NavItem key={m.key} to={m.to} label={m.label} icon={m.icon} collapsed={collapsed} />
               ))

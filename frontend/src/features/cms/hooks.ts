@@ -310,9 +310,9 @@ export function useCMSGenerationJob(id: number) {
     queryKey: ['cms', 'generate', id],
     queryFn: () => apiClient.get(CMS.GENERATE_DETAIL(id)).then(unwrap<CMSGenerationJob>),
     enabled: !!id,
-    // Poll while generating
-    refetchInterval: (data) =>
-      data?.status === 'queued' || data?.status === 'generating' ? 3000 : false,
+    // Poll while generating (react-query v5: callback receives Query object)
+    refetchInterval: (query) =>
+      query.state.data?.status === 'queued' || query.state.data?.status === 'generating' ? 3000 : false,
   })
 }
 

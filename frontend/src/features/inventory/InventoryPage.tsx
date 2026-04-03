@@ -2663,7 +2663,7 @@ function ReturnsTab({ products, canManage }: { products: Product[]; canManage: b
 
 // ── Reports Tab ───────────────────────────────────────────────────────────────
 
-function ReportsTab() {
+export function _ReportsTab() {
   const [activeReport, setActiveReport] = useState<'valuation' | 'dead-stock' | 'abc' | 'forecast' | 'top-selling'>('valuation')
   const [deadStockDays, setDeadStockDays] = useState(60)
   const [forecastDays, setForecastDays]   = useState(30)
@@ -3795,7 +3795,7 @@ function WarrantyTab({ products, canManage }: { products: Product[]; canManage: 
   if (filterProduct !== '') params.product = filterProduct
   if (filterStatus) params.status = filterStatus
 
-  const { data: serials = [], isLoading, refetch } = useQuery<SerialNumber[]>({
+  const { data: serials = [], isLoading } = useQuery<SerialNumber[]>({
     queryKey: ['serial-numbers', params],
     queryFn: () =>
       apiClient

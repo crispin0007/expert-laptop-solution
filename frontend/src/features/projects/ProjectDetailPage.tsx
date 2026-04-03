@@ -11,7 +11,6 @@ import {
 } from 'lucide-react'
 import apiClient from '../../api/client'
 import { PROJECTS, STAFF, INVENTORY } from '../../api/endpoints'
-import { useAuthStore } from '../../store/authStore'
 import { usePermissions } from '../../hooks/usePermissions'
 import Modal from '../../components/Modal'
 import { useConfirm } from '../../components/ConfirmDialog'

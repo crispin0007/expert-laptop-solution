@@ -11,13 +11,12 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  User, Building2, Briefcase, Calendar, X, Search,
-  ChevronRight, Loader2, AlertCircle, Phone,
+  Building2, X, Search,
+  ChevronRight, Loader2, AlertCircle,
 } from 'lucide-react'
 import apiClient from '../../../api/client'
 import { STAFF, HRM } from '../../../api/endpoints'
 import { usePermissions } from '../../../hooks/usePermissions'
-import { useAuthStore } from '../../../store/authStore'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -238,7 +237,6 @@ function ProfileDrawer({
 
 export default function StaffDirectory() {
   const perms = usePermissions()
-  const user = useAuthStore(s => s.user)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<StaffMember | null>(null)
 

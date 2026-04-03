@@ -12,7 +12,6 @@ import apiClient from '../../api/client'
 import { ACCOUNTING, INVENTORY, STAFF, CUSTOMERS } from '../../api/endpoints'
 import toast from 'react-hot-toast'
 import { useConfirm } from '../../components/ConfirmDialog'
-import { useAuthStore } from '../../store/authStore'
 import { usePermissions } from '../../hooks/usePermissions'
 import {
   LayoutDashboard, Receipt, FileText, CreditCard, RotateCcw,
@@ -24,7 +23,7 @@ import {
   FileQuestion, Percent, Repeat2, BookMarked, CalendarDays,
   ArrowRightLeft, ChevronDown, Search, CheckSquare2, Play, Power, Pencil,
   // CoA + Quick Links icons
-  Zap, Eye, EyeOff, Info, ListFilter, Wallet,
+  Zap, Eye, EyeOff, Info, Wallet,
   // New tab icons
   Clock, Users, Truck, UserCheck, ShoppingBag,
   // 7-stubs tab icons
@@ -1042,7 +1041,6 @@ function InvoiceEditModal({ inv, onClose }: { inv: Invoice; onClose: () => void 
 function InvoicesTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
-  const user = useAuthStore(s => s.user)
   const { can } = usePermissions()
   const { fyYear } = useFY()
   const [statusFilter, setStatusFilter] = useState('')
@@ -1630,7 +1628,6 @@ function BillEditModal({ bill, onClose }: { bill: Bill; onClose: () => void }) {
 function BillsTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
-  const user = useAuthStore(s => s.user)
   const { can } = usePermissions()
   const { fyYear } = useFY()
   const [statusFilter, setStatusFilter] = useState('')
@@ -1801,7 +1798,6 @@ function BillsTab() {
 function PaymentsTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
-  const user = useAuthStore(s => s.user)
   const { can } = usePermissions()
   const { fyYear } = useFY()
   const { data, isLoading } = useQuery<ApiPage<Payment>>({
@@ -1863,7 +1859,6 @@ function PaymentsTab() {
 function CreditNotesTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
-  const user = useAuthStore(s => s.user)
   const { can } = usePermissions()
   const { fyYear } = useFY()
   const [editCn, setEditCn] = useState<CreditNote | null>(null)
@@ -2567,7 +2562,6 @@ function PurposeBadge({ purpose }: { purpose: string }) {
 
 function JournalsTab() {
   const qc = useQueryClient()
-  const { user } = useAuthStore()
   const { can } = usePermissions()
   const confirm = useConfirm()
   const [expanded, setExpanded] = useState<number | null>(null)
@@ -3539,7 +3533,6 @@ function BankAccountEditModal({ bank, onClose }: { bank: BankAccount; onClose: (
 function BanksTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
-  const user = useAuthStore(s => s.user)
   const { can } = usePermissions()
   const [subTab, setSubTab] = useState<'banks' | 'statement' | 'cash'>('banks')
   const [showCreateBank, setShowCreateBank] = useState(false)
@@ -3890,7 +3883,6 @@ function BanksTab() {
 function PayslipsTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
-  const user = useAuthStore(s => s.user)
   const { can } = usePermissions()
   const [subTab, setSubTab] = useState<'payslips' | 'coins' | 'salaries'>('payslips')
   const [showGenerate, setShowGenerate] = useState(false)
@@ -5607,7 +5599,7 @@ function Annex5View({ data }: { data: Record<string, unknown> }) {
   )
 }
 
-function ReportsTab() {
+export function _ReportsTab() {
   const today   = new Date().toISOString().slice(0, 10)
   const fy      = currentFiscalYear()
   const fyParams = fiscalYearAdParams(fy)
@@ -5741,13 +5733,13 @@ ${el.innerHTML}
 
       // Monthly pivot
       case 'sales-by-customer-monthly':
-        return <MonthlyCrossTableView data={d as MonthlyCrossData} entityKey="customer" />
+        return <MonthlyCrossTableView data={d as unknown as MonthlyCrossData} entityKey="customer" />
       case 'sales-by-item-monthly':
-        return <MonthlyCrossTableView data={d as MonthlyCrossData} entityKey="item" />
+        return <MonthlyCrossTableView data={d as unknown as MonthlyCrossData} entityKey="item" />
       case 'purchase-by-supplier-monthly':
-        return <MonthlyCrossTableView data={d as MonthlyCrossData} entityKey="supplier" />
+        return <MonthlyCrossTableView data={d as unknown as MonthlyCrossData} entityKey="supplier" />
       case 'purchase-by-item-monthly':
-        return <MonthlyCrossTableView data={d as MonthlyCrossData} entityKey="item" />
+        return <MonthlyCrossTableView data={d as unknown as MonthlyCrossData} entityKey="item" />
     }
 
     // Generic table for all remaining `rows`-based reports
@@ -6154,7 +6146,6 @@ const PO_STATUS: Record<string, string> = {
 function QuotationsTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
-  const user = useAuthStore(s => s.user)
   const { can } = usePermissions()
   const [statusFilter, setStatusFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
@@ -6886,7 +6877,6 @@ const NEPALI_MONTHS = ['Baisakh','Jestha','Ashadh','Shrawan','Bhadra','Ashoj','K
 function TDSTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
-  const user = useAuthStore(s => s.user)
   const { can } = usePermissions()
   const [statusFilter, setStatusFilter] = useState('')
   const [yearFilter, setYearFilter] = useState('')
@@ -7021,7 +7011,6 @@ function TDSTab() {
 function BankReconciliationTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
-  const user = useAuthStore(s => s.user)
   const { can } = usePermissions()
   const [selected, setSelected] = useState<BankReconciliation | null>(null)
   const [newLine, setNewLine] = useState({ date: '', description: '', amount: '' })
@@ -8298,7 +8287,7 @@ function ExpensesTab() {
 
 // ─── Shared "Coming Soon" stub ─────────────────────────────────────────────
 
-function ComingSoonTab({ title, hint }: { title: string; hint?: string }) {
+export function _ComingSoonTab({ title, hint }: { title: string; hint?: string }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 py-24 flex flex-col items-center gap-3 shadow-sm">
       <Clock size={40} className="text-gray-200" />
@@ -9352,27 +9341,27 @@ function SupplierCreateModal({ onClose, initial }: { onClose: () => void; initia
     <Modal title={isEdit ? 'Edit Supplier' : 'New Supplier'} onClose={onClose}>
       <form onSubmit={e => { e.preventDefault(); mutation.mutate() }} className="space-y-4">
         <Field label="Supplier Name *">
-          <input data-lpignore="true" value={form.name} onChange={set('name')} className={inputCls} required placeholder="Supplier / vendor name" autoComplete="off" data-lpignore="true" />
+          <input data-lpignore="true" value={form.name} onChange={set('name')} className={inputCls} required placeholder="Supplier / vendor name" autoComplete="off" />
         </Field>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Contact Person">
-            <input data-lpignore="true" value={form.contact_person} onChange={set('contact_person')} className={inputCls} placeholder="Full name" autoComplete="off" data-lpignore="true" />
+            <input data-lpignore="true" value={form.contact_person} onChange={set('contact_person')} className={inputCls} placeholder="Full name" autoComplete="off" />
           </Field>
           <Field label="Phone">
-            <input data-lpignore="true" value={form.phone} onChange={set('phone')} className={inputCls} placeholder="Phone number" autoComplete="off" data-lpignore="true" />
+            <input data-lpignore="true" value={form.phone} onChange={set('phone')} className={inputCls} placeholder="Phone number" autoComplete="off" />
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-4">
           <Field label="PAN / VAT Number">
-            <input data-lpignore="true" value={form.pan_number} onChange={set('pan_number')} className={inputCls} placeholder="9-digit PAN" autoComplete="off" data-lpignore="true" />
+            <input data-lpignore="true" value={form.pan_number} onChange={set('pan_number')} className={inputCls} placeholder="9-digit PAN" autoComplete="off" />
           </Field>
           <Field label="Email">
-            <input data-lpignore="true" type="email" value={form.email} onChange={set('email')} className={inputCls} placeholder="email@example.com" autoComplete="off" data-lpignore="true" />
+            <input data-lpignore="true" type="email" value={form.email} onChange={set('email')} className={inputCls} placeholder="email@example.com" autoComplete="off" />
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Website">
-            <input data-lpignore="true" value={form.website} onChange={set('website')} className={inputCls} placeholder="https://" autoComplete="off" data-lpignore="true" />
+            <input data-lpignore="true" value={form.website} onChange={set('website')} className={inputCls} placeholder="https://" autoComplete="off" />
           </Field>
           <Field label="Payment Terms">
             <select value={form.payment_terms} onChange={set('payment_terms')} className={inputCls}>
@@ -9387,14 +9376,14 @@ function SupplierCreateModal({ onClose, initial }: { onClose: () => void; initia
         </div>
         <div className="grid grid-cols-2 gap-4">
           <Field label="City">
-            <input data-lpignore="true" value={form.city} onChange={set('city')} className={inputCls} placeholder="City" autoComplete="off" data-lpignore="true" />
+            <input data-lpignore="true" value={form.city} onChange={set('city')} className={inputCls} placeholder="City" autoComplete="off" />
           </Field>
           <Field label="Country">
-            <input data-lpignore="true" value={form.country} onChange={set('country')} className={inputCls} placeholder="Country" autoComplete="off" data-lpignore="true" />
+            <input data-lpignore="true" value={form.country} onChange={set('country')} className={inputCls} placeholder="Country" autoComplete="off" />
           </Field>
         </div>
         <Field label="Address">
-          <input data-lpignore="true" value={form.address} onChange={set('address')} className={inputCls} placeholder="Street address" autoComplete="off" data-lpignore="true" />
+          <input data-lpignore="true" value={form.address} onChange={set('address')} className={inputCls} placeholder="Street address" autoComplete="off" />
         </Field>
         <Field label="Notes">
           <textarea value={form.notes} onChange={set('notes')} className={inputCls + ' resize-none'} rows={2} placeholder="Internal notes" />
@@ -9981,7 +9970,7 @@ function SupplierPaymentsTab() {
 export default function AccountingPage() {
   const [searchParams] = useSearchParams()
   const activeTab = searchParams.get('tab') ?? ''
-  const { fyYear, setFyYear } = useFyStore()
+  const { fyYear: _fyYear, setFyYear: _setFyYear } = useFyStore()
 
   // Tabs with their own date-range controls don't need the global FY bar
   const HIDE_FY_BAR = new Set(['ledger', 'day-book', 'accounts', 'tds', 'bank-reconciliation', 'recurring-journals'])

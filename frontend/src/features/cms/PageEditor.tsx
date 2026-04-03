@@ -125,6 +125,7 @@ export default function PageEditor() {
         },
 
         // Device manager — drives the toolbar preview buttons
+        // @ts-expect-error — deviceManager is valid GrapeJS config but missing from @types/grapesjs
         deviceManager: {
           devices: [
             { name: 'Desktop',         width: '' },

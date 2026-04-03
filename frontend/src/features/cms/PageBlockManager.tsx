@@ -286,7 +286,7 @@ function ImagePickerField({ value, onChange, label = 'Image', aspectHint = '' }:
       const res = await apiClient.post<{ success: boolean; data: { url: string } }>(
         CMS.MEDIA_UPLOAD, fd, { headers: { 'Content-Type': 'multipart/form-data' } }
       )
-      const url = res.data?.data?.url ?? res.data?.url ?? ''
+      const url = res.data?.data?.url ?? ''
       if (url) {
         onChange(url)
       } else {

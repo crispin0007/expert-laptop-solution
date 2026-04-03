@@ -114,7 +114,7 @@ function StatsBlock({ c, primary }: any) {
 }
 
 // ── Services ─────────────────────────────────────────────────────────────────
-function ServicesBlock({ c, primary }: any) {
+function ServicesBlock({ c, primary: _primary }: any) {
   const items: any[] = c.items ?? []
   return (
     <section className="py-20 px-6 bg-gray-50">
@@ -140,7 +140,7 @@ function ServicesBlock({ c, primary }: any) {
 }
 
 // ── Testimonials ─────────────────────────────────────────────────────────────
-function TestimonialsBlock({ c, primary }: any) {
+function TestimonialsBlock({ c, primary: _primary }: any) {
   const items: any[] = c.items ?? []
   return (
     <section className="py-20 px-6 bg-white">
@@ -552,7 +552,7 @@ interface CatalogProduct {
   in_stock: boolean
 }
 
-function ProductCatalogBlock({ c, primary, secondary }: any) {
+function ProductCatalogBlock({ c, primary, secondary: _secondary }: any) {
   const [products, setProducts] = useState<CatalogProduct[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
