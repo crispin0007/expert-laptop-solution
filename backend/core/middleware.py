@@ -194,16 +194,27 @@ class TenantMiddleware(MiddlewareMixin):
         # ── Anomaly detection: ban check ──────────────────────────────────────
         # Banned IPs are checked FIRST, before any tenant lookup, using a
         # short-lived Redis cache so there is no DB overhead per request.
+        #
+        # Exempt paths: public unauthenticated endpoints that must never be
+        # blocked by IP bans (login page pre-flight, favicon, health checks).
+        _BAN_EXEMPT_PREFIXES = (
+            '/api/v1/tenants/public-info/',
+            '/api/v1/tenants/resolve/',
+            '/health/',
+            '/favicon.ico',
+        )
         client_ip = _get_ip(request)
-        try:
-            from core.anomaly import is_banned
-            if is_banned(client_ip):
-                import json as _json
-                from django.http import HttpResponse
-                body = _json.dumps({'detail': 'Too many requests. Your IP has been temporarily blocked.'})
-                return HttpResponse(body, status=429, content_type='application/json')
-        except Exception:
-            pass  # ban check failure must NEVER block legitimate requests
+        _path = request.path_info
+        if not any(_path.startswith(p) for p in _BAN_EXEMPT_PREFIXES):
+            try:
+                from core.anomaly import is_banned
+                if is_banned(client_ip):
+                    import json as _json
+                    from django.http import HttpResponse
+                    body = _json.dumps({'detail': 'Too many requests. Your IP has been temporarily blocked.'})
+                    return HttpResponse(body, status=429, content_type='application/json')
+            except Exception:
+                pass  # ban check failure must NEVER block legitimate requests
 
         def _db_error_response():
             """Return a 503 when a DB-level error prevents tenant resolution.
