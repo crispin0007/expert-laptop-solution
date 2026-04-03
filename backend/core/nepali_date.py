@@ -33,8 +33,8 @@ from dataclasses import dataclass
 from typing import Tuple
 
 # ── Reference point ──────────────────────────────────────────────────────────
-# Baisakh 1, 2000 BS  =  April 13, 1943 AD
-_REFERENCE_AD = datetime.date(1943, 4, 13)
+# Baisakh 1, 2000 BS = April 14, 1943 AD  (verified against Hamro Patro / official Nepal calendar)
+_REFERENCE_AD = datetime.date(1943, 4, 14)
 _REFERENCE_BS_YEAR = 2000
 
 # ── Month names ───────────────────────────────────────────────────────────────

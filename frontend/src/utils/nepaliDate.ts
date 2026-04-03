@@ -13,8 +13,8 @@
  */
 
 // ── Reference point ──────────────────────────────────────────────────────────
-// Baisakh 1, 2000 BS = April 13, 1943 AD
-const REFERENCE_AD = new Date(1943, 3, 13); // months are 0-indexed in JS
+// Baisakh 1, 2000 BS = April 14, 1943 AD  (verified against Hamro Patro / official Nepal calendar)
+const REFERENCE_AD = new Date(1943, 3, 14); // months are 0-indexed in JS
 const REFERENCE_BS_YEAR = 2000;
 
 // ── Month names ───────────────────────────────────────────────────────────────
