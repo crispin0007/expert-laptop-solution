@@ -125,6 +125,10 @@ class AccountViewSet(NexusViewSet):
             raise ConflictError('This account has sub-accounts. Delete or re-parent them first.')
         if account.journal_lines.filter(entry__is_posted=True).exists():
             raise ConflictError('This account has posted journal entries and cannot be deleted.')
+        # If this CoA account is linked to a bank account, soft-delete the bank too.
+        if hasattr(account, 'bank_account') and account.bank_account is not None:
+            account.bank_account.is_deleted = True
+            account.bank_account.save(update_fields=['is_deleted'])
         account.delete()
         return ApiResponse.no_content()
 
@@ -161,7 +165,7 @@ class BankAccountViewSet(NexusViewSet):
 
     def get_queryset(self):
         self.ensure_tenant()
-        return BankAccount.objects.filter(tenant=self.tenant).select_related('linked_account')
+        return BankAccount.objects.filter(tenant=self.tenant, is_deleted=False).select_related('linked_account')
 
     # ── helpers ────────────────────────────────────────────────────────────
 
@@ -235,6 +239,16 @@ class BankAccountViewSet(NexusViewSet):
         bank = serializer.save()
         self._auto_link_coa_account(bank)
         return ApiResponse.success(data=BankAccountSerializer(bank).data)
+
+    def destroy(self, request, *args, **kwargs):
+        bank = self.get_object()
+        # Also delete the linked CoA account so it disappears from Chart of Accounts.
+        linked = bank.linked_account
+        bank.is_deleted = True
+        bank.save(update_fields=['is_deleted'])
+        if linked is not None and not linked.is_system:
+            linked.delete()
+        return ApiResponse.no_content()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
