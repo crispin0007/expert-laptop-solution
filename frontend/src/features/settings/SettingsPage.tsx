@@ -363,7 +363,7 @@ function ImageUploadField({
           <input
             type="url"
             autoComplete="off"
-            data-1p-ignore="true"
+           
             value={urlInput}
             onChange={e => setUrlInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && applyUrl()}
@@ -793,7 +793,7 @@ export default function SettingsPage() {
                 <input
                   type="text"
                   autoComplete="off"
-                  data-1p-ignore="true"
+                 
                   value={name}
                   onChange={e => setName(e.target.value)}
                   disabled={!managerView}
@@ -815,7 +815,7 @@ export default function SettingsPage() {
                 <input
                   type="text"
                   autoComplete="off"
-                  data-1p-ignore="true"
+                 
                   value={currency}
                   onChange={e => setCurrency(e.target.value)}
                   disabled={!managerView}
@@ -1432,7 +1432,7 @@ export default function SettingsPage() {
                     <input
                       type="text"
                       autoComplete="off"
-                      data-1p-ignore="true"
+                     
                       value={smtpForm.host}
                       onChange={e => setSmtpForm(f => ({ ...f, host: e.target.value }))}
                       disabled={!managerView}
@@ -1485,7 +1485,7 @@ export default function SettingsPage() {
                     <input
                       type="text"
                       autoComplete="off"
-                      data-1p-ignore="true"
+                     
                       value={smtpForm.username}
                       onChange={e => setSmtpForm(f => ({ ...f, username: e.target.value }))}
                       disabled={!managerView}
@@ -1521,7 +1521,7 @@ export default function SettingsPage() {
                     <input
                       type="email"
                       autoComplete="off"
-                      data-1p-ignore="true"
+                     
                       value={smtpForm.from_email}
                       onChange={e => setSmtpForm(f => ({ ...f, from_email: e.target.value }))}
                       disabled={!managerView}
@@ -1534,7 +1534,7 @@ export default function SettingsPage() {
                     <input
                       type="text"
                       autoComplete="off"
-                      data-1p-ignore="true"
+                     
                       value={smtpForm.from_name}
                       onChange={e => setSmtpForm(f => ({ ...f, from_name: e.target.value }))}
                       disabled={!managerView}

@@ -659,7 +659,7 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
                           ))}
                         </select>
                       ) : (
-                        <input data-lpignore="true" data-1p-ignore value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
+                        <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
                           placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" required />
                       )}
                     </td>
@@ -677,15 +677,15 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
                       </select>
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
+                      <input data-lpignore="true" type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
                         className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
+                      <input data-lpignore="true" type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
                         placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" required />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="0" max="100" step="0.01" value={l.discount} onChange={e => setLine(i, 'discount', e.target.value)}
+                      <input data-lpignore="true" type="number" min="0" max="100" step="0.01" value={l.discount} onChange={e => setLine(i, 'discount', e.target.value)}
                         className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5 text-center">
@@ -709,7 +709,7 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
             </div>
             <div className="flex items-center gap-3">
               <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                <input data-lpignore="true" data-1p-ignore type="checkbox" checked={applyVat} onChange={e => setApplyVat(e.target.checked)} className="rounded border-gray-300 text-indigo-600" />
+                <input data-lpignore="true" type="checkbox" checked={applyVat} onChange={e => setApplyVat(e.target.checked)} className="rounded border-gray-300 text-indigo-600" />
                 <span className="text-xs text-gray-500">VAT 13%</span>
               </label>
               <span className={`w-28 text-right ${applyVat ? 'text-gray-700' : 'text-gray-300'}`}>+ {npr(vatAmount)}</span>
@@ -981,7 +981,7 @@ function InvoiceEditModal({ inv, onClose }: { inv: Invoice; onClose: () => void 
                 {lines.map((l, i) => (
                   <tr key={i}>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
+                      <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
                         placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" required />
                     </td>
                     <td className="px-2 py-1.5">
@@ -992,15 +992,15 @@ function InvoiceEditModal({ inv, onClose }: { inv: Invoice; onClose: () => void 
                       </select>
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
+                      <input data-lpignore="true" type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
                         className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
+                      <input data-lpignore="true" type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
                         placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" required />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="0" max="100" step="0.01" value={l.discount} onChange={e => setLine(i, 'discount', e.target.value)}
+                      <input data-lpignore="true" type="number" min="0" max="100" step="0.01" value={l.discount} onChange={e => setLine(i, 'discount', e.target.value)}
                         className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5 text-center">
@@ -1142,7 +1142,7 @@ function InvoicesTab() {
           </select>
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input data-lpignore="true" data-1p-ignore
+            <input data-lpignore="true"
               value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Search invoice or customer…"
               className="pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 w-56"
@@ -1340,7 +1340,7 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
                   <option value="__custom__">+ Enter manually</option>
                 </select>
                 {supplierId === null && (
-                  <input data-lpignore="true" data-1p-ignore
+                  <input data-lpignore="true"
                     value={supplierName}
                     onChange={e => setSupplierName(e.target.value)}
                     placeholder="Supplier / vendor name"
@@ -1350,7 +1350,7 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
                 )}
               </div>
             ) : (
-              <input data-lpignore="true" data-1p-ignore value={supplierName} onChange={e => setSupplierName(e.target.value)}
+              <input data-lpignore="true" value={supplierName} onChange={e => setSupplierName(e.target.value)}
                 placeholder="Supplier / vendor name" className={inputCls} required />
             )}
           </Field>
@@ -1397,7 +1397,7 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
                           ))}
                         </select>
                       ) : (
-                        <input data-lpignore="true" data-1p-ignore value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
+                        <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
                           placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" />
                       )}
                     </td>
@@ -1415,11 +1415,11 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
                       </select>
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
+                      <input data-lpignore="true" type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
                         className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
+                      <input data-lpignore="true" type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
                         placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5 text-center">
@@ -1557,7 +1557,7 @@ function BillEditModal({ bill, onClose }: { bill: Bill; onClose: () => void }) {
           </Field>
           {supplierId === '__custom__' && (
             <Field label="Supplier Name *">
-              <input data-lpignore="true" data-1p-ignore value={supplierName} onChange={e => setSupplierName(e.target.value)}
+              <input data-lpignore="true" value={supplierName} onChange={e => setSupplierName(e.target.value)}
                 placeholder="Supplier / vendor name" className={inputCls} required />
             </Field>
           )}
@@ -1587,15 +1587,15 @@ function BillEditModal({ bill, onClose }: { bill: Bill; onClose: () => void }) {
                 {lines.map((l, i) => (
                   <tr key={i}>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
+                      <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
                         placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
+                      <input data-lpignore="true" type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
                         className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
+                      <input data-lpignore="true" type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
                         placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5 text-center">
@@ -1715,7 +1715,7 @@ function BillsTab() {
           </select>
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input data-lpignore="true" data-1p-ignore
+            <input data-lpignore="true"
               value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Search bill or supplier…"
               className="pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 w-52"
@@ -2018,7 +2018,7 @@ function CreditNoteCreateModal({ onClose }: { onClose: () => void }) {
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Reason</label>
-          <input data-lpignore="true" data-1p-ignore value={reason} onChange={e => setReason(e.target.value)}
+          <input data-lpignore="true" value={reason} onChange={e => setReason(e.target.value)}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             placeholder="e.g. Returned goods, billing error…" />
         </div>
@@ -2060,7 +2060,7 @@ function CreditNoteCreateModal({ onClose }: { onClose: () => void }) {
                           ))}
                         </select>
                       ) : (
-                        <input data-lpignore="true" data-1p-ignore value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
+                        <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
                           placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" />
                       )}
                     </td>
@@ -2078,11 +2078,11 @@ function CreditNoteCreateModal({ onClose }: { onClose: () => void }) {
                       </select>
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
+                      <input data-lpignore="true" type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
                         className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
+                      <input data-lpignore="true" type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
                         placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5 text-center">
@@ -2158,7 +2158,7 @@ function CreditNoteEditModal({ cn, onClose }: { cn: CreditNote; onClose: () => v
     <Modal title={`Edit ${cn.credit_note_number}`} onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
         <Field label="Reason">
-          <input data-lpignore="true" data-1p-ignore value={reason} onChange={e => setReason(e.target.value)}
+          <input data-lpignore="true" value={reason} onChange={e => setReason(e.target.value)}
             placeholder="Reason for credit note" className={inputCls} />
         </Field>
         <div>
@@ -2183,15 +2183,15 @@ function CreditNoteEditModal({ cn, onClose }: { cn: CreditNote; onClose: () => v
                 {lines.map((l, i) => (
                   <tr key={i}>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
+                      <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
                         placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
+                      <input data-lpignore="true" type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
                         className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
+                      <input data-lpignore="true" type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
                         placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5 text-center">
@@ -2294,7 +2294,7 @@ function JournalEditModal({ je, onClose }: { je: JournalEntry; onClose: () => vo
             <NepaliDatePicker value={date} onChange={setDate} />
           </Field>
           <Field label="Description *">
-            <input data-lpignore="true" data-1p-ignore value={description} onChange={e => setDescription(e.target.value)}
+            <input data-lpignore="true" value={description} onChange={e => setDescription(e.target.value)}
               placeholder="Adjustment, accrual…" className={inputCls} required />
           </Field>
         </div>
@@ -2331,17 +2331,17 @@ function JournalEditModal({ je, onClose }: { je: JournalEntry; onClose: () => vo
                       </select>
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={l.debit}
+                      <input data-lpignore="true" type="number" min="0" step="0.01" value={l.debit}
                         onChange={e => setJLine(i, 'debit', e.target.value)}
                         placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={l.credit}
+                      <input data-lpignore="true" type="number" min="0" step="0.01" value={l.credit}
                         onChange={e => setJLine(i, 'credit', e.target.value)}
                         placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore value={l.description} onChange={e => setJLine(i, 'description', e.target.value)}
+                      <input data-lpignore="true" value={l.description} onChange={e => setJLine(i, 'description', e.target.value)}
                         placeholder="Optional note" className="w-full border-0 outline-none text-xs bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5 text-center">
@@ -2449,7 +2449,7 @@ function JournalCreateModal({ onClose }: { onClose: () => void }) {
             <NepaliDatePicker value={date} onChange={setDate} />
           </Field>
           <Field label="Description *">
-            <input data-lpignore="true" data-1p-ignore value={description} onChange={e => setDescription(e.target.value)}
+            <input data-lpignore="true" value={description} onChange={e => setDescription(e.target.value)}
               placeholder="Adjustment, accrual…" className={inputCls} required />
           </Field>
         </div>
@@ -2486,17 +2486,17 @@ function JournalCreateModal({ onClose }: { onClose: () => void }) {
                       </select>
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={l.debit}
+                      <input data-lpignore="true" type="number" min="0" step="0.01" value={l.debit}
                         onChange={e => setJLine(i, 'debit', e.target.value)}
                         placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={l.credit}
+                      <input data-lpignore="true" type="number" min="0" step="0.01" value={l.credit}
                         onChange={e => setJLine(i, 'credit', e.target.value)}
                         placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore value={l.description} onChange={e => setJLine(i, 'description', e.target.value)}
+                      <input data-lpignore="true" value={l.description} onChange={e => setJLine(i, 'description', e.target.value)}
                         placeholder="Optional note" className="w-full border-0 outline-none text-xs bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5 text-center">
@@ -2799,21 +2799,21 @@ function InlineEditRow({
   return (
     <tr className="bg-amber-50/50 border-y border-amber-100">
       <td className="py-2 pl-3 align-top">
-        <input data-lpignore="true" data-1p-ignore
+        <input data-lpignore="true"
           value={code} onChange={e => setCode(e.target.value)}
           className="w-24 font-mono text-xs border border-amber-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400"
         />
       </td>
       <td className="py-2 pr-2 align-top" colSpan={2}>
         <form onSubmit={submit} className="space-y-1">
-          <input data-lpignore="true" data-1p-ignore
+          <input data-lpignore="true"
             ref={nameRef}
             value={name} onChange={e => setName(e.target.value)}
             className="w-full text-sm border border-amber-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400"
             onKeyDown={e => { if (e.key === 'Escape') onCancel() }}
             placeholder="Account name"
           />
-          <input data-lpignore="true" data-1p-ignore
+          <input data-lpignore="true"
             value={description} onChange={e => setDescription(e.target.value)}
             className="w-full text-xs border border-amber-100 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-amber-300 text-gray-500"
             placeholder="Description / notes (optional)"
@@ -2821,7 +2821,7 @@ function InlineEditRow({
           <div className="flex items-center gap-3 mt-1">
             <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
               <span>Opening Bal:</span>
-              <input data-lpignore="true" data-1p-ignore
+              <input data-lpignore="true"
                 type="number" value={openingBal} onChange={e => setOpeningBal(e.target.value)}
                 className="w-24 font-mono text-xs border border-amber-200 rounded px-2 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400"
               />
@@ -2924,7 +2924,7 @@ function InlineAddRow({
     <tr className="bg-indigo-50/40 border-y border-indigo-100">
       {/* Code cell */}
       <td className="py-2 align-top" style={{ paddingLeft: `${16 + indent + 20}px` }}>
-        <input data-lpignore="true" data-1p-ignore
+        <input data-lpignore="true"
           value={code} onChange={e => setCode(e.target.value)}
           className="w-24 font-mono text-xs border border-indigo-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
           placeholder="Code"
@@ -2934,7 +2934,7 @@ function InlineAddRow({
       <td className="py-2 pr-2 align-top" colSpan={2}>
         <form onSubmit={submit} className="space-y-1">
           <div className="flex items-center gap-2">
-            <input data-lpignore="true" data-1p-ignore
+            <input data-lpignore="true"
               ref={nameRef}
               value={name} onChange={e => setName(e.target.value)}
               className="flex-1 text-sm border border-indigo-200 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
@@ -2958,14 +2958,14 @@ function InlineAddRow({
               <option key={g.id} value={g.id}>{g.name}</option>
             ))}
           </select>
-          <input data-lpignore="true" data-1p-ignore
+          <input data-lpignore="true"
             value={description} onChange={e => setDescription(e.target.value)}
             className="w-full text-xs border border-indigo-100 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-300 text-gray-500"
             placeholder="Description / notes (optional)"
           />
           <label className="flex items-center gap-1.5 text-xs text-gray-500">
             <span>Opening Bal:</span>
-            <input data-lpignore="true" data-1p-ignore
+            <input data-lpignore="true"
               type="number" value={openingBal} onChange={e => setOpeningBal(e.target.value)}
               className="w-24 font-mono text-xs border border-indigo-200 rounded px-2 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400"
             />
@@ -3263,7 +3263,7 @@ function AccountsTab() {
         {/* Search */}
         <div className="relative flex-1 min-w-48">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input data-lpignore="true" data-1p-ignore
+          <input data-lpignore="true"
             value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search code, name, or description…"
             className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
@@ -3387,16 +3387,16 @@ function CashPaymentCreateModal({ onClose }: { onClose: () => void }) {
             </select>
           </Field>
           <Field label="Amount (NPR) *">
-            <input data-lpignore="true" data-1p-ignore type="number" min="0.01" step="0.01" value={amount}
+            <input data-lpignore="true" type="number" min="0.01" step="0.01" value={amount}
               onChange={e => setAmount(e.target.value)} placeholder="0.00" className={inputCls} required />
           </Field>
           <Field label="Reference">
-            <input data-lpignore="true" data-1p-ignore value={reference} onChange={e => setReference(e.target.value)}
+            <input data-lpignore="true" value={reference} onChange={e => setReference(e.target.value)}
               placeholder="e.g. Receipt #, Voucher #" className={inputCls} />
           </Field>
         </div>
         <Field label="Note">
-          <input data-lpignore="true" data-1p-ignore value={note} onChange={e => setNote(e.target.value)}
+          <input data-lpignore="true" value={note} onChange={e => setNote(e.target.value)}
             placeholder="Optional description" className={inputCls} />
         </Field>
 
@@ -3444,15 +3444,15 @@ function BankAccountCreateModal({ onClose }: { onClose: () => void }) {
       <form onSubmit={submit} className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <Field label="Account Label *">
-            <input data-lpignore="true" data-1p-ignore value={name} onChange={e => setName(e.target.value)}
+            <input data-lpignore="true" value={name} onChange={e => setName(e.target.value)}
               placeholder="e.g. Main Operating Account" className={inputCls} required />
           </Field>
           <Field label="Bank Name *">
-            <input data-lpignore="true" data-1p-ignore value={bankName} onChange={e => setBankName(e.target.value)}
+            <input data-lpignore="true" value={bankName} onChange={e => setBankName(e.target.value)}
               placeholder="e.g. Nabil Bank" className={inputCls} required />
           </Field>
           <Field label="Account Number *">
-            <input data-lpignore="true" data-1p-ignore value={accountNumber} onChange={e => setAccountNumber(e.target.value)}
+            <input data-lpignore="true" value={accountNumber} onChange={e => setAccountNumber(e.target.value)}
               placeholder="00100012345678" className={inputCls} required />
           </Field>
           <Field label="Currency">
@@ -3462,7 +3462,7 @@ function BankAccountCreateModal({ onClose }: { onClose: () => void }) {
             </select>
           </Field>
           <Field label="Opening Balance" hint="Current balance at the time of adding this account">
-            <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={openingBalance}
+            <input data-lpignore="true" type="number" min="0" step="0.01" value={openingBalance}
               onChange={e => setOpeningBalance(e.target.value)} className={inputCls} />
           </Field>
         </div>
@@ -3501,13 +3501,13 @@ function BankAccountEditModal({ bank, onClose }: { bank: BankAccount; onClose: (
       <form onSubmit={e => { e.preventDefault(); mutateSave.mutate(form) }} className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <Field label="Account Label *">
-            <input data-lpignore="true" data-1p-ignore value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className={inputCls} required />
+            <input data-lpignore="true" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className={inputCls} required />
           </Field>
           <Field label="Bank Name *">
-            <input data-lpignore="true" data-1p-ignore value={form.bank_name} onChange={e => setForm(f => ({ ...f, bank_name: e.target.value }))} className={inputCls} required />
+            <input data-lpignore="true" value={form.bank_name} onChange={e => setForm(f => ({ ...f, bank_name: e.target.value }))} className={inputCls} required />
           </Field>
           <Field label="Account Number">
-            <input data-lpignore="true" data-1p-ignore value={form.account_number} onChange={e => setForm(f => ({ ...f, account_number: e.target.value }))} className={inputCls} />
+            <input data-lpignore="true" value={form.account_number} onChange={e => setForm(f => ({ ...f, account_number: e.target.value }))} className={inputCls} />
           </Field>
           <Field label="Currency">
             <select value={form.currency} onChange={e => setForm(f => ({ ...f, currency: e.target.value }))} className={selectCls}>
@@ -3517,7 +3517,7 @@ function BankAccountEditModal({ bank, onClose }: { bank: BankAccount; onClose: (
             </select>
           </Field>
           <Field label="Opening Balance" hint="Balance when account was first created">
-            <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={form.opening_balance}
+            <input data-lpignore="true" type="number" min="0" step="0.01" value={form.opening_balance}
               onChange={e => setForm(f => ({ ...f, opening_balance: e.target.value }))} className={inputCls} />
           </Field>
         </div>
@@ -4110,25 +4110,25 @@ function PayslipsTab() {
             </div>
             <div className="grid grid-cols-3 gap-3">
               <Field label="Base Salary">
-                <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" className={inputCls} value={genForm.base_salary}
+                <input data-lpignore="true" type="number" min="0" step="0.01" className={inputCls} value={genForm.base_salary}
                   onChange={e => setGenForm(f => ({ ...f, base_salary: e.target.value }))} />
               </Field>
               <Field label="Bonus">
-                <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" className={inputCls} value={genForm.bonus}
+                <input data-lpignore="true" type="number" min="0" step="0.01" className={inputCls} value={genForm.bonus}
                   onChange={e => setGenForm(f => ({ ...f, bonus: e.target.value }))} />
               </Field>
               <Field label="Other Deductions">
-                <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" className={inputCls} value={genForm.deductions}
+                <input data-lpignore="true" type="number" min="0" step="0.01" className={inputCls} value={genForm.deductions}
                   onChange={e => setGenForm(f => ({ ...f, deductions: e.target.value }))} />
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Salary TDS Rate %" hint="e.g. 10 for 10% on Base+Bonus. Leave 0 to skip.">
-                <input data-lpignore="true" data-1p-ignore type="number" min="0" max="50" step="0.01" className={inputCls} value={genForm.tds_rate}
+                <input data-lpignore="true" type="number" min="0" max="50" step="0.01" className={inputCls} value={genForm.tds_rate}
                   onChange={e => setGenForm(f => ({ ...f, tds_rate: e.target.value }))} />
               </Field>
               <Field label="Employee PAN (for TDS)">
-                <input data-lpignore="true" data-1p-ignore type="text" className={inputCls} value={genForm.employee_pan} placeholder="e.g. 123456789"
+                <input data-lpignore="true" type="text" className={inputCls} value={genForm.employee_pan} placeholder="e.g. 123456789"
                   onChange={e => setGenForm(f => ({ ...f, employee_pan: e.target.value }))} />
               </Field>
             </div>
@@ -4345,15 +4345,15 @@ function PayslipsTab() {
                 )}
                 <div className="grid grid-cols-3 gap-3">
                   <Field label="Base Salary (NPR) *">
-                    <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" className={inputCls} value={salaryForm.base_salary}
+                    <input data-lpignore="true" type="number" min="0" step="0.01" className={inputCls} value={salaryForm.base_salary}
                       onChange={e => setSalaryForm(f => ({ ...f, base_salary: e.target.value }))} required />
                   </Field>
                   <Field label="TDS Rate %" hint="e.g. 10 for 10%">
-                    <input data-lpignore="true" data-1p-ignore type="number" min="0" max="50" step="0.01" className={inputCls} value={salaryForm.tds_rate}
+                    <input data-lpignore="true" type="number" min="0" max="50" step="0.01" className={inputCls} value={salaryForm.tds_rate}
                       onChange={e => setSalaryForm(f => ({ ...f, tds_rate: e.target.value }))} />
                   </Field>
                   <Field label="Default Bonus">
-                    <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" className={inputCls} value={salaryForm.bonus_default}
+                    <input data-lpignore="true" type="number" min="0" step="0.01" className={inputCls} value={salaryForm.bonus_default}
                       onChange={e => setSalaryForm(f => ({ ...f, bonus_default: e.target.value }))} />
                   </Field>
                 </div>
@@ -4459,15 +4459,15 @@ function PayslipEditModal({ ps, onClose }: { ps: Payslip; onClose: () => void })
         </div>
         <div className="grid grid-cols-3 gap-3">
           <Field label="Base Salary">
-            <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" className={inputCls} value={form.base_salary}
+            <input data-lpignore="true" type="number" min="0" step="0.01" className={inputCls} value={form.base_salary}
               onChange={e => setForm(f => ({ ...f, base_salary: e.target.value }))} />
           </Field>
           <Field label="Bonus">
-            <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" className={inputCls} value={form.bonus}
+            <input data-lpignore="true" type="number" min="0" step="0.01" className={inputCls} value={form.bonus}
               onChange={e => setForm(f => ({ ...f, bonus: e.target.value }))} />
           </Field>
           <Field label="Deductions">
-            <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" className={inputCls} value={form.deductions}
+            <input data-lpignore="true" type="number" min="0" step="0.01" className={inputCls} value={form.deductions}
               onChange={e => setForm(f => ({ ...f, deductions: e.target.value }))} />
           </Field>
         </div>
@@ -4520,7 +4520,7 @@ function PaymentPickerModal({
               { value: 'cheque', label: 'Cheque' },
             ].map(opt => (
               <label key={opt.value} className="flex items-center gap-1.5 cursor-pointer">
-                <input data-lpignore="true" data-1p-ignore
+                <input data-lpignore="true"
                   type="radio"
                   name="payment_method"
                   value={opt.value}
@@ -6323,7 +6323,7 @@ function QuotationCreateModal({ onClose }: { onClose: () => void }) {
             <NepaliDatePicker value={validUntil} onChange={setValidUntil} />
           </Field>
           <Field label="Discount (NPR)" hint="Flat discount on subtotal">
-            <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={discount} onChange={e => setDiscount(e.target.value)} className={inputCls} />
+            <input data-lpignore="true" type="number" min="0" step="0.01" value={discount} onChange={e => setDiscount(e.target.value)} className={inputCls} />
           </Field>
         </div>
         <div>
@@ -6344,11 +6344,11 @@ function QuotationCreateModal({ onClose }: { onClose: () => void }) {
               <tbody className="divide-y divide-gray-100">
                 {lines.map((l, i) => (
                   <tr key={i}>
-                    <td className="px-2 py-1.5"><input data-lpignore="true" data-1p-ignore value={l.description} onChange={e => setLine(i, 'description', e.target.value)} placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" required /></td>
+                    <td className="px-2 py-1.5"><input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)} placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" required /></td>
                     <td className="px-2 py-1.5"><select value={l.line_type} onChange={e => setLine(i, 'line_type', e.target.value as 'service' | 'product')} className="w-full border-0 outline-none text-xs bg-transparent"><option value="service">Service</option><option value="product">Product</option></select></td>
-                    <td className="px-2 py-1.5"><input data-lpignore="true" data-1p-ignore type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)} className="w-full border-0 outline-none text-xs text-right bg-transparent" /></td>
-                    <td className="px-2 py-1.5"><input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)} placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" required /></td>
-                    <td className="px-2 py-1.5"><input data-lpignore="true" data-1p-ignore type="number" min="0" max="100" step="0.01" value={l.discount} onChange={e => setLine(i, 'discount', e.target.value)} className="w-full border-0 outline-none text-xs text-right bg-transparent" /></td>
+                    <td className="px-2 py-1.5"><input data-lpignore="true" type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)} className="w-full border-0 outline-none text-xs text-right bg-transparent" /></td>
+                    <td className="px-2 py-1.5"><input data-lpignore="true" type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)} placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" required /></td>
+                    <td className="px-2 py-1.5"><input data-lpignore="true" type="number" min="0" max="100" step="0.01" value={l.discount} onChange={e => setLine(i, 'discount', e.target.value)} className="w-full border-0 outline-none text-xs text-right bg-transparent" /></td>
                     <td className="px-2 py-1.5 text-center">{lines.length > 1 && <button type="button" onClick={() => setLines(ls => ls.filter((_, j) => j !== i))} className="text-gray-300 hover:text-red-400"><Trash2 size={12} /></button>}</td>
                   </tr>
                 ))}
@@ -6434,7 +6434,7 @@ function QuotationEditModal({ quo, onClose }: { quo: Quotation; onClose: () => v
             <NepaliDatePicker value={validUntil} onChange={setValidUntil} />
           </Field>
           <Field label="Discount (NPR)">
-            <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={discount} onChange={e => setDiscount(e.target.value)} className={inputCls} />
+            <input data-lpignore="true" type="number" min="0" step="0.01" value={discount} onChange={e => setDiscount(e.target.value)} className={inputCls} />
           </Field>
         </div>
         <div>
@@ -6455,11 +6455,11 @@ function QuotationEditModal({ quo, onClose }: { quo: Quotation; onClose: () => v
               <tbody className="divide-y divide-gray-100">
                 {lines.map((l, i) => (
                   <tr key={i}>
-                    <td className="px-2 py-1.5"><input data-lpignore="true" data-1p-ignore value={l.description} onChange={e => setLine(i, 'description', e.target.value)} placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" /></td>
+                    <td className="px-2 py-1.5"><input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)} placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" /></td>
                     <td className="px-2 py-1.5"><select value={l.line_type} onChange={e => setLine(i, 'line_type', e.target.value as 'service' | 'product')} className="w-full border-0 outline-none text-xs bg-transparent"><option value="service">Service</option><option value="product">Product</option></select></td>
-                    <td className="px-2 py-1.5"><input data-lpignore="true" data-1p-ignore type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)} className="w-full border-0 outline-none text-xs text-right bg-transparent" /></td>
-                    <td className="px-2 py-1.5"><input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)} placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" /></td>
-                    <td className="px-2 py-1.5"><input data-lpignore="true" data-1p-ignore type="number" min="0" max="100" step="0.01" value={l.discount} onChange={e => setLine(i, 'discount', e.target.value)} className="w-full border-0 outline-none text-xs text-right bg-transparent" /></td>
+                    <td className="px-2 py-1.5"><input data-lpignore="true" type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)} className="w-full border-0 outline-none text-xs text-right bg-transparent" /></td>
+                    <td className="px-2 py-1.5"><input data-lpignore="true" type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)} placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" /></td>
+                    <td className="px-2 py-1.5"><input data-lpignore="true" type="number" min="0" max="100" step="0.01" value={l.discount} onChange={e => setLine(i, 'discount', e.target.value)} className="w-full border-0 outline-none text-xs text-right bg-transparent" /></td>
                     <td className="px-2 py-1.5 text-center">{lines.length > 1 && <button type="button" onClick={() => setLines(ls => ls.filter((_, j) => j !== i))} className="text-gray-300 hover:text-red-400"><Trash2 size={12} /></button>}</td>
                   </tr>
                 ))}
@@ -6533,7 +6533,7 @@ function DebitNoteCreateModal({ onClose }: { onClose: () => void }) {
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Reason for return</label>
-          <input data-lpignore="true" data-1p-ignore value={reason} onChange={e => setReason(e.target.value)}
+          <input data-lpignore="true" value={reason} onChange={e => setReason(e.target.value)}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
             placeholder="e.g. Defective goods returned to supplier" />
         </div>
@@ -6559,15 +6559,15 @@ function DebitNoteCreateModal({ onClose }: { onClose: () => void }) {
                 {lines.map((l, i) => (
                   <tr key={i}>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
+                      <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
                         placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
+                      <input data-lpignore="true" type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
                         className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
+                      <input data-lpignore="true" type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
                         placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5 text-center">
@@ -6639,7 +6639,7 @@ function DebitNoteEditModal({ dn, onClose }: { dn: DebitNote; onClose: () => voi
     <Modal title={`Edit ${dn.debit_note_number}`} onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
         <Field label="Reason">
-          <input data-lpignore="true" data-1p-ignore value={reason} onChange={e => setReason(e.target.value)}
+          <input data-lpignore="true" value={reason} onChange={e => setReason(e.target.value)}
             placeholder="Reason for return" className={inputCls} />
         </Field>
         <div>
@@ -6664,15 +6664,15 @@ function DebitNoteEditModal({ dn, onClose }: { dn: DebitNote; onClose: () => voi
                 {lines.map((l, i) => (
                   <tr key={i}>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
+                      <input data-lpignore="true" value={l.description} onChange={e => setLine(i, 'description', e.target.value)}
                         placeholder="Item description" className="w-full border-0 outline-none text-xs bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
+                      <input data-lpignore="true" type="number" min="1" value={l.qty} onChange={e => setLine(i, 'qty', e.target.value)}
                         className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
+                      <input data-lpignore="true" type="number" min="0" step="0.01" value={l.unit_price} onChange={e => setLine(i, 'unit_price', e.target.value)}
                         placeholder="0.00" className="w-full border-0 outline-none text-xs text-right bg-transparent" />
                     </td>
                     <td className="px-2 py-1.5 text-center">
@@ -6849,22 +6849,22 @@ function TDSEditModal({ entry, onClose }: { entry: TDSEntry; onClose: () => void
       <form className="space-y-4" onSubmit={e => { e.preventDefault(); mutation.mutate(form) }}>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Supplier / Employee Name">
-            <input data-lpignore="true" data-1p-ignore value={form.supplier_name} onChange={e => setForm(f => ({ ...f, supplier_name: e.target.value }))} className={inputCls} />
+            <input data-lpignore="true" value={form.supplier_name} onChange={e => setForm(f => ({ ...f, supplier_name: e.target.value }))} className={inputCls} />
           </Field>
           <Field label="PAN Number">
-            <input data-lpignore="true" data-1p-ignore value={form.supplier_pan} onChange={e => setForm(f => ({ ...f, supplier_pan: e.target.value }))} className={inputCls} placeholder="9-digit PAN" />
+            <input data-lpignore="true" value={form.supplier_pan} onChange={e => setForm(f => ({ ...f, supplier_pan: e.target.value }))} className={inputCls} placeholder="9-digit PAN" />
           </Field>
           <Field label="Taxable Amount">
-            <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={form.taxable_amount} onChange={e => setForm(f => ({ ...f, taxable_amount: e.target.value }))} className={inputCls} />
+            <input data-lpignore="true" type="number" min="0" step="0.01" value={form.taxable_amount} onChange={e => setForm(f => ({ ...f, taxable_amount: e.target.value }))} className={inputCls} />
           </Field>
           <Field label="TDS Rate %" hint="e.g. 10 for 10%">
-            <input data-lpignore="true" data-1p-ignore type="number" min="0" max="50" step="0.01" value={form.tds_rate} onChange={e => setForm(f => ({ ...f, tds_rate: e.target.value }))} className={inputCls} />
+            <input data-lpignore="true" type="number" min="0" max="50" step="0.01" value={form.tds_rate} onChange={e => setForm(f => ({ ...f, tds_rate: e.target.value }))} className={inputCls} />
           </Field>
           <Field label="Nepali Month (1–12)">
-            <input data-lpignore="true" data-1p-ignore type="number" min="1" max="12" value={form.period_month} onChange={e => setForm(f => ({ ...f, period_month: e.target.value }))} className={inputCls} />
+            <input data-lpignore="true" type="number" min="1" max="12" value={form.period_month} onChange={e => setForm(f => ({ ...f, period_month: e.target.value }))} className={inputCls} />
           </Field>
           <Field label="Nepali Year">
-            <input data-lpignore="true" data-1p-ignore type="number" min="2070" value={form.period_year} onChange={e => setForm(f => ({ ...f, period_year: e.target.value }))} className={inputCls} />
+            <input data-lpignore="true" type="number" min="2070" value={form.period_year} onChange={e => setForm(f => ({ ...f, period_year: e.target.value }))} className={inputCls} />
           </Field>
         </div>
         <div className="flex justify-end gap-2 pt-1">
@@ -6943,7 +6943,7 @@ function TDSTab() {
           <option value="pending">Pending</option>
           <option value="deposited">Deposited</option>
         </select>
-        <input data-lpignore="true" data-1p-ignore type="number" placeholder={`Year (e.g. ${thisYear})`} value={yearFilter} onChange={e => setYearFilter(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-36 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        <input data-lpignore="true" type="number" placeholder={`Year (e.g. ${thisYear})`} value={yearFilter} onChange={e => setYearFilter(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-36 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
         <span className="text-sm text-gray-400 ml-auto">{data?.count ?? 0} entries</span>
       </div>
 
@@ -6984,7 +6984,7 @@ function TDSTab() {
                         {t.status === 'deposited' ? (
                           <span className="text-xs text-gray-500 font-mono">{t.deposit_reference || '—'}</span>
                         ) : (
-                          <input data-lpignore="true" data-1p-ignore value={depRef[t.id] ?? ''} onChange={e => setDepRef(p => ({ ...p, [t.id]: e.target.value }))} placeholder="IRD receipt #" className="border border-gray-200 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-indigo-400" />
+                          <input data-lpignore="true" value={depRef[t.id] ?? ''} onChange={e => setDepRef(p => ({ ...p, [t.id]: e.target.value }))} placeholder="IRD receipt #" className="border border-gray-200 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-indigo-400" />
                         )}
                       </td>
                       <td className="px-4 py-3">
@@ -7106,11 +7106,11 @@ function BankReconciliationTab() {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Opening Balance</label>
-              <input data-lpignore="true" data-1p-ignore type="number" step="0.01" value={newRec.opening_balance} onChange={e => setNewRec(p => ({ ...p, opening_balance: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="0.00" />
+              <input data-lpignore="true" type="number" step="0.01" value={newRec.opening_balance} onChange={e => setNewRec(p => ({ ...p, opening_balance: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="0.00" />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Closing Balance</label>
-              <input data-lpignore="true" data-1p-ignore type="number" step="0.01" value={newRec.closing_balance} onChange={e => setNewRec(p => ({ ...p, closing_balance: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="0.00" />
+              <input data-lpignore="true" type="number" step="0.01" value={newRec.closing_balance} onChange={e => setNewRec(p => ({ ...p, closing_balance: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="0.00" />
             </div>
             <div className="sm:col-span-2">
               <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
@@ -7202,11 +7202,11 @@ function BankReconciliationTab() {
                     </div>
                     <div className="flex-1 min-w-[160px]">
                       <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
-                      <input data-lpignore="true" data-1p-ignore value={newLine.description} onChange={e => setNewLine(p => ({ ...p, description: e.target.value }))} placeholder="e.g. Customer payment" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                      <input data-lpignore="true" value={newLine.description} onChange={e => setNewLine(p => ({ ...p, description: e.target.value }))} placeholder="e.g. Customer payment" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">Amount</label>
-                      <input data-lpignore="true" data-1p-ignore type="number" step="0.01" value={newLine.amount} onChange={e => setNewLine(p => ({ ...p, amount: e.target.value }))} placeholder="+ inflow, − outflow" className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-36 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                      <input data-lpignore="true" type="number" step="0.01" value={newLine.amount} onChange={e => setNewLine(p => ({ ...p, amount: e.target.value }))} placeholder="+ inflow, − outflow" className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-36 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                     </div>
                     <button onClick={() => mutateAddLine.mutate()} disabled={mutateAddLine.isPending || !newLine.date || !newLine.description || !newLine.amount}
                       className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50">
@@ -7303,7 +7303,7 @@ function RecurringJournalEditModal({ rj, onClose }: { rj: RecurringJournal; onCl
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
-            <input data-lpignore="true" data-1p-ignore value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
+            <input data-lpignore="true" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
           <div>
@@ -7319,7 +7319,7 @@ function RecurringJournalEditModal({ rj, onClose }: { rj: RecurringJournal; onCl
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
-            <input data-lpignore="true" data-1p-ignore value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
+            <input data-lpignore="true" value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
         </div>
@@ -7336,10 +7336,10 @@ function RecurringJournalEditModal({ rj, onClose }: { rj: RecurringJournal; onCl
               <tbody className="divide-y divide-gray-100">
                 {templateLines.map((l, i) => (
                   <tr key={i}>
-                    <td className="px-2 py-1"><input data-lpignore="true" data-1p-ignore value={l.account_code} onChange={e => updateLine(i, 'account_code', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24" placeholder="1001" /></td>
-                    <td className="px-2 py-1"><input data-lpignore="true" data-1p-ignore value={l.description} onChange={e => updateLine(i, 'description', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-36" placeholder="Description" /></td>
-                    <td className="px-2 py-1"><input data-lpignore="true" data-1p-ignore type="number" step="0.01" value={l.debit} onChange={e => updateLine(i, 'debit', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24" placeholder="0.00" /></td>
-                    <td className="px-2 py-1"><input data-lpignore="true" data-1p-ignore type="number" step="0.01" value={l.credit} onChange={e => updateLine(i, 'credit', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24" placeholder="0.00" /></td>
+                    <td className="px-2 py-1"><input data-lpignore="true" value={l.account_code} onChange={e => updateLine(i, 'account_code', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24" placeholder="1001" /></td>
+                    <td className="px-2 py-1"><input data-lpignore="true" value={l.description} onChange={e => updateLine(i, 'description', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-36" placeholder="Description" /></td>
+                    <td className="px-2 py-1"><input data-lpignore="true" type="number" step="0.01" value={l.debit} onChange={e => updateLine(i, 'debit', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24" placeholder="0.00" /></td>
+                    <td className="px-2 py-1"><input data-lpignore="true" type="number" step="0.01" value={l.credit} onChange={e => updateLine(i, 'credit', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24" placeholder="0.00" /></td>
                     <td className="px-2 py-1">{templateLines.length > 1 && <button type="button" onClick={() => setTemplateLines(p => p.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600"><X size={13} /></button>}</td>
                   </tr>
                 ))}
@@ -7418,7 +7418,7 @@ function RecurringJournalsTab() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
-              <input data-lpignore="true" data-1p-ignore value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g. Monthly Office Rent" />
+              <input data-lpignore="true" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g. Monthly Office Rent" />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Frequency</label>
@@ -7436,7 +7436,7 @@ function RecurringJournalsTab() {
             </div>
             <div className="sm:col-span-2">
               <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
-              <input data-lpignore="true" data-1p-ignore value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g. Monthly office rent — payable on 1st of each month" />
+              <input data-lpignore="true" value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g. Monthly office rent — payable on 1st of each month" />
             </div>
           </div>
           <div>
@@ -7452,10 +7452,10 @@ function RecurringJournalsTab() {
                 <tbody>
                   {templateLines.map((l, i) => (
                     <tr key={i}>
-                      <td className="px-2 py-1"><input data-lpignore="true" data-1p-ignore value={l.account_code} onChange={e => updateTemplateLine(i, 'account_code', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="1001" /></td>
-                      <td className="px-2 py-1"><input data-lpignore="true" data-1p-ignore value={l.description} onChange={e => updateTemplateLine(i, 'description', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-40 focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="Description" /></td>
-                      <td className="px-2 py-1"><input data-lpignore="true" data-1p-ignore type="number" step="0.01" value={l.debit} onChange={e => updateTemplateLine(i, 'debit', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="0.00" /></td>
-                      <td className="px-2 py-1"><input data-lpignore="true" data-1p-ignore type="number" step="0.01" value={l.credit} onChange={e => updateTemplateLine(i, 'credit', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="0.00" /></td>
+                      <td className="px-2 py-1"><input data-lpignore="true" value={l.account_code} onChange={e => updateTemplateLine(i, 'account_code', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="1001" /></td>
+                      <td className="px-2 py-1"><input data-lpignore="true" value={l.description} onChange={e => updateTemplateLine(i, 'description', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-40 focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="Description" /></td>
+                      <td className="px-2 py-1"><input data-lpignore="true" type="number" step="0.01" value={l.debit} onChange={e => updateTemplateLine(i, 'debit', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="0.00" /></td>
+                      <td className="px-2 py-1"><input data-lpignore="true" type="number" step="0.01" value={l.credit} onChange={e => updateTemplateLine(i, 'credit', e.target.value)} className="border border-gray-200 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="0.00" /></td>
                       <td className="px-2 py-1">{templateLines.length > 1 && <button onClick={() => removeTemplateLine(i)} className="text-red-400 hover:text-red-600"><X size={13} /></button>}</td>
                     </tr>
                   ))}
@@ -7871,17 +7871,17 @@ function ExpenseCreateModal({ expense, onClose }: ExpenseModalProps) {
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1">Amount</label>
-              <input data-lpignore="true" data-1p-ignore type="number" step="0.01" min="0.01" value={form.amount} onChange={set('amount')} required className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="0.00" />
+              <input data-lpignore="true" type="number" step="0.01" min="0.01" value={form.amount} onChange={set('amount')} required className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="0.00" />
             </div>
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-500 mb-1">Description</label>
-            <input data-lpignore="true" data-1p-ignore type="text" value={form.description} onChange={set('description')} required maxLength={300} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="What was this expense for?" />
+            <input data-lpignore="true" type="text" value={form.description} onChange={set('description')} required maxLength={300} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="What was this expense for?" />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1">Date</label>
-              <input data-lpignore="true" data-1p-ignore type="date" value={form.date} onChange={set('date')} required className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <input data-lpignore="true" type="date" value={form.date} onChange={set('date')} required className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1">Expense Account (optional)</label>
@@ -7893,25 +7893,25 @@ function ExpenseCreateModal({ expense, onClose }: ExpenseModalProps) {
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-500 mb-1">Receipt URL (optional)</label>
-            <input data-lpignore="true" data-1p-ignore type="url" value={form.receipt_url} onChange={set('receipt_url')} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="https://..." />
+            <input data-lpignore="true" type="url" value={form.receipt_url} onChange={set('receipt_url')} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="https://..." />
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-500 mb-1">Notes (optional)</label>
             <textarea value={form.notes} onChange={set('notes')} rows={2} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none" placeholder="Additional notes..." />
           </div>
           <div className="flex items-center gap-2">
-            <input data-lpignore="true" data-1p-ignore type="checkbox" id="is_recurring" checked={form.is_recurring} onChange={e => setForm(p => ({ ...p, is_recurring: e.target.checked }))} className="rounded border-gray-300 text-indigo-600" />
+            <input data-lpignore="true" type="checkbox" id="is_recurring" checked={form.is_recurring} onChange={e => setForm(p => ({ ...p, is_recurring: e.target.checked }))} className="rounded border-gray-300 text-indigo-600" />
             <label htmlFor="is_recurring" className="text-sm text-gray-700">Recurring expense</label>
           </div>
           {form.is_recurring && (
             <div className="grid grid-cols-2 gap-4 pl-6 border-l-2 border-indigo-100">
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Repeat every (days)</label>
-                <input data-lpignore="true" data-1p-ignore type="number" min="1" value={form.recur_interval} onChange={set('recur_interval')} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="30" />
+                <input data-lpignore="true" type="number" min="1" value={form.recur_interval} onChange={set('recur_interval')} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="30" />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">First recurrence date</label>
-                <input data-lpignore="true" data-1p-ignore type="date" value={form.next_recur_date} onChange={set('next_recur_date')} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                <input data-lpignore="true" type="date" value={form.next_recur_date} onChange={set('next_recur_date')} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
             </div>
           )}
@@ -8206,8 +8206,8 @@ function ExpensesTab() {
           <option value="">All Categories</option>
           {EXPENSE_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
         </select>
-        <input data-lpignore="true" data-1p-ignore type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} title="From date" className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-        <input data-lpignore="true" data-1p-ignore type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} title="To date" className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        <input data-lpignore="true" type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} title="From date" className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        <input data-lpignore="true" type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} title="To date" className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
         <span className="text-sm text-gray-400 ml-auto">{data?.count ?? expenses.length} expenses</span>
         <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
           <Plus size={15} /> New Expense
@@ -8430,7 +8430,7 @@ function PurchaseOrderReceiveModal({ po, onClose }: { po: PurchaseOrder; onClose
                   <td className="py-2 text-right text-gray-500">{item.quantity_received}</td>
                   <td className="py-2 text-right text-orange-600">{item.pending_quantity}</td>
                   <td className="py-2 text-right">
-                    <input data-lpignore="true" data-1p-ignore type="number" min={0} max={item.pending_quantity}
+                    <input data-lpignore="true" type="number" min={0} max={item.pending_quantity}
                       value={quantities[item.id] ?? ''}
                       onChange={e => setQuantities(q => ({ ...q, [item.id]: e.target.value }))}
                       className="w-20 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:border-indigo-400"
@@ -8442,7 +8442,7 @@ function PurchaseOrderReceiveModal({ po, onClose }: { po: PurchaseOrder; onClose
           </table>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-            <input data-lpignore="true" data-1p-ignore value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional notes"
+            <input data-lpignore="true" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional notes"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
           </div>
         </div>
@@ -8516,13 +8516,13 @@ function PurchaseOrderCreateModal({ onClose }: { onClose: () => void }) {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Expected Delivery</label>
-              <input data-lpignore="true" data-1p-ignore type="date" value={expectedDelivery} onChange={e => setExpectedDelivery(e.target.value)}
+              <input data-lpignore="true" type="date" value={expectedDelivery} onChange={e => setExpectedDelivery(e.target.value)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
             </div>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-            <input data-lpignore="true" data-1p-ignore value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional notes"
+            <input data-lpignore="true" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional notes"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
           </div>
           <div>
@@ -8543,11 +8543,11 @@ function PurchaseOrderCreateModal({ onClose }: { onClose: () => void }) {
                     </select>
                   </div>
                   <div className="col-span-2">
-                    <input data-lpignore="true" data-1p-ignore type="number" min={1} value={item.qty} onChange={e => updateItem(i, 'qty', e.target.value)} placeholder="Qty"
+                    <input data-lpignore="true" type="number" min={1} value={item.qty} onChange={e => updateItem(i, 'qty', e.target.value)} placeholder="Qty"
                       className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-right focus:outline-none focus:border-indigo-400" />
                   </div>
                   <div className="col-span-3">
-                    <input data-lpignore="true" data-1p-ignore type="number" min={0} step="0.01" value={item.unit_cost} onChange={e => updateItem(i, 'unit_cost', e.target.value)} placeholder="Unit cost"
+                    <input data-lpignore="true" type="number" min={0} step="0.01" value={item.unit_cost} onChange={e => updateItem(i, 'unit_cost', e.target.value)} placeholder="Unit cost"
                       className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-right focus:outline-none focus:border-indigo-400" />
                   </div>
                   <div className="col-span-1 text-right text-xs text-gray-500 tabular-nums">
@@ -8728,7 +8728,7 @@ function QuickPaymentTab() {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Date *</label>
-            <input data-lpignore="true" data-1p-ignore type="date" value={date} onChange={e => setDate(e.target.value)}
+            <input data-lpignore="true" type="date" value={date} onChange={e => setDate(e.target.value)}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
           </div>
           <div>
@@ -8745,7 +8745,7 @@ function QuickPaymentTab() {
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Amount *</label>
-          <input data-lpignore="true" data-1p-ignore type="number" min={0} step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"
+          <input data-lpignore="true" type="number" min={0} step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
         </div>
         {needsBank && (
@@ -8768,7 +8768,7 @@ function QuickPaymentTab() {
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Reference</label>
-          <input data-lpignore="true" data-1p-ignore value={reference} onChange={e => setReference(e.target.value)} placeholder="Cheque #, txn ref…"
+          <input data-lpignore="true" value={reference} onChange={e => setReference(e.target.value)} placeholder="Cheque #, txn ref…"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
         </div>
         <div>
@@ -8862,7 +8862,7 @@ function QuickReceiptTab() {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Date *</label>
-            <input data-lpignore="true" data-1p-ignore type="date" value={date} onChange={e => setDate(e.target.value)}
+            <input data-lpignore="true" type="date" value={date} onChange={e => setDate(e.target.value)}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
           </div>
           <div>
@@ -8879,7 +8879,7 @@ function QuickReceiptTab() {
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Amount *</label>
-          <input data-lpignore="true" data-1p-ignore type="number" min={0} step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"
+          <input data-lpignore="true" type="number" min={0} step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
         </div>
         {needsBank && (
@@ -8902,7 +8902,7 @@ function QuickReceiptTab() {
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Reference</label>
-          <input data-lpignore="true" data-1p-ignore value={reference} onChange={e => setReference(e.target.value)} placeholder="Cheque #, txn ref…"
+          <input data-lpignore="true" value={reference} onChange={e => setReference(e.target.value)} placeholder="Cheque #, txn ref…"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
         </div>
         <div>
@@ -9000,7 +9000,7 @@ function CashTransfersTab() {
         <h3 className="font-semibold text-gray-900 flex items-center gap-2"><ArrowRightLeft size={16} className="text-indigo-500" /> Internal Fund Transfer</h3>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Date *</label>
-          <input data-lpignore="true" data-1p-ignore type="date" value={date} onChange={e => setDate(e.target.value)}
+          <input data-lpignore="true" type="date" value={date} onChange={e => setDate(e.target.value)}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
         </div>
         <div>
@@ -9021,12 +9021,12 @@ function CashTransfersTab() {
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Amount *</label>
-          <input data-lpignore="true" data-1p-ignore type="number" min={0} step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"
+          <input data-lpignore="true" type="number" min={0} step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Reference</label>
-          <input data-lpignore="true" data-1p-ignore value={reference} onChange={e => setReference(e.target.value)} placeholder="Transfer reference"
+          <input data-lpignore="true" value={reference} onChange={e => setReference(e.target.value)} placeholder="Transfer reference"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
         </div>
         {fromBank && !fromBank.linked_account && (
@@ -9351,27 +9351,27 @@ function SupplierCreateModal({ onClose, initial }: { onClose: () => void; initia
     <Modal title={isEdit ? 'Edit Supplier' : 'New Supplier'} onClose={onClose}>
       <form onSubmit={e => { e.preventDefault(); mutation.mutate() }} className="space-y-4">
         <Field label="Supplier Name *">
-          <input data-lpignore="true" data-1p-ignore value={form.name} onChange={set('name')} className={inputCls} required placeholder="Supplier / vendor name" autoComplete="off" data-lpignore="true" data-1p-ignore />
+          <input data-lpignore="true" value={form.name} onChange={set('name')} className={inputCls} required placeholder="Supplier / vendor name" autoComplete="off" data-lpignore="true" />
         </Field>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Contact Person">
-            <input data-lpignore="true" data-1p-ignore value={form.contact_person} onChange={set('contact_person')} className={inputCls} placeholder="Full name" autoComplete="off" data-lpignore="true" data-1p-ignore />
+            <input data-lpignore="true" value={form.contact_person} onChange={set('contact_person')} className={inputCls} placeholder="Full name" autoComplete="off" data-lpignore="true" />
           </Field>
           <Field label="Phone">
-            <input data-lpignore="true" data-1p-ignore value={form.phone} onChange={set('phone')} className={inputCls} placeholder="Phone number" autoComplete="off" data-lpignore="true" data-1p-ignore />
+            <input data-lpignore="true" value={form.phone} onChange={set('phone')} className={inputCls} placeholder="Phone number" autoComplete="off" data-lpignore="true" />
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-4">
           <Field label="PAN / VAT Number">
-            <input data-lpignore="true" data-1p-ignore value={form.pan_number} onChange={set('pan_number')} className={inputCls} placeholder="9-digit PAN" autoComplete="off" data-lpignore="true" data-1p-ignore />
+            <input data-lpignore="true" value={form.pan_number} onChange={set('pan_number')} className={inputCls} placeholder="9-digit PAN" autoComplete="off" data-lpignore="true" />
           </Field>
           <Field label="Email">
-            <input data-lpignore="true" data-1p-ignore type="email" value={form.email} onChange={set('email')} className={inputCls} placeholder="email@example.com" autoComplete="off" data-lpignore="true" data-1p-ignore />
+            <input data-lpignore="true" type="email" value={form.email} onChange={set('email')} className={inputCls} placeholder="email@example.com" autoComplete="off" data-lpignore="true" />
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Website">
-            <input data-lpignore="true" data-1p-ignore value={form.website} onChange={set('website')} className={inputCls} placeholder="https://" autoComplete="off" data-lpignore="true" data-1p-ignore />
+            <input data-lpignore="true" value={form.website} onChange={set('website')} className={inputCls} placeholder="https://" autoComplete="off" data-lpignore="true" />
           </Field>
           <Field label="Payment Terms">
             <select value={form.payment_terms} onChange={set('payment_terms')} className={inputCls}>
@@ -9386,21 +9386,21 @@ function SupplierCreateModal({ onClose, initial }: { onClose: () => void; initia
         </div>
         <div className="grid grid-cols-2 gap-4">
           <Field label="City">
-            <input data-lpignore="true" data-1p-ignore value={form.city} onChange={set('city')} className={inputCls} placeholder="City" autoComplete="off" data-lpignore="true" data-1p-ignore />
+            <input data-lpignore="true" value={form.city} onChange={set('city')} className={inputCls} placeholder="City" autoComplete="off" data-lpignore="true" />
           </Field>
           <Field label="Country">
-            <input data-lpignore="true" data-1p-ignore value={form.country} onChange={set('country')} className={inputCls} placeholder="Country" autoComplete="off" data-lpignore="true" data-1p-ignore />
+            <input data-lpignore="true" value={form.country} onChange={set('country')} className={inputCls} placeholder="Country" autoComplete="off" data-lpignore="true" />
           </Field>
         </div>
         <Field label="Address">
-          <input data-lpignore="true" data-1p-ignore value={form.address} onChange={set('address')} className={inputCls} placeholder="Street address" autoComplete="off" data-lpignore="true" data-1p-ignore />
+          <input data-lpignore="true" value={form.address} onChange={set('address')} className={inputCls} placeholder="Street address" autoComplete="off" data-lpignore="true" />
         </Field>
         <Field label="Notes">
           <textarea value={form.notes} onChange={set('notes')} className={inputCls + ' resize-none'} rows={2} placeholder="Internal notes" />
         </Field>
         {isEdit && (
           <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none">
-            <input data-lpignore="true" data-1p-ignore type="checkbox" checked={form.is_active} onChange={e => setForm(p => ({ ...p, is_active: e.target.checked }))} className="rounded" />
+            <input data-lpignore="true" type="checkbox" checked={form.is_active} onChange={e => setForm(p => ({ ...p, is_active: e.target.checked }))} className="rounded" />
             Active supplier
           </label>
         )}
@@ -9653,7 +9653,7 @@ function ChequeRegisterTab() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Cheque Date *</label>
-              <input data-lpignore="true" data-1p-ignore type="date" value={issDate} onChange={e => setIssDate(e.target.value)} className={inputCls2} />
+              <input data-lpignore="true" type="date" value={issDate} onChange={e => setIssDate(e.target.value)} className={inputCls2} />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Bank Account</label>
@@ -9665,24 +9665,24 @@ function ChequeRegisterTab() {
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Payee Name *</label>
-            <input data-lpignore="true" data-1p-ignore value={issPayee} onChange={e => setIssPayee(e.target.value)} placeholder="Who the cheque is written to"
+            <input data-lpignore="true" value={issPayee} onChange={e => setIssPayee(e.target.value)} placeholder="Who the cheque is written to"
               className={inputCls2} />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Cheque Number</label>
-              <input data-lpignore="true" data-1p-ignore value={issChqNum} onChange={e => setIssChqNum(e.target.value)} placeholder="e.g. 002341"
+              <input data-lpignore="true" value={issChqNum} onChange={e => setIssChqNum(e.target.value)} placeholder="e.g. 002341"
                 className={inputCls2} />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Amount *</label>
-              <input data-lpignore="true" data-1p-ignore type="number" min={0} step="0.01" value={issAmount} onChange={e => setIssAmount(e.target.value)}
+              <input data-lpignore="true" type="number" min={0} step="0.01" value={issAmount} onChange={e => setIssAmount(e.target.value)}
                 placeholder="0.00" className={inputCls2} />
             </div>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Notes / Purpose</label>
-            <input data-lpignore="true" data-1p-ignore value={issNotes} onChange={e => setIssNotes(e.target.value)} placeholder="What this payment is for"
+            <input data-lpignore="true" value={issNotes} onChange={e => setIssNotes(e.target.value)} placeholder="What this payment is for"
               className={inputCls2} />
           </div>
           <p className="text-xs text-gray-400">A journal entry (Dr: AP/Expense, Cr: Bank) will be created automatically.</p>
@@ -9708,7 +9708,7 @@ function ChequeRegisterTab() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Cheque Date *</label>
-              <input data-lpignore="true" data-1p-ignore type="date" value={rcvDate} onChange={e => setRcvDate(e.target.value)} className={inputCls2} />
+              <input data-lpignore="true" type="date" value={rcvDate} onChange={e => setRcvDate(e.target.value)} className={inputCls2} />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Deposit to Bank</label>
@@ -9720,24 +9720,24 @@ function ChequeRegisterTab() {
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Payer / Drawer Name *</label>
-            <input data-lpignore="true" data-1p-ignore value={rcvPayer} onChange={e => setRcvPayer(e.target.value)} placeholder="Who issued the cheque"
+            <input data-lpignore="true" value={rcvPayer} onChange={e => setRcvPayer(e.target.value)} placeholder="Who issued the cheque"
               className={inputCls2} />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Cheque Number</label>
-              <input data-lpignore="true" data-1p-ignore value={rcvChqNum} onChange={e => setRcvChqNum(e.target.value)} placeholder="e.g. 100234"
+              <input data-lpignore="true" value={rcvChqNum} onChange={e => setRcvChqNum(e.target.value)} placeholder="e.g. 100234"
                 className={inputCls2} />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Amount *</label>
-              <input data-lpignore="true" data-1p-ignore type="number" min={0} step="0.01" value={rcvAmount} onChange={e => setRcvAmount(e.target.value)}
+              <input data-lpignore="true" type="number" min={0} step="0.01" value={rcvAmount} onChange={e => setRcvAmount(e.target.value)}
                 placeholder="0.00" className={inputCls2} />
             </div>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Notes / Description</label>
-            <input data-lpignore="true" data-1p-ignore value={rcvNotes} onChange={e => setRcvNotes(e.target.value)} placeholder="e.g. Payment for Invoice INV-00123"
+            <input data-lpignore="true" value={rcvNotes} onChange={e => setRcvNotes(e.target.value)} placeholder="e.g. Payment for Invoice INV-00123"
               className={inputCls2} />
           </div>
           <p className="text-xs text-gray-400">A journal entry (Dr: Bank, Cr: AR/Income) will be created automatically.</p>

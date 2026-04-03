@@ -92,28 +92,28 @@ export default function InviteStaffModal({ open, onClose, departments }: Props) 
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Email <span className="text-red-500">*</span>
             </label>
-            <input data-lpignore="true" data-1p-ignore type="email" required value={form.email} onChange={e => set('email', e.target.value)}
+            <input data-lpignore="true" type="email" required value={form.email} onChange={e => set('email', e.target.value)}
               placeholder="staff@example.com"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-            <input data-lpignore="true" data-1p-ignore type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)}
+            <input data-lpignore="true" type="text" value={form.full_name} onChange={e => set('full_name', e.target.value)}
               placeholder="Jane Doe"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Personal Phone</label>
-            <input data-lpignore="true" data-1p-ignore type="text" value={form.phone} onChange={e => set('phone', e.target.value)}
+            <input data-lpignore="true" type="text" value={form.phone} onChange={e => set('phone', e.target.value)}
               placeholder="+977 98..."
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Office Phone</label>
-            <input data-lpignore="true" data-1p-ignore type="text" value={form.office_phone} onChange={e => set('office_phone', e.target.value)}
+            <input data-lpignore="true" type="text" value={form.office_phone} onChange={e => set('office_phone', e.target.value)}
               placeholder="+977 1-..."
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
@@ -123,7 +123,7 @@ export default function InviteStaffModal({ open, onClose, departments }: Props) 
               Temporary Password
               <span className="text-gray-400 text-xs ml-1">(auto if blank)</span>
             </label>
-            <input data-lpignore="true" data-1p-ignore type="password" value={form.password} onChange={e => set('password', e.target.value)}
+            <input data-lpignore="true" type="password" value={form.password} onChange={e => set('password', e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
 
@@ -153,7 +153,7 @@ export default function InviteStaffModal({ open, onClose, departments }: Props) 
               Employee ID
               {idLoading && <span className="ml-2 text-xs text-gray-400">generating…</span>}
             </label>
-            <input data-lpignore="true" data-1p-ignore type="text" value={form.employee_id} onChange={e => set('employee_id', e.target.value)}
+            <input data-lpignore="true" type="text" value={form.employee_id} onChange={e => set('employee_id', e.target.value)}
               placeholder={idLoading ? 'Generating…' : 'EMP-1234'}
               disabled={idLoading}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400" />
@@ -169,7 +169,7 @@ export default function InviteStaffModal({ open, onClose, departments }: Props) 
               PAN Number
               <span className="ml-1 text-xs font-normal text-gray-400">— for TDS reporting</span>
             </label>
-            <input data-lpignore="true" data-1p-ignore type="text" value={form.pan_number} onChange={e => set('pan_number', e.target.value)}
+            <input data-lpignore="true" type="text" value={form.pan_number} onChange={e => set('pan_number', e.target.value)}
               autoComplete="off"
               placeholder="9-digit PAN"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
@@ -177,7 +177,7 @@ export default function InviteStaffModal({ open, onClose, departments }: Props) 
         </div>
 
         <label className="flex items-center gap-2 cursor-pointer">
-          <input data-lpignore="true" data-1p-ignore type="checkbox" checked={form.is_admin} onChange={e => set('is_admin', e.target.checked)}
+          <input data-lpignore="true" type="checkbox" checked={form.is_admin} onChange={e => set('is_admin', e.target.checked)}
             className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
           <span className="text-sm text-gray-700">Grant admin privileges for this tenant</span>
         </label>
