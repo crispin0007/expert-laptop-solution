@@ -64,17 +64,17 @@ def handle_invoice_status_change(sender, instance, created, **kwargs):
     ).exists()
 
     if instance.status == 'issued' and not already_posted:
-        try:
-            create_invoice_journal(instance, created_by=instance.created_by)
-        except Exception as e:
-            log.error("Invoice journal failed for invoice %s: %s", instance.pk, e, exc_info=True)
+        # Critical: if journal creation fails, re-raise so the caller's transaction
+        # (ATOMIC_REQUESTS) rolls back and the invoice never becomes 'issued'.
+        create_invoice_journal(instance, created_by=instance.created_by)
 
-        # Post COGS journal for product lines (silently skipped if no product_id in line items)
+        # Best-effort COGS journal: if there are no product lines or COGS account
+        # is missing, log and continue — the revenue journal already posted.
         try:
             from accounting.services.journal_service import create_cogs_journal
             create_cogs_journal(instance, created_by=instance.created_by)
         except Exception as e:
-            log.error("COGS journal failed for invoice %s: %s", instance.pk, e, exc_info=True)
+            log.warning("COGS journal skipped for invoice %s: %s", instance.pk, e)
 
     elif instance.status == 'void':
         # Only reverse if there was actually a posted invoice journal to undo.
@@ -87,10 +87,8 @@ def handle_invoice_status_change(sender, instance, created, **kwargs):
             is_posted=True,
         ).exists()
         if has_invoice_journal:
-            try:
-                reverse_invoice_journal(instance, created_by=instance.created_by)
-            except Exception as e:
-                log.error("Invoice void-journal failed for invoice %s: %s", instance.pk, e, exc_info=True)
+            # Critical: re-raise so void is rolled back if journal fails.
+            reverse_invoice_journal(instance, created_by=instance.created_by)
 
 
 # ─── Bill: journal on approve ─────────────────────────────────────────────────
@@ -112,10 +110,8 @@ def handle_bill_status_change(sender, instance, created, **kwargs):
     ).exists()
 
     if instance.status == 'approved' and not already_posted:
-        try:
-            create_bill_journal(instance, created_by=instance.created_by)
-        except Exception as e:
-            log.error("Bill journal failed for bill %s: %s", instance.pk, e, exc_info=True)
+        # Critical: re-raise so approval is rolled back if journal fails.
+        create_bill_journal(instance, created_by=instance.created_by)
 
 
 # ─── Payment: journal on create ───────────────────────────────────────────────
@@ -144,10 +140,8 @@ def handle_payment_created(sender, instance, created, **kwargs):
         return
 
     from accounting.services.journal_service import create_payment_journal
-    try:
-        create_payment_journal(instance, created_by=instance.created_by)
-    except Exception as e:
-        log.error("Payment journal failed for payment %s: %s", instance.pk, e, exc_info=True)
+    # Critical: re-raise so payment creation is rolled back if journal fails.
+    create_payment_journal(instance, created_by=instance.created_by)
 
 
 # ─── Credit Note: journal on issue ───────────────────────────────────────────
@@ -174,10 +168,8 @@ def handle_credit_note_issued(sender, instance, created, **kwargs):
     ).exists()
 
     if instance.status == 'issued' and not already_posted:
-        try:
-            create_credit_note_journal(instance, created_by=instance.created_by)
-        except Exception as e:
-            log.error("Credit note journal failed for CN %s: %s", instance.pk, e, exc_info=True)
+        # Critical: re-raise so issuance is rolled back if journal fails.
+        create_credit_note_journal(instance, created_by=instance.created_by)
 
     elif instance.status == 'void' and already_posted:
         # Only reverse if an issued journal was actually posted.
@@ -190,10 +182,8 @@ def handle_credit_note_issued(sender, instance, created, **kwargs):
             is_posted=True,
         ).count() >= 2   # 1 = original, 2+ = already has a reversal
         if not void_already_reversed:
-            try:
-                reverse_credit_note_journal(instance, created_by=instance.created_by)
-            except Exception as e:
-                log.error("Credit note void-reversal failed for CN %s: %s", instance.pk, e, exc_info=True)
+            # Critical: re-raise so void is rolled back if reversal fails.
+            reverse_credit_note_journal(instance, created_by=instance.created_by)
 
 
 # ─── Payslip: journal on paid ─────────────────────────────────────────────────
@@ -227,10 +217,8 @@ def handle_payslip_paid(sender, instance, created, **kwargs):
     ).exists()
 
     if instance.status == 'paid' and not already_posted:
-        try:
-            create_payslip_journal(instance, created_by=instance.created_by)
-        except Exception as e:
-            log.error("Payslip journal failed for payslip %s: %s", instance.pk, e, exc_info=True)
+        # Critical: re-raise so payslip status is rolled back if journal fails.
+        create_payslip_journal(instance, created_by=instance.created_by)
 
 
 # ─── Tenant created: seed Chart of Accounts ──────────────────────────────────
@@ -273,10 +261,8 @@ def handle_debit_note_issued(sender, instance, created, **kwargs):
     ).exists()
 
     if instance.status == 'issued' and not already_posted:
-        try:
-            create_debit_note_journal(instance, created_by=instance.created_by)
-        except Exception as e:
-            log.error("Debit note journal failed for DN %s: %s", instance.pk, e, exc_info=True)
+        # Critical: re-raise so issuance is rolled back if journal fails.
+        create_debit_note_journal(instance, created_by=instance.created_by)
 
     elif instance.status == 'void' and already_posted:
         void_already_reversed = JournalEntry.objects.filter(
@@ -286,10 +272,8 @@ def handle_debit_note_issued(sender, instance, created, **kwargs):
             is_posted=True,
         ).count() >= 2
         if not void_already_reversed:
-            try:
-                reverse_debit_note_journal(instance, created_by=instance.created_by)
-            except Exception as e:
-                log.error("Debit note void-reversal failed for DN %s: %s", instance.pk, e, exc_info=True)
+            # Critical: re-raise so void is rolled back if reversal fails.
+            reverse_debit_note_journal(instance, created_by=instance.created_by)
 
 
 # ─── Bill approved: auto-create TDS entry if applicable ──────────────────────────
@@ -321,6 +305,24 @@ def handle_bill_tds(sender, instance, created, **kwargs):
         return
 
     now = timezone.localdate()
+    # B7 — TDS periods are reported to IRD in Bikram Sambat calendar months.
+    # Using AD month (now.month) was filing TDS under the wrong BS period,
+    # causing reconciliation failures when AD and BS months don't align.
+    try:
+        from core.nepali_date import ad_to_bs
+        bs_date = ad_to_bs(now)
+        period_month = bs_date.month
+        period_year  = bs_date.year
+    except Exception:
+        # Graceful fallback if nepali_date conversion fails — keep AD date
+        # and log so the operator knows to fix the conversion library.
+        log.warning(
+            "ad_to_bs conversion failed for bill %s TDS period — "
+            "falling back to AD month %s/%s. Fix core.nepali_date.",
+            instance.pk, now.month, now.year,
+        )
+        period_month = now.month
+        period_year  = now.year
     try:
         TDSEntry.objects.create(
             tenant=instance.tenant,
@@ -329,10 +331,12 @@ def handle_bill_tds(sender, instance, created, **kwargs):
             supplier_name=instance.supplier_name or (
                 instance.supplier.name if instance.supplier else ''
             ),
+            # Bug 3 fix: read PAN from linked Supplier record
+            supplier_pan=instance.supplier.pan_number if instance.supplier else '',
             taxable_amount=instance.subtotal,
             tds_rate=tds_rate,
-            period_month=now.month,
-            period_year=now.year,
+            period_month=period_month,
+            period_year=period_year,
         )
     except Exception as e:
         log.error("Auto TDS entry failed for bill %s: %s", instance.pk, e, exc_info=True)

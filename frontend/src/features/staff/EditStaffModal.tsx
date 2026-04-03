@@ -17,6 +17,7 @@ interface StaffMembership {
   join_date: string | null
   is_admin: boolean
   is_active: boolean
+  pan_number?: string
 }
 
 interface StaffMember {
@@ -53,6 +54,7 @@ export default function EditStaffModal({ open, onClose, staff, departments }: Pr
     employee_id: '',
     join_date: '',
     is_admin: false,
+    pan_number: '',
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
 
@@ -85,6 +87,7 @@ export default function EditStaffModal({ open, onClose, staff, departments }: Pr
         employee_id: m?.employee_id ?? '',
         join_date: m?.join_date ?? '',
         is_admin: m?.is_admin ?? false,
+        pan_number: m?.pan_number ?? '',
       })
       setErrors({})
     }
@@ -114,6 +117,7 @@ export default function EditStaffModal({ open, onClose, staff, departments }: Pr
       employee_id: form.employee_id.trim(),
       is_admin: form.is_admin,
       department: form.department ? parseInt(form.department) : null,
+      pan_number: form.pan_number.trim(),
     }
     if (form.join_date) patchPayload.join_date = form.join_date
 
@@ -158,7 +162,7 @@ export default function EditStaffModal({ open, onClose, staff, departments }: Pr
           {/* Full name */}
           <div className="col-span-2">
             <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-            <input type="text" value={form.full_name}
+            <input data-lpignore="true" data-1p-ignore type="text" value={form.full_name}
               onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
               className={inp(errors.full_name)} />
             {errors.full_name && <p className="text-xs text-red-500 mt-1">{errors.full_name}</p>}
@@ -167,7 +171,7 @@ export default function EditStaffModal({ open, onClose, staff, departments }: Pr
           {/* Personal Phone */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Personal Phone</label>
-            <input type="text" value={form.phone}
+            <input data-lpignore="true" data-1p-ignore type="text" value={form.phone}
               onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
               className={inp()} />
           </div>
@@ -175,7 +179,7 @@ export default function EditStaffModal({ open, onClose, staff, departments }: Pr
           {/* Office Phone */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Office Phone</label>
-            <input type="text" value={form.office_phone}
+            <input data-lpignore="true" data-1p-ignore type="text" value={form.office_phone}
               onChange={e => setForm(f => ({ ...f, office_phone: e.target.value }))}
               className={inp()} />
           </div>
@@ -196,7 +200,7 @@ export default function EditStaffModal({ open, onClose, staff, departments }: Pr
           {/* Employee ID */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Employee ID</label>
-            <input type="text" value={form.employee_id}
+            <input data-lpignore="true" data-1p-ignore type="text" value={form.employee_id}
               onChange={e => setForm(f => ({ ...f, employee_id: e.target.value }))}
               placeholder="EMP-001" className={inp()} />
           </div>
@@ -252,11 +256,23 @@ export default function EditStaffModal({ open, onClose, staff, departments }: Pr
             <label className="block text-sm font-medium text-gray-700 mb-1">Join Date</label>
             <NepaliDatePicker value={form.join_date ?? ''} onChange={v => setForm(f => ({ ...f, join_date: v }))} />
           </div>
+
+          {/* PAN Number */}
+          <div className="col-span-2">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              PAN Number
+              <span className="ml-1 text-xs font-normal text-gray-400">— for TDS reporting</span>
+            </label>
+            <input data-lpignore="true" data-1p-ignore type="text" value={form.pan_number}
+              onChange={e => setForm(f => ({ ...f, pan_number: e.target.value }))}
+              autoComplete="off"
+              placeholder="9-digit PAN" className={inp()} />
+          </div>
         </div>
 
         {/* Admin toggle */}
         <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" checked={form.is_admin}
+          <input data-lpignore="true" data-1p-ignore type="checkbox" checked={form.is_admin}
             onChange={e => setForm(f => ({ ...f, is_admin: e.target.checked }))}
             className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
           <span className="text-sm text-gray-700">Grant admin privileges for this tenant</span>

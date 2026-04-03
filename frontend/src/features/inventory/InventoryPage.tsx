@@ -102,6 +102,7 @@ interface Supplier {
   payment_terms?: string
   notes?: string
   is_active: boolean
+  pan_number?: string
   po_count?: number
 }
 
@@ -147,11 +148,13 @@ interface SupplierFormData {
   payment_terms: string
   notes: string
   is_active: boolean
+  pan_number: string
 }
 
 const DEFAULT_SUPPLIER_FORM: SupplierFormData = {
   name: '', contact_person: '', email: '', phone: '', address: '',
   city: '', country: 'Nepal', website: '', payment_terms: '', notes: '', is_active: true,
+  pan_number: '',
 }
 
 // ── New Types: UoM, Variants, Returns ─────────────────────────────────────────
@@ -518,12 +521,12 @@ function ProductModal({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
-            <input value={form.name} onChange={e => set('name', e.target.value)} placeholder="Product name"
+            <input data-lpignore="true" data-1p-ignore value={form.name} onChange={e => set('name', e.target.value)} placeholder="Product name"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">SKU</label>
-            <input value={form.sku} onChange={e => set('sku', e.target.value)} placeholder="SKU-001"
+            <input data-lpignore="true" data-1p-ignore value={form.sku} onChange={e => set('sku', e.target.value)} placeholder="SKU-001"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
         </div>
@@ -532,12 +535,12 @@ function ProductModal({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Brand</label>
-            <input value={form.brand} onChange={e => set('brand', e.target.value)} placeholder="e.g. Samsung"
+            <input data-lpignore="true" data-1p-ignore value={form.brand} onChange={e => set('brand', e.target.value)} placeholder="e.g. Samsung"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Barcode / EAN</label>
-            <input value={form.barcode} onChange={e => set('barcode', e.target.value)} placeholder="Barcode"
+            <input data-lpignore="true" data-1p-ignore value={form.barcode} onChange={e => set('barcode', e.target.value)} placeholder="Barcode"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
         </div>
@@ -555,7 +558,7 @@ function ProductModal({
           {!form.is_service && (
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Weight (kg)</label>
-              <input type="number" min="0" step="0.001" value={form.weight}
+              <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.001" value={form.weight}
                 onChange={e => set('weight', e.target.value)} placeholder="0.000"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
@@ -566,13 +569,13 @@ function ProductModal({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Selling Price (Rs.) *</label>
-            <input type="number" min="0" step="0.01" value={form.unit_price}
+            <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={form.unit_price}
               onChange={e => set('unit_price', e.target.value)} placeholder="0.00"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Cost Price (Rs.)</label>
-            <input type="number" min="0" step="0.01" value={form.cost_price}
+            <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={form.cost_price}
               onChange={e => set('cost_price', e.target.value)} placeholder="0.00"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
@@ -583,7 +586,7 @@ function ProductModal({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Reorder Level (units)</label>
-              <input type="number" min="0" value={form.reorder_level}
+              <input data-lpignore="true" data-1p-ignore type="number" min="0" value={form.reorder_level}
                 onChange={e => set('reorder_level', e.target.value ? Number(e.target.value) : '')}
                 placeholder="Alert when stock falls below this"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
@@ -594,7 +597,7 @@ function ProductModal({
                   Opening Stock (units)
                   <span className="ml-1 text-gray-400 font-normal">— sets On Hand</span>
                 </label>
-                <input type="number" min="0" value={openingStock}
+                <input data-lpignore="true" data-1p-ignore type="number" min="0" value={openingStock}
                   onChange={e => setOpeningStock(e.target.value ? Number(e.target.value) : '')}
                   placeholder="0"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
@@ -614,7 +617,7 @@ function ProductModal({
         {/* Row 7: Image Upload */}
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Product Image</label>
-          <input
+          <input data-lpignore="true" data-1p-ignore
             type="file"
             accept="image/*"
             onChange={e => setImageFile(e.target.files?.[0] || null)}
@@ -627,17 +630,17 @@ function ProductModal({
 
         <div className="flex flex-wrap gap-4">
           <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-            <input type="checkbox" checked={form.is_service} onChange={e => set('is_service', e.target.checked)} className="rounded text-indigo-600" />
+            <input data-lpignore="true" data-1p-ignore type="checkbox" checked={form.is_service} onChange={e => set('is_service', e.target.checked)} className="rounded text-indigo-600" />
             Service (no stock tracking)
           </label>
           {!form.is_service && (
             <>
               <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-                <input type="checkbox" checked={form.track_stock} onChange={e => set('track_stock', e.target.checked)} className="rounded text-indigo-600" />
+                <input data-lpignore="true" data-1p-ignore type="checkbox" checked={form.track_stock} onChange={e => set('track_stock', e.target.checked)} className="rounded text-indigo-600" />
                 Track stock
               </label>
               <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-                <input type="checkbox" checked={form.has_warranty} onChange={e => set('has_warranty', e.target.checked)} className="rounded text-indigo-600" />
+                <input data-lpignore="true" data-1p-ignore type="checkbox" checked={form.has_warranty} onChange={e => set('has_warranty', e.target.checked)} className="rounded text-indigo-600" />
                 Has Warranty (requires serial number)
               </label>
             </>
@@ -651,7 +654,7 @@ function ProductModal({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Warranty Period (months)</label>
-                  <input
+                  <input data-lpignore="true" data-1p-ignore
                     type="number" min="1" max="999"
                     value={form.warranty_months}
                     onChange={e => set('warranty_months', e.target.value === '' ? '' : parseInt(e.target.value, 10))}
@@ -708,7 +711,7 @@ function ProductModal({
                   <div className="flex gap-2 items-end">
                     <div className="flex-1">
                       <label className="block text-xs text-gray-500 mb-1">New Serial / IMEI</label>
-                      <input
+                      <input data-lpignore="true" data-1p-ignore
                         value={newSerial}
                         onChange={e => setNewSerial(e.target.value)}
                         placeholder="e.g. SN-2026001"
@@ -717,7 +720,7 @@ function ProductModal({
                     </div>
                     <div className="w-32">
                       <label className="block text-xs text-gray-500 mb-1">Expiry Date</label>
-                      <input
+                      <input data-lpignore="true" data-1p-ignore
                         type="date"
                         value={newSerialExpiry}
                         onChange={e => setNewSerialExpiry(e.target.value)}
@@ -750,11 +753,11 @@ function ProductModal({
             </div>
           )}
           <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-            <input type="checkbox" checked={form.is_published} onChange={e => set('is_published', e.target.checked)} className="rounded text-indigo-600" />
+            <input data-lpignore="true" data-1p-ignore type="checkbox" checked={form.is_published} onChange={e => set('is_published', e.target.checked)} className="rounded text-indigo-600" />
             Publish on website
           </label>
           <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-            <input type="checkbox" checked={form.is_active} onChange={e => set('is_active', e.target.checked)} className="rounded text-indigo-600" />
+            <input data-lpignore="true" data-1p-ignore type="checkbox" checked={form.is_active} onChange={e => set('is_active', e.target.checked)} className="rounded text-indigo-600" />
             Active
           </label>
         </div>
@@ -834,7 +837,7 @@ function StockAdjustModal({
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Quantity *</label>
-          <input type="number" min="1" value={quantity} onChange={e => setQuantity(e.target.value)} placeholder="Enter units"
+          <input data-lpignore="true" data-1p-ignore type="number" min="1" value={quantity} onChange={e => setQuantity(e.target.value)} placeholder="Enter units"
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
         </div>
         <div>
@@ -889,14 +892,14 @@ function CategoryModal({
       <div className="space-y-4">
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
-          <input value={form.name}
+          <input data-lpignore="true" data-1p-ignore value={form.name}
             onChange={e => { set('name', e.target.value); if (!initial) set('slug', e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) }}
             placeholder="Category name"
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Slug</label>
-          <input value={form.slug} onChange={e => set('slug', e.target.value)} placeholder="auto-generated"
+          <input data-lpignore="true" data-1p-ignore value={form.slug} onChange={e => set('slug', e.target.value)} placeholder="auto-generated"
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" />
         </div>
         <div>
@@ -1002,7 +1005,7 @@ function ProductsTab({
       </div>
       {/* Filters + actions */}
       <div className="flex gap-3 mb-4 flex-wrap items-center">
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name, SKU, barcode…"
+        <input data-lpignore="true" data-1p-ignore value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name, SKU, barcode…"
           className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-60" />
         <select value={categoryFilter} onChange={e => setCatFilter(e.target.value ? Number(e.target.value) : '')}
           className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
@@ -1020,7 +1023,7 @@ function ProductsTab({
             </a>
             <label className="flex items-center gap-1.5 px-4 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 transition cursor-pointer">
               <Upload size={14} /> Import CSV
-              <input type="file" accept=".csv" className="hidden" onChange={handleCsvImport} />
+              <input data-lpignore="true" data-1p-ignore type="file" accept=".csv" className="hidden" onChange={handleCsvImport} />
             </label>
             <button onClick={() => setShowAdd(true)}
               className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition">
@@ -1508,7 +1511,7 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
   })
 
   function openAdd() { setForm(DEFAULT_SUPPLIER_FORM); setModal('add') }
-  function openEdit(s: Supplier) { setSelected(s); setForm({ name: s.name, contact_person: s.contact_person ?? '', email: s.email ?? '', phone: s.phone ?? '', address: s.address ?? '', city: s.city ?? '', country: s.country ?? 'Nepal', website: s.website ?? '', payment_terms: s.payment_terms ?? '', notes: s.notes ?? '', is_active: s.is_active }); setModal('edit') }
+  function openEdit(s: Supplier) { setSelected(s); setForm({ name: s.name, contact_person: s.contact_person ?? '', email: s.email ?? '', phone: s.phone ?? '', address: s.address ?? '', city: s.city ?? '', country: s.country ?? 'Nepal', website: s.website ?? '', payment_terms: s.payment_terms ?? '', notes: s.notes ?? '', is_active: s.is_active, pan_number: s.pan_number ?? '' }); setModal('edit') }
   function handleSubmit() { modal === 'add' ? createMut.mutate(form) : updateMut.mutate(form) }
   const busy = createMut.isPending || updateMut.isPending
 
@@ -1578,46 +1581,53 @@ function SuppliersTab({ canManage }: { canManage: boolean }) {
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
                 <label className="text-xs text-gray-500 mb-1 block">Supplier Name *</label>
-                <input className={inp} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. TechParts Nepal" />
+                <input data-lpignore="true" data-1p-ignore className={inp} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. TechParts Nepal" />
               </div>
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Contact Person</label>
-                <input className={inp} value={form.contact_person} onChange={e => setForm(f => ({ ...f, contact_person: e.target.value }))} />
+                <input data-lpignore="true" data-1p-ignore className={inp} value={form.contact_person} onChange={e => setForm(f => ({ ...f, contact_person: e.target.value }))} />
               </div>
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Phone</label>
-                <input className={inp} value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
+                <input data-lpignore="true" data-1p-ignore className={inp} value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">
+                  PAN / VAT Number
+                  <span className="ml-1 text-gray-400 font-normal">(9-digit)</span>
+                </label>
+                <input data-lpignore="true" data-1p-ignore className={inp} autoComplete="off" value={form.pan_number} onChange={e => setForm(f => ({ ...f, pan_number: e.target.value }))} placeholder="e.g. 123456789" />
               </div>
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Email</label>
-                <input className={inp} type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+                <input data-lpignore="true" data-1p-ignore className={inp} type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
               </div>
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Website</label>
-                <input className={inp} value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://" />
+                <input data-lpignore="true" data-1p-ignore className={inp} value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://" />
               </div>
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">City</label>
-                <input className={inp} value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))} />
+                <input data-lpignore="true" data-1p-ignore className={inp} value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))} />
               </div>
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Country</label>
-                <input className={inp} value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value }))} />
+                <input data-lpignore="true" data-1p-ignore className={inp} value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value }))} />
               </div>
               <div className="col-span-2">
                 <label className="text-xs text-gray-500 mb-1 block">Address</label>
-                <input className={inp} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} />
+                <input data-lpignore="true" data-1p-ignore className={inp} value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} />
               </div>
               <div className="col-span-2">
                 <label className="text-xs text-gray-500 mb-1 block">Payment Terms</label>
-                <input className={inp} value={form.payment_terms} onChange={e => setForm(f => ({ ...f, payment_terms: e.target.value }))} placeholder="e.g. Net 30" />
+                <input data-lpignore="true" data-1p-ignore className={inp} value={form.payment_terms} onChange={e => setForm(f => ({ ...f, payment_terms: e.target.value }))} placeholder="e.g. Net 30" />
               </div>
               <div className="col-span-2">
                 <label className="text-xs text-gray-500 mb-1 block">Notes</label>
                 <textarea className={inp} rows={2} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
               </div>
               <div className="col-span-2 flex items-center gap-2">
-                <input type="checkbox" id="sup-active" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} className="rounded" />
+                <input data-lpignore="true" data-1p-ignore type="checkbox" id="sup-active" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} className="rounded" />
                 <label htmlFor="sup-active" className="text-sm text-gray-700">Active</label>
               </div>
             </div>
@@ -1859,10 +1869,10 @@ function PurchaseOrdersTab({ products, canManage }: { products: Product[]; canMa
                       </select>
                     </div>
                     <div className="col-span-3">
-                      <input type="number" min={1} className={inp + ' py-1.5'} placeholder="Qty" value={line.quantity_ordered} onChange={e => updateLine(i, 'quantity_ordered', e.target.value)} />
+                      <input data-lpignore="true" data-1p-ignore type="number" min={1} className={inp + ' py-1.5'} placeholder="Qty" value={line.quantity_ordered} onChange={e => updateLine(i, 'quantity_ordered', e.target.value)} />
                     </div>
                     <div className="col-span-3">
-                      <input type="number" min={0} step="0.01" className={inp + ' py-1.5'} placeholder="0.00" value={line.unit_cost} onChange={e => updateLine(i, 'unit_cost', e.target.value)} />
+                      <input data-lpignore="true" data-1p-ignore type="number" min={0} step="0.01" className={inp + ' py-1.5'} placeholder="0.00" value={line.unit_cost} onChange={e => updateLine(i, 'unit_cost', e.target.value)} />
                     </div>
                     <div className="col-span-1 flex justify-center">
                       {poLines.length > 1 && <button onClick={() => removeLine(i)} className="text-gray-300 hover:text-red-400"><XCircle size={15} /></button>}
@@ -1905,7 +1915,7 @@ function PurchaseOrdersTab({ products, canManage }: { products: Product[]; canMa
                     <div className="col-span-2 text-center text-sm text-gray-400">{item.quantity_ordered}</div>
                     <div className="col-span-2 text-center text-sm text-gray-400">{item.quantity_received}</div>
                     <div className="col-span-3">
-                      <input type="number" min={0} max={item.pending_quantity}
+                      <input data-lpignore="true" data-1p-ignore type="number" min={0} max={item.pending_quantity}
                         className="w-full border rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
                         value={line?.quantity_received ?? item.pending_quantity}
                         onChange={e => setReceiveLines(l => l.map(x => x.item_id === item.id ? { ...x, quantity_received: Number(e.target.value) } : x))}
@@ -2064,11 +2074,11 @@ function UoMTab({ canManage }: { canManage: boolean }) {
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
-              <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g. Kilogram" />
+              <input data-lpignore="true" data-1p-ignore value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g. Kilogram" />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Abbreviation *</label>
-              <input value={form.abbreviation} onChange={e => setForm(f => ({ ...f, abbreviation: e.target.value }))} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g. kg" />
+              <input data-lpignore="true" data-1p-ignore value={form.abbreviation} onChange={e => setForm(f => ({ ...f, abbreviation: e.target.value }))} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g. kg" />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Type</label>
@@ -2310,10 +2320,10 @@ function VariantsTab({ products, canManage }: { products: Product[]; canManage: 
               <div className="space-y-2">
                 {attrRows.map((row, i) => (
                   <div key={i} className="flex gap-2 items-center">
-                    <input value={row.key} onChange={e => updateAttrRow(i, 'key', e.target.value)}
+                    <input data-lpignore="true" data-1p-ignore value={row.key} onChange={e => updateAttrRow(i, 'key', e.target.value)}
                       placeholder="Attribute (e.g. Color)"
                       className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                    <input value={row.value} onChange={e => updateAttrRow(i, 'value', e.target.value)}
+                    <input data-lpignore="true" data-1p-ignore value={row.value} onChange={e => updateAttrRow(i, 'value', e.target.value)}
                       placeholder="Value (e.g. Red)"
                       className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                     {attrRows.length > 1 && (
@@ -2330,13 +2340,13 @@ function VariantsTab({ products, canManage }: { products: Product[]; canManage: 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Variant SKU</label>
-                <input value={form.sku} onChange={e => setForm(f => ({ ...f, sku: e.target.value }))}
+                <input data-lpignore="true" data-1p-ignore value={form.sku} onChange={e => setForm(f => ({ ...f, sku: e.target.value }))}
                   placeholder="Leave blank to auto-generate"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Barcode</label>
-                <input value={form.barcode} onChange={e => setForm(f => ({ ...f, barcode: e.target.value }))}
+                <input data-lpignore="true" data-1p-ignore value={form.barcode} onChange={e => setForm(f => ({ ...f, barcode: e.target.value }))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
             </div>
@@ -2345,14 +2355,14 @@ function VariantsTab({ products, canManage }: { products: Product[]; canManage: 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Price Adjustment</label>
-                <input type="number" step="0.01" value={form.price_adjustment}
+                <input data-lpignore="true" data-1p-ignore type="number" step="0.01" value={form.price_adjustment}
                   onChange={e => setForm(f => ({ ...f, price_adjustment: e.target.value }))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                 <p className="text-xs text-gray-400 mt-0.5">Added to base product price (can be negative)</p>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Cost Price</label>
-                <input type="number" step="0.01" min="0" value={form.cost_price}
+                <input data-lpignore="true" data-1p-ignore type="number" step="0.01" min="0" value={form.cost_price}
                   onChange={e => setForm(f => ({ ...f, cost_price: e.target.value }))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
@@ -2362,13 +2372,13 @@ function VariantsTab({ products, canManage }: { products: Product[]; canManage: 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Reorder Level</label>
-                <input type="number" min="0" value={form.reorder_level}
+                <input data-lpignore="true" data-1p-ignore type="number" min="0" value={form.reorder_level}
                   onChange={e => setForm(f => ({ ...f, reorder_level: Number(e.target.value) }))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
               <div className="flex items-end pb-2">
                 <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input type="checkbox" checked={form.is_active}
+                  <input data-lpignore="true" data-1p-ignore type="checkbox" checked={form.is_active}
                     onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))}
                     className="w-4 h-4 rounded border-gray-300 text-indigo-600" />
                   <span className="text-sm text-gray-700">Active variant</span>
@@ -2626,9 +2636,9 @@ function ReturnsTab({ products, canManage }: { products: Product[]; canManage: b
                       <option value="">Select product…</option>
                       {products.filter(p => !p.is_service).map(p => <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>)}
                     </select>
-                    <input type="number" min="1" value={item.quantity} onChange={e => updateItem(idx, 'quantity', Number(e.target.value))}
+                    <input data-lpignore="true" data-1p-ignore type="number" min="1" value={item.quantity} onChange={e => updateItem(idx, 'quantity', Number(e.target.value))}
                       className="w-20 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Qty" />
-                    <input type="number" min="0" step="0.01" value={item.unit_cost} onChange={e => updateItem(idx, 'unit_cost', e.target.value)}
+                    <input data-lpignore="true" data-1p-ignore type="number" min="0" step="0.01" value={item.unit_cost} onChange={e => updateItem(idx, 'unit_cost', e.target.value)}
                       className="w-28 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Unit Cost" />
                     {form.items.length > 1 && (
                       <button onClick={() => removeItem(idx)} className="text-red-400 hover:text-red-600"><Trash2 size={14} /></button>
@@ -2773,7 +2783,7 @@ function ReportsTab() {
         <div>
           <div className="flex items-center gap-3 mb-4">
             <span className="text-sm text-gray-600">No movement in the last</span>
-            <input type="number" value={deadStockDays} onChange={e => setDeadStockDays(Number(e.target.value))} min={7} max={365}
+            <input data-lpignore="true" data-1p-ignore type="number" value={deadStockDays} onChange={e => setDeadStockDays(Number(e.target.value))} min={7} max={365}
               className="w-20 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             <span className="text-sm text-gray-600">days</span>
           </div>
@@ -2847,7 +2857,7 @@ function ReportsTab() {
         <div>
           <div className="flex items-center gap-3 mb-4">
             <span className="text-sm text-gray-600">Based on consumption over last</span>
-            <input type="number" value={forecastDays} onChange={e => setForecastDays(Number(e.target.value))} min={7} max={365}
+            <input data-lpignore="true" data-1p-ignore type="number" value={forecastDays} onChange={e => setForecastDays(Number(e.target.value))} min={7} max={365}
               className="w-20 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             <span className="text-sm text-gray-600">days</span>
           </div>
@@ -2893,7 +2903,7 @@ function ReportsTab() {
         <div>
           <div className="flex items-center gap-3 mb-4">
             <span className="text-sm text-gray-600">Based on ticket usage over last</span>
-            <input type="number" value={topSellingDays} onChange={e => setTopSellingDays(Number(e.target.value))} min={7} max={365}
+            <input data-lpignore="true" data-1p-ignore type="number" value={topSellingDays} onChange={e => setTopSellingDays(Number(e.target.value))} min={7} max={365}
               className="w-20 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             <span className="text-sm text-gray-600">days</span>
           </div>
@@ -3081,19 +3091,19 @@ function SupplierCatalogTab({ products, canManage }: { products: Product[]; canM
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Supplier SKU</label>
-                <input className={inp} value={form.supplier_sku} onChange={e => setForm(f => ({ ...f, supplier_sku: e.target.value }))} />
+                <input data-lpignore="true" data-1p-ignore className={inp} value={form.supplier_sku} onChange={e => setForm(f => ({ ...f, supplier_sku: e.target.value }))} />
               </div>
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Unit Cost (Rs.)</label>
-                <input className={inp} type="number" min="0" step="0.01" value={form.unit_cost} onChange={e => setForm(f => ({ ...f, unit_cost: e.target.value }))} />
+                <input data-lpignore="true" data-1p-ignore className={inp} type="number" min="0" step="0.01" value={form.unit_cost} onChange={e => setForm(f => ({ ...f, unit_cost: e.target.value }))} />
               </div>
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Lead Time (days)</label>
-                <input className={inp} type="number" min="0" value={form.lead_time_days} onChange={e => setForm(f => ({ ...f, lead_time_days: e.target.value }))} />
+                <input data-lpignore="true" data-1p-ignore className={inp} type="number" min="0" value={form.lead_time_days} onChange={e => setForm(f => ({ ...f, lead_time_days: e.target.value }))} />
               </div>
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Min Order Qty</label>
-                <input className={inp} type="number" min="1" value={form.min_order_qty} onChange={e => setForm(f => ({ ...f, min_order_qty: e.target.value }))} />
+                <input data-lpignore="true" data-1p-ignore className={inp} type="number" min="1" value={form.min_order_qty} onChange={e => setForm(f => ({ ...f, min_order_qty: e.target.value }))} />
               </div>
             </div>
             <div>
@@ -3101,7 +3111,7 @@ function SupplierCatalogTab({ products, canManage }: { products: Product[]; canM
               <textarea className={inp} rows={2} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
             </div>
             <div className="flex items-center gap-2">
-              <input type="checkbox" id="sp-preferred" checked={form.is_preferred} onChange={e => setForm(f => ({ ...f, is_preferred: e.target.checked }))} className="rounded accent-indigo-600" />
+              <input data-lpignore="true" data-1p-ignore type="checkbox" id="sp-preferred" checked={form.is_preferred} onChange={e => setForm(f => ({ ...f, is_preferred: e.target.checked }))} className="rounded accent-indigo-600" />
               <label htmlFor="sp-preferred" className="text-sm text-gray-700">Preferred supplier for this product (used by Auto-Reorder)</label>
             </div>
             <div className="flex justify-end gap-2 pt-2">
@@ -3285,7 +3295,7 @@ function StockCountsTab({ categories, canManage }: { categories: Category[]; can
                       {session.status === 'counting' && canManage && (
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2 justify-end">
-                            <input
+                            <input data-lpignore="true" data-1p-ignore
                               type="number" min="0"
                               value={countInputs[key] ?? ''}
                               onChange={e => setCountInputs(ci => ({ ...ci, [key]: e.target.value }))}
@@ -3384,7 +3394,7 @@ function StockCountsTab({ categories, canManage }: { categories: Category[]; can
           <div className="space-y-3 p-1">
             <div>
               <label className="text-xs text-gray-500 mb-1 block">Description</label>
-              <input className={`w-full ${inp}`} value={newForm.description} onChange={e => setNewForm(f => ({ ...f, description: e.target.value }))} placeholder="e.g. Monthly physical count — Jan 2025" />
+              <input data-lpignore="true" data-1p-ignore className={`w-full ${inp}`} value={newForm.description} onChange={e => setNewForm(f => ({ ...f, description: e.target.value }))} placeholder="e.g. Monthly physical count — Jan 2025" />
             </div>
             <div>
               <label className="text-xs text-gray-500 mb-1 block">Limit to Category (optional)</label>
@@ -3534,7 +3544,7 @@ function BundlesTab({ products, canManage }: { products: Product[]; canManage: b
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
-              <input type="number" min={1} value={form.quantity} onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
+              <input data-lpignore="true" data-1p-ignore type="number" min={1} value={form.quantity} onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
             <div className="flex gap-2 pt-2">
@@ -3720,12 +3730,12 @@ function SupplierPaymentsTab({ canManage }: { canManage: boolean }) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Amount (Rs.)</label>
-                <input type="number" min={0} step="0.01" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
+                <input data-lpignore="true" data-1p-ignore type="number" min={0} step="0.01" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Payment Date</label>
-                <input type="date" value={form.payment_date} onChange={e => setForm(f => ({ ...f, payment_date: e.target.value }))}
+                <input data-lpignore="true" data-1p-ignore type="date" value={form.payment_date} onChange={e => setForm(f => ({ ...f, payment_date: e.target.value }))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
             </div>
@@ -3743,7 +3753,7 @@ function SupplierPaymentsTab({ canManage }: { canManage: boolean }) {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Reference</label>
-                <input type="text" placeholder="Cheque no., txn ID…" value={form.reference} onChange={e => setForm(f => ({ ...f, reference: e.target.value }))}
+                <input data-lpignore="true" data-1p-ignore type="text" placeholder="Cheque no., txn ID…" value={form.reference} onChange={e => setForm(f => ({ ...f, reference: e.target.value }))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
             </div>
@@ -3962,7 +3972,7 @@ function WarrantyTab({ products, canManage }: { products: Product[]; canManage: 
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Serial / IMEI Number *</label>
-            <input
+            <input data-lpignore="true" data-1p-ignore
               value={addForm.serial_number}
               onChange={e => setAddForm(f => ({ ...f, serial_number: e.target.value }))}
               placeholder="e.g. SN-20260001 or IMEI"
@@ -3971,7 +3981,7 @@ function WarrantyTab({ products, canManage }: { products: Product[]; canManage: 
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Warranty Expiry Date</label>
-            <input
+            <input data-lpignore="true" data-1p-ignore
               type="date"
               value={addForm.warranty_expires}
               onChange={e => setAddForm(f => ({ ...f, warranty_expires: e.target.value }))}

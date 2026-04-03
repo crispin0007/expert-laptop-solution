@@ -1,6 +1,7 @@
 from rest_framework.routers import DefaultRouter
 from django.urls import path, include
 from .views import (
+    AccountGroupViewSet,
     CoinTransactionViewSet, PayslipViewSet, InvoiceViewSet,
     AccountViewSet, BankAccountViewSet, JournalEntryViewSet,
     BillViewSet, PaymentViewSet, CreditNoteViewSet, ReportViewSet,
@@ -8,9 +9,13 @@ from .views import (
     BankReconciliationViewSet, RecurringJournalViewSet,
     StaffSalaryProfileViewSet, ExpenseViewSet,
     VATRemittanceView, TDSRemittanceView,
+    CostCentreViewSet, PaymentAllocationViewSet,
 )
 
 router = DefaultRouter()
+
+# Account Groups (Tally-style primary groups — read-only)
+router.register(r'account-groups', AccountGroupViewSet, basename='account-group')
 
 # Chart of Accounts & Bank Accounts
 router.register(r'accounts', AccountViewSet, basename='account')
@@ -48,6 +53,12 @@ router.register(r'salary-profiles', StaffSalaryProfileViewSet, basename='salary-
 
 # Expenses
 router.register(r'expenses', ExpenseViewSet, basename='expense')
+
+# Cost Centres
+router.register(r'cost-centres', CostCentreViewSet, basename='cost-centre')
+
+# Payment Allocations (bill-by-bill settlement)
+router.register(r'payment-allocations', PaymentAllocationViewSet, basename='payment-allocation')
 
 urlpatterns = [
     path('', include(router.urls)),

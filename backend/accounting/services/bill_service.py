@@ -8,6 +8,7 @@ import logging
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from core.exceptions import (
@@ -46,9 +47,13 @@ class BillService:
         if status:
             qs = qs.filter(status=status)
         if fiscal_year_start and fiscal_year_end:
+            # Use the supplier's invoice date (date field) for fiscal year placement.
+            # Fall back to created_at for legacy records where date is NULL.
             qs = qs.filter(
-                created_at__date__gte=fiscal_year_start,
-                created_at__date__lte=fiscal_year_end,
+                Q(date__gte=fiscal_year_start, date__lte=fiscal_year_end)
+                | Q(date__isnull=True,
+                    created_at__date__gte=fiscal_year_start,
+                    created_at__date__lte=fiscal_year_end)
             )
         return qs.order_by('-created_at')
 
@@ -71,13 +76,14 @@ class BillService:
         logger.info("Bill created id=%s tenant=%s", bill.pk, self.tenant.slug)
         try:
             from core.events import EventBus
-            EventBus.publish('expense.created', {
+            EventBus.publish('invoice.created', {
                 'id': bill.pk,
                 'tenant_id': self.tenant.id,
                 'total': str(bill.total),
+                'type': 'bill',
             }, tenant=self.tenant)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning('EventBus.publish invoice.created failed for bill %s: %s', bill.pk, exc, exc_info=True)
         return bill
 
     @transaction.atomic
@@ -107,6 +113,8 @@ class BillService:
     @transaction.atomic
     def approve(self, bill):
         from accounting.models import Bill
+        # Re-fetch with row lock to prevent concurrent double-approve.
+        bill = Bill.objects.select_for_update().get(pk=bill.pk)
         if bill.status != Bill.STATUS_DRAFT:
             raise ConflictError('Only draft bills can be approved.')
         bill.status      = Bill.STATUS_APPROVED
@@ -114,18 +122,21 @@ class BillService:
         bill.save(update_fields=['status', 'approved_at'])
         try:
             from core.events import EventBus
-            EventBus.publish('expense.approved', {
+            EventBus.publish('invoice.sent', {
                 'id': bill.pk,
                 'tenant_id': self.tenant.id,
                 'total': str(bill.total),
+                'type': 'bill',
             }, tenant=self.tenant)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning('EventBus.publish invoice.sent failed for bill %s: %s', bill.pk, exc, exc_info=True)
         return bill
 
     @transaction.atomic
     def void(self, bill):
         from accounting.models import Bill
+        # Re-fetch with row lock to prevent concurrent state changes.
+        bill = Bill.objects.select_for_update().get(pk=bill.pk)
         if bill.status == Bill.STATUS_VOID:
             raise ConflictError('Already voided.')
         if bill.status == Bill.STATUS_PAID:
@@ -146,6 +157,8 @@ class BillService:
         from accounting.models import Bill, BankAccount, Payment
         from accounting.services.payment_service import record_payment
 
+        # Re-fetch with row lock to prevent concurrent double-payment.
+        bill = Bill.objects.select_for_update().get(pk=bill.pk)
         if bill.status != Bill.STATUS_APPROVED:
             raise ConflictError('Only approved bills can be marked as paid.')
 
@@ -185,3 +198,102 @@ class BillService:
         bill.refresh_from_db()
         logger.info("Bill %s marked paid. payment=%s", bill.pk, payment and payment.pk)
         return bill, payment
+
+    # ── PO-linked auto-creation (Odoo-style) ─────────────────────────────────
+
+    @classmethod
+    @transaction.atomic
+    def create_from_po_payload(cls, tenant, payload: dict):
+        """Odoo-style: one Bill per PO, accumulated across partial receipts.
+
+        Called by the accounting listener — no direct import of inventory models.
+        All data arrives via the payload dict so this stays fully decoupled.
+
+        Rules:
+        - If a DRAFT bill already exists for this PO → merge new lines into it
+          (increment qty on existing lines, append genuinely new products).
+        - If no draft exists (first receive, or prior bill already approved/paid)
+          → create a fresh draft Bill.
+
+        This mirrors Odoo behaviour: a single vendor bill accumulates all
+        partial-delivery quantities until the accountant approves it.  Once
+        approved, the next receive starts a new bill for that batch.
+
+        payload keys (see receive_purchase_order() in inventory/services.py):
+            id           — PurchaseOrder pk
+            tenant_id    — tenant pk (already validated by EventBus)
+            supplier_id  — Supplier pk (may be null)
+            supplier_name — display name fallback
+            po_number    — Human-readable PO reference
+            lines        — list of {product_name, quantity, unit_cost}
+        """
+        from accounting.models import Bill
+
+        po_id         = payload['id']
+        supplier_id   = payload.get('supplier_id')
+        po_number     = payload.get('po_number', f'PO-{po_id}')
+        lines         = payload.get('lines', [])
+
+        if not lines:
+            logger.warning('create_from_po_payload: no lines in payload for PO %s — skipping', po_id)
+            return None
+
+        new_line_items = [
+            {
+                'description': line['product_name'],
+                'qty': line['quantity'],
+                'unit_price': str(line['unit_cost']),
+                'discount': '0',
+            }
+            for line in lines
+        ]
+
+        service = cls(tenant=tenant)
+
+        # ── Check for an existing draft bill for this PO ──────────────────────
+        existing_draft = (
+            Bill.objects.select_for_update()
+            .filter(tenant=tenant, purchase_order_id=po_id, status=Bill.STATUS_DRAFT)
+            .first()
+        )
+
+        if existing_draft:
+            # Merge: accumulate quantities on matching lines, append new products.
+            merged = _merge_line_items(existing_draft.line_items, new_line_items)
+            service.update(existing_draft, {'line_items': merged, 'apply_vat': False}, is_admin=True)
+            logger.info(
+                'Merged receive batch into existing draft Bill %s for PO %s',
+                existing_draft.bill_number, po_number,
+            )
+            return existing_draft
+
+        # ── No draft exists — create a fresh bill ────────────────────────────
+        bill = service.create({
+            'supplier_id': supplier_id,
+            'supplier_name': payload.get('supplier_name', ''),
+            'reference': po_number,
+            'line_items': new_line_items,
+            'notes': f'Auto-created from Purchase Order {po_number}.',
+            'apply_vat': False,   # Staff reviews VAT applicability before approving
+        })
+        Bill.objects.filter(pk=bill.pk).update(purchase_order_id=po_id)
+        bill.purchase_order_id = po_id
+        logger.info('Auto-created draft Bill %s from PO %s', bill.bill_number, po_number)
+        return bill
+
+
+def _merge_line_items(existing: list, incoming: list) -> list:
+    """Merge incoming line items into an existing list.
+
+    Lines with matching ``description`` have their ``qty`` incremented.
+    Genuinely new products are appended.  Returns a new list (does not
+    mutate either argument).
+    """
+    merged = {item['description']: dict(item) for item in existing}
+    for item in incoming:
+        key = item['description']
+        if key in merged:
+            merged[key]['qty'] = int(merged[key]['qty']) + int(item['qty'])
+        else:
+            merged[key] = dict(item)
+    return list(merged.values())

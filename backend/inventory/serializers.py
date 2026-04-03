@@ -175,8 +175,9 @@ class SupplierSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'name', 'contact_person', 'email', 'phone',
             'address', 'city', 'country', 'website',
-            'payment_terms', 'notes', 'is_active', 'po_count',
-            'created_at', 'updated_at',
+            'payment_terms', 'notes', 'is_active',
+            'pan_number',
+            'po_count', 'created_at', 'updated_at',
         )
         read_only_fields = ('created_at', 'updated_at', 'po_count')
 
@@ -262,7 +263,7 @@ class PurchaseOrderWriteSerializer(serializers.ModelSerializer):
         items_data = validated_data.pop('items')
         po = PurchaseOrder.objects.create(**validated_data)
         for item in items_data:
-            PurchaseOrderItem.objects.create(po=po, **item)
+            PurchaseOrderItem.objects.create(po=po, tenant=po.tenant, **item)
         return po
 
     def update(self, instance, validated_data):
@@ -273,7 +274,7 @@ class PurchaseOrderWriteSerializer(serializers.ModelSerializer):
         if items_data is not None:
             instance.items.all().delete()
             for item in items_data:
-                PurchaseOrderItem.objects.create(po=instance, **item)
+                PurchaseOrderItem.objects.create(po=instance, tenant=instance.tenant, **item)
         return instance
 
 

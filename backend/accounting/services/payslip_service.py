@@ -124,10 +124,14 @@ class PayslipService:
         except User.DoesNotExist:
             raise NotFoundError('Staff not found.')
 
-        if not TenantMembership.objects.filter(
+        membership = TenantMembership.objects.filter(
             user=staff, tenant=self.tenant, is_active=True,
-        ).exists():
+        ).first()
+        if not membership:
             raise ForbiddenError('Staff member is not part of this workspace.')
+        # Auto-read employee PAN from membership when not explicitly provided (Bug 4)
+        if not employee_pan:
+            employee_pan = getattr(membership, 'pan_number', '') or ''
 
         # ── Parse dates ───────────────────────────────────────────────────────
         try:
@@ -144,8 +148,8 @@ class PayslipService:
         profile_bonus = profile.bonus_default  if profile else Decimal('0')
         profile_tds   = profile.tds_rate       if profile else Decimal('0')
 
-        base         = Decimal(str(base_salary  if base_salary  is not None else profile_base))
-        bon          = Decimal(str(bonus        if bonus        is not None else profile_bonus))
+        base         = Decimal(str(base_salary  if base_salary  is not None else profile_base)).quantize(Decimal('0.01'))
+        bon          = Decimal(str(bonus        if bonus        is not None else profile_bonus)).quantize(Decimal('0.01'))
         tds_rate_dec = Decimal(str(tds_rate     if tds_rate     is not None else profile_tds)).quantize(Decimal('0.0001'))
         other_ded    = Decimal(str(deductions   if deductions   is not None else 0))
 
@@ -188,6 +192,12 @@ class PayslipService:
             },
         )
         if not created:
+            if payslip.status != Payslip.STATUS_DRAFT:
+                raise ConflictError(
+                    f'A payslip for this period already exists with status '
+                    f'"{payslip.status}". Cannot regenerate — void it first or '
+                    f'adjust the period dates.'
+                )
             payslip.total_coins        = coins
             payslip.coin_to_money_rate = rate
             payslip.gross_amount       = gross
@@ -200,13 +210,18 @@ class PayslipService:
 
         # ── Auto-create / replace TDSEntry for this salary ────────────────────
         if tds_rate_dec > 0 and tds_amount > 0:
-            from core.nepali_date import bs_year_from_ad
-            nepali_year   = bs_year_from_ad(pe)
+            # Bug 1 fix: use BS calendar for period_month (not AD month)
+            # Both month and year must be BS so the TDS tab period grouping matches
+            # the bill TDS path which uses ad_to_bs() for period_month.
+            from core.nepali_date import ad_to_bs
+            bs_pe         = ad_to_bs(pe)
+            nepali_month  = bs_pe.month
+            nepali_year   = bs_pe.year
             staff_display = getattr(staff, 'full_name', '') or staff.email
             TDSEntry.objects.filter(
                 tenant=self.tenant,
                 supplier_name=staff_display,
-                period_month=pe.month,
+                period_month=nepali_month,
                 period_year=nepali_year,
             ).delete()
             TDSEntry.objects.create(
@@ -215,7 +230,7 @@ class PayslipService:
                 supplier_pan=employee_pan,
                 taxable_amount=base + bon,
                 tds_rate=tds_rate_dec,
-                period_month=pe.month,
+                period_month=nepali_month,
                 period_year=nepali_year,
                 created_by=self.user,
             )
@@ -234,8 +249,8 @@ class PayslipService:
                 'period_start': str(ps),
                 'period_end': str(pe),
             }, tenant=self.tenant)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning('EventBus.publish payroll.payslip.generated failed for payslip %s: %s', payslip.pk, exc, exc_info=True)
         return payslip, created
 
     # ── State transitions ─────────────────────────────────────────────────────
@@ -244,6 +259,8 @@ class PayslipService:
     def issue(self, payslip):
         """Move a draft payslip to issued. Raises ConflictError if not draft."""
         from accounting.models import Payslip
+        # Re-fetch with row lock to prevent concurrent double-issue.
+        payslip = Payslip.objects.select_for_update().get(pk=payslip.pk)
         if payslip.status != Payslip.STATUS_DRAFT:
             raise ConflictError('Only draft payslips can be issued.')
         payslip.status    = Payslip.STATUS_ISSUED
@@ -261,6 +278,8 @@ class PayslipService:
         from accounting.models import BankAccount, Payslip
         from accounting.services.payment_service import record_payment
 
+        # Re-fetch with row lock to prevent concurrent double-payment.
+        payslip = Payslip.objects.select_for_update().get(pk=payslip.pk)
         if payslip.status != Payslip.STATUS_ISSUED:
             raise ConflictError('Only issued payslips can be marked as paid.')
 
@@ -311,6 +330,6 @@ class PayslipService:
                 'staff_id': payslip.staff_id,
                 'net_pay': str(payslip.net_pay),
             }, tenant=self.tenant)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning('EventBus.publish payroll.processed failed for payslip %s: %s', payslip.pk, exc, exc_info=True)
         return payslip, payment

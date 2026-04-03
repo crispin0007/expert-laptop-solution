@@ -3,12 +3,22 @@
 React to cross-module events via EventBus.  No direct imports from other
 business modules — only core + own models.
 """
+import logging
 
-# from core.events import listens_to
-# from accounting.models import Invoice
-# import logging
-#
-# logger = logging.getLogger(__name__)
+from core.events import listens_to
+
+logger = logging.getLogger(__name__)
+
+
+@listens_to('inventory.po.received', module_id='accounting')
+def on_po_received(payload: dict, tenant) -> None:
+    """Auto-create a draft Bill when purchase-order goods are received.
+
+    The Bill is created in draft status so accounting staff can review VAT
+    applicability, TDS rate, and line items before approving.
+    """
+    from accounting.services.bill_service import BillService
+    BillService.create_from_po_payload(tenant=tenant, payload=payload)
 
 
 # @listens_to('ticket.resolved', module_id='accounting')

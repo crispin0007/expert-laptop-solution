@@ -75,7 +75,7 @@ class TenantMembershipSerializer(serializers.ModelSerializer):
         model = TenantMembership
         fields = (
             'id', 'user', 'tenant', 'role', 'department',
-            'employee_id', 'join_date', 'is_admin', 'is_active', 'created_at',
+            'employee_id', 'join_date', 'is_admin', 'is_active', 'pan_number', 'created_at',
         )
         # tenant is always injected server-side via perform_create — never from request body.
         read_only_fields = ('tenant', 'created_at')
@@ -230,7 +230,7 @@ class StaffMembershipSerializer(serializers.ModelSerializer):
             'id', 'role', 'role_display',
             'custom_role_id', 'custom_role_name',
             'department', 'department_name',
-            'employee_id', 'staff_number', 'join_date', 'is_admin', 'is_active',
+            'employee_id', 'staff_number', 'join_date', 'is_admin', 'is_active', 'pan_number',
         )
 
 
@@ -299,6 +299,7 @@ class InviteStaffSerializer(serializers.Serializer):
     employee_id = serializers.CharField(max_length=64, required=False, allow_blank=True)
     join_date = serializers.DateField(required=False, allow_null=True)
     is_admin = serializers.BooleanField(default=False)
+    pan_number = serializers.CharField(max_length=20, required=False, allow_blank=True)
 
     def validate_department(self, value):
         """
@@ -358,6 +359,7 @@ class InviteStaffSerializer(serializers.Serializer):
             membership.employee_id = validated_data.get('employee_id', membership.employee_id)
             membership.join_date = validated_data.get('join_date', membership.join_date)
             membership.is_admin = validated_data.get('is_admin', membership.is_admin)
+            membership.pan_number = validated_data.get('pan_number', membership.pan_number)
             membership.save()
         else:
             TenantMembership.objects.create(
@@ -368,6 +370,7 @@ class InviteStaffSerializer(serializers.Serializer):
                 employee_id=validated_data.get('employee_id', ''),
                 join_date=validated_data.get('join_date'),
                 is_admin=validated_data.get('is_admin', False),
+                pan_number=validated_data.get('pan_number', ''),
             )
 
         # SECURITY: never pass plaintext passwords to Celery.  Celery task args
@@ -403,6 +406,7 @@ class UpdateStaffSerializer(serializers.ModelSerializer):
     join_date = serializers.DateField(required=False, allow_null=True)
     is_admin = serializers.BooleanField(required=False)
     membership_active = serializers.BooleanField(required=False)
+    pan_number = serializers.CharField(max_length=20, required=False, allow_blank=True)
 
     def validate_department(self, value):
         """
@@ -424,12 +428,13 @@ class UpdateStaffSerializer(serializers.ModelSerializer):
             'full_name', 'phone', 'office_phone', 'avatar',
             # membership fields
             'role', 'department', 'employee_id', 'join_date', 'is_admin', 'membership_active',
+            'pan_number',
         )
 
     def update(self, instance, validated_data):
         # Split user fields from membership fields
         membership_fields = {}
-        for f in ('role', 'department', 'employee_id', 'join_date', 'is_admin', 'membership_active'):
+        for f in ('role', 'department', 'employee_id', 'join_date', 'is_admin', 'membership_active', 'pan_number'):
             if f in validated_data:
                 membership_fields[f] = validated_data.pop(f)
 

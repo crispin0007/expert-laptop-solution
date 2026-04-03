@@ -113,8 +113,8 @@ class ExpenseService:
                 'tenant_id': self.tenant.id,
                 'amount': str(expense.amount),
             }, tenant=self.tenant)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning('EventBus.publish expense.approved failed for expense %s: %s', expense.pk, exc, exc_info=True)
         return expense
 
     # ── Reject ────────────────────────────────────────────────────────────────
@@ -134,15 +134,28 @@ class ExpenseService:
     # ── Post to Ledger ────────────────────────────────────────────────────────
 
     @transaction.atomic
-    def post(self, expense):
+    def post(self, expense, payment_account_id=None):
         """
         Post an approved expense to the double-entry ledger.
 
-        Creates JournalEntry:
-          Dr  Expense Account (or default COGS/Expense account from CoA)
-          Cr  Cash / Accounts Payable
+        Tally-style: the caller specifies which account the money came from
+        (the "Paid Via" / credit side).  This is saved on the expense so the
+        journal always reflects reality:
 
-        Sets expense.status = 'posted' and links the JournalEntry.
+          Dr  Expense Account (5xxx)       — what was spent on
+          Cr  Payment Account (chosen)     — where the money came from
+
+        Payment account options:
+          • Cash (1100)                    — petty cash paid directly
+          • Bank account (1020…)           — company bank transfer
+          • Staff Payable / liability (2xxx) — employee paid personally;
+                                              company now owes them reimbursement
+
+        Args:
+            expense:            Approved Expense instance.
+            payment_account_id: PK of the Account to credit.  If None, falls
+                                back to expense.payment_account, then Cash (1100),
+                                then first active asset account.
         """
         from accounting.models import JournalEntry, JournalLine, Account
 
@@ -151,10 +164,20 @@ class ExpenseService:
         if expense.journal_entry_id:
             raise ConflictError('Expense already posted.')
 
-        # Resolve debit account (linked or default expense account)
+        # Extra guard: catch race condition where two concurrent requests both
+        # pass the journal_entry_id check before either has saved.
+        existing = JournalEntry.objects.filter(
+            tenant=self.tenant,
+            reference_type=JournalEntry.REF_EXPENSE,
+            reference_id=expense.pk,
+            is_posted=True,
+        ).first()
+        if existing:
+            raise ConflictError('Expense already posted.')
+
+        # Resolve debit account (what was spent on — Dr side)
         debit_account = expense.account
         if not debit_account:
-            # Fall back to first expense-type account in CoA
             debit_account = (
                 Account.objects.filter(tenant=self.tenant, type='expense', is_active=True)
                 .order_by('code')
@@ -165,23 +188,37 @@ class ExpenseService:
                 'No expense account configured. Set up your Chart of Accounts first.'
             )
 
-        # Resolve credit account (Cash or default AP)
-        credit_account = (
-            Account.objects.filter(
-                tenant=self.tenant, type='asset', is_active=True, code='1010'  # Cash
+        # Resolve credit account (where money came from — Cr side)
+        # Priority: explicit request param > saved on expense > Cash (1100) > first asset
+        if payment_account_id:
+            credit_account = Account.objects.filter(
+                tenant=self.tenant, pk=payment_account_id, is_active=True,
             ).first()
-            or Account.objects.filter(
-                tenant=self.tenant, type='asset', is_active=True
-            ).order_by('code').first()
-        )
+            if not credit_account:
+                raise ValidationError('Selected payment account not found.')
+        elif expense.payment_account_id:
+            credit_account = expense.payment_account
+        else:
+            credit_account = (
+                Account.objects.filter(
+                    tenant=self.tenant, type='asset', is_active=True, code='1100',
+                ).first()
+                or Account.objects.filter(
+                    tenant=self.tenant, type='asset', is_active=True,
+                ).order_by('code').first()
+            )
         if not credit_account:
-            raise ValidationError('No cash/asset account found in Chart of Accounts.')
+            raise ValidationError('No payment account found. Set up your Chart of Accounts first.')
+
+        # Persist the chosen payment account on the expense record
+        if credit_account.pk != expense.payment_account_id:
+            expense.payment_account = credit_account
 
         entry = JournalEntry.objects.create(
             tenant=self.tenant,
             date=expense.date,
             description=f'Expense: {expense.description}',
-            reference_type=JournalEntry.REF_MANUAL,
+            reference_type=JournalEntry.REF_EXPENSE,
             reference_id=expense.pk,
             created_by=self.user,
         )
@@ -195,8 +232,9 @@ class ExpenseService:
 
         expense.status = expense.STATUS_POSTED
         expense.journal_entry = entry
-        expense.save(update_fields=['status', 'journal_entry'])
-        logger.info('Expense posted id=%s journal=%s', expense.pk, entry.entry_number)
+        expense.save(update_fields=['status', 'journal_entry', 'payment_account'])
+        logger.info('Expense posted id=%s journal=%s credit_account=%s',
+                    expense.pk, entry.entry_number, credit_account.code)
         return expense
 
     # ── Recurring ─────────────────────────────────────────────────────────────

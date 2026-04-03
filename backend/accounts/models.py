@@ -89,6 +89,10 @@ class TenantMembership(models.Model):
     join_date = models.DateField(null=True, blank=True)
     is_admin = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+    pan_number = models.CharField(
+        max_length=20, blank=True,
+        help_text='Nepal PAN (9-digit) — used for TDS reporting',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

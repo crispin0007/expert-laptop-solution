@@ -47,14 +47,11 @@ REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
 import re as _re
 _escaped_root = _re.escape(_root)
 CORS_ALLOWED_ORIGIN_REGEXES = [
-    rf'^https?://.*\.{_escaped_root}$',   # all tenant subdomains of ROOT_DOMAIN
-    rf'^https?://{_escaped_root}$',        # root domain (landing / super-admin)
+    rf'^https://.*\.{_escaped_root}$',    # all tenant subdomains — HTTPS only
+    rf'^https://{_escaped_root}$',          # root domain — HTTPS only
     # NOTE: custom tenant vanity domains must be added here or validated via
-    # a CORS_ORIGIN_ALLOW_ALL approach with CORS_URLS_REGEX once Phase 2 custom
-    # domains are implemented.  The former wildcard r'^https?://.*$' was removed
-    # as it allowed any origin — TenantMiddleware alone is not sufficient CORS
-    # protection because CORS preflight is handled before middleware.
-    r'^http://localhost(:\d+)?$',           # local frontend dev server
+    # a CORS_URLS_REGEX approach once Phase 2 custom domains are implemented.
+    r'^http://localhost(:\d+)?$',           # local frontend dev server (HTTP ok)
 ]
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
@@ -73,6 +70,12 @@ CORS_ALLOW_HEADERS = [
 # Security headers
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SESSION_COOKIE_SECURE = True
+
+# Wrap each HTTP request in a DB transaction so that signal-triggered journal
+# failures roll back the entire status-change together with the journal write.
+# Without this, a failed journal leaves the document in 'issued'/'approved' state
+# with no corresponding ledger entry — a financial integrity violation.
+ATOMIC_REQUESTS = True
 CSRF_COOKIE_SECURE = True
 SECURE_HSTS_SECONDS = 31536000          # 1 year
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True

@@ -179,6 +179,7 @@ export default function StaffListPage() {
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input type="text" placeholder="Search name or email…" value={search}
             onChange={e => setSearch(e.target.value)}
+            autoComplete="off" data-lpignore="true" data-1p-ignore
             className="pl-9 pr-4 py-2 w-full text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
         </div>
 

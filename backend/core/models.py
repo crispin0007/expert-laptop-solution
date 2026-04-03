@@ -112,9 +112,9 @@ class TenantModel(models.Model):
         'tenants.Tenant',
         on_delete=models.CASCADE,
         related_name='%(class)s_items',
-        # TODO(Fix-6): Remove null=True/blank=True once data migration is run to
-        # back-fill tenant on any super-admin-created rows.  Changing to non-NULL
-        # requires a coordinated ALTER TABLE across every inheriting model.
+        # null=True kept for DB compatibility (coordinated ALTER TABLE across all
+        # inheriting models is required to go non-null at DB level).
+        # Enforced at application level via save() below.
         null=True,
         blank=True,
     )
@@ -129,6 +129,15 @@ class TenantModel(models.Model):
     )
 
     objects = TenantManager()
+
+    def save(self, *args, **kwargs):
+        if self.tenant_id is None:
+            raise ValueError(
+                f'{self.__class__.__name__} must belong to a tenant '
+                '(tenant_id is None). Never create tenant-scoped records '
+                'without a tenant — it violates multi-tenancy isolation.'
+            )
+        super().save(*args, **kwargs)
 
     class Meta:
         abstract = True

@@ -140,6 +140,7 @@ export const ACCOUNTING = {
   PAYMENT_DETAIL: (id: number) => `/accounting/payments/${id}/`,
   PAYMENT_ALLOCATE: (id: number) => `/accounting/payments/${id}/allocate/`,
   PAYMENT_CHEQUE_STATUS: (id: number) => `/accounting/payments/${id}/cheque-status/`,
+  PAYMENT_BOUNCE:        (id: number) => `/accounting/payments/${id}/bounce/`,
 
   // ── Credit Notes ─────────────────────────────────────────────────────────
   CREDIT_NOTES: '/accounting/credit-notes/',
@@ -156,6 +157,11 @@ export const ACCOUNTING = {
   REPORT_AGED_PAYABLES: '/accounting/reports/aged-payables/',
   REPORT_VAT: '/accounting/reports/vat-report/',
   REPORT_CASH_FLOW: '/accounting/reports/cash-flow/',
+  REPORT_RATIO_ANALYSIS: '/accounting/reports/ratio-analysis/',
+  REPORT_COST_CENTRE_PL: '/accounting/reports/cost-centre-pl/',
+  REPORT_CASH_BOOK: '/accounting/reports/cash-book/',
+  // Cost Centres (for dropdown)
+  COST_CENTRES: '/accounting/cost-centres/',
   // GL
   REPORT_GL_SUMMARY: '/accounting/reports/gl-summary/',
   REPORT_GL_MASTER: '/accounting/reports/gl-master/',
@@ -193,6 +199,8 @@ export const ACCOUNTING = {
   REPORT_INVENTORY_MOVEMENT: '/accounting/reports/inventory-movement/',
   REPORT_INVENTORY_MASTER: '/accounting/reports/inventory-master/',
   REPORT_PRODUCT_PROFITABILITY: '/accounting/reports/product-profitability/',
+  // Drill-down: vouchers for a single account
+  REPORT_ACCOUNT_VOUCHERS: '/accounting/reports/account-vouchers/',
   // System
   REPORT_ACTIVITY_LOG: '/accounting/reports/activity-log/',
   REPORT_USER_LOG: '/accounting/reports/user-log/',

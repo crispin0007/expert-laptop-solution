@@ -99,6 +99,11 @@ def generate_ticket_invoice(ticket, tenant, due_date=None, notes='', created_by=
     vat_rate   = tenant.vat_rate if tenant.vat_enabled else Decimal('0')
     subtotal, vat_amount, total = compute_invoice_totals(line_items, Decimal('0'), vat_rate)
 
+    # B24 — Snapshot cost_price for product lines so COGS uses the cost at
+    # ticket resolution time, not a later restocking price.
+    from accounting.services.invoice_service import _snapshot_cost_prices
+    line_items = _snapshot_cost_prices(line_items, tenant)
+
     return Invoice.objects.create(
         tenant=tenant,
         created_by=created_by,
@@ -161,13 +166,14 @@ def submit_invoice_payment(
         notes=notes or f"Payment collected for {invoice.invoice_number}",
     )
 
-    invoice.payment_received    = True
+    # B19 — payment_received boolean removed; use `invoice.amount_due <= 0` to check
+    # settlement. We still record the collection metadata (method, who, when).
     invoice.payment_method      = method
     invoice.payment_received_at = timezone.now()
     invoice.payment_received_by = collected_by
     invoice.finance_status      = 'submitted'
     invoice.save(update_fields=[
-        'payment_received', 'payment_method', 'payment_received_at',
+        'payment_method', 'payment_received_at',
         'payment_received_by', 'finance_status', 'updated_at',
     ])
 

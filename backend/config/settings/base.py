@@ -186,11 +186,23 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'accounting.tasks.task_generate_monthly_payslips',
         'schedule': crontab(day_of_month=1, hour=0, minute=5),
     },
+    # Process scheduled reversing journal entries daily at 00:10 UTC.
+    # Finds all posted JournalEntries with reversal_date <= today and no reversal yet.
+    'process-reversals-daily': {
+        'task': 'accounting.tasks.task_process_reversals',
+        'schedule': crontab(hour=0, minute=10),
+    },
     # Check all tenants for low-stock products daily at 07:00 UTC.
     # Dispatches individual per-tenant tasks so each is retried independently.
     'check-low-stock-daily': {
         'task': 'inventory.tasks.task_dispatch_low_stock_checks',
         'schedule': crontab(hour=7, minute=0),
+    },
+    # Flag overdue post-dated cheques daily at 08:00 UTC.
+    # Logs warnings for cheques in 'issued' or 'presented' status past their date.
+    'flag-overdue-pdcs-daily': {
+        'task': 'accounting.tasks.task_flag_overdue_pdcs',
+        'schedule': crontab(hour=8, minute=0),
     },
 }
 

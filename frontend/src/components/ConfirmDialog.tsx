@@ -20,7 +20,7 @@ import { AlertTriangle, Trash2, Info, X } from 'lucide-react'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export type ConfirmVariant = 'danger' | 'warning' | 'info'
+export type ConfirmVariant = 'danger' | 'warning' | 'info' | 'default'
 
 export interface ConfirmOptions {
   title?: string
@@ -85,6 +85,12 @@ const VARIANT_CONFIG: Record<
   ConfirmVariant,
   { icon: ReactNode; iconBg: string; confirmCls: string }
 > = {
+  default: {
+    icon: <Info size={20} className="text-indigo-600" />,
+    iconBg: 'bg-indigo-100',
+    confirmCls:
+      'bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500 text-white',
+  },
   danger: {
     icon: <Trash2 size={20} className="text-red-600" />,
     iconBg: 'bg-red-100',
@@ -115,7 +121,7 @@ function ConfirmModal({
   onCancel,
 }: ModalProps) {
   const cancelRef = useRef<HTMLButtonElement>(null)
-  const cfg = VARIANT_CONFIG[variant]
+  const cfg = VARIANT_CONFIG[variant] ?? VARIANT_CONFIG.default
 
   // Focus cancel button on open (safe default)
   useEffect(() => {

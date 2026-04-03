@@ -434,31 +434,15 @@ class TicketCommentViewSet(NexusViewSet):
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        comment = serializer.save(
-            tenant=self.tenant,
-            ticket=ticket,
-            author=self.request.user,
-            created_by=self.request.user,
-        )
 
-        # Timeline entry for the comment
-        TicketTimeline.objects.create(
-            tenant=self.tenant,
+        from tickets.services import add_comment
+        comment = add_comment(
             ticket=ticket,
-            event_type=TicketTimeline.EVENT_COMMENTED,
-            description=f"{'[Internal] ' if comment.is_internal else ''}Comment by {self.request.user.get_full_name() or self.request.user.email}",
-            actor=self.request.user,
-            created_by=self.request.user,
-            metadata={'comment_id': comment.pk, 'is_internal': comment.is_internal},
+            author=request.user,
+            body=serializer.validated_data['body'],
+            is_internal=serializer.validated_data.get('is_internal', False),
+            tenant=self.tenant,
         )
-        from core.events import EventBus
-        EventBus.publish('ticket.comment.added', {
-            'id': comment.pk,
-            'ticket_id': ticket.pk,
-            'tenant_id': self.tenant.pk,
-            'author_id': self.request.user.pk,
-            'is_internal': comment.is_internal,
-        }, tenant=self.tenant)
         return ApiResponse.created(data=self.get_serializer(comment).data)
 
 

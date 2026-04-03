@@ -1,5 +1,13 @@
 from django.contrib import admin
-from .models import CoinTransaction, Payslip, Invoice, Expense
+from .models import AccountGroup, CoinTransaction, Payslip, Invoice, Expense
+
+
+@admin.register(AccountGroup)
+class AccountGroupAdmin(admin.ModelAdmin):
+    list_display  = ('name', 'slug', 'type', 'report_section', 'affects_gross_profit', 'order', 'is_system')
+    list_filter   = ('type', 'report_section', 'is_system')
+    search_fields = ('name', 'slug')
+    ordering      = ('order', 'name')
 
 
 @admin.register(CoinTransaction)

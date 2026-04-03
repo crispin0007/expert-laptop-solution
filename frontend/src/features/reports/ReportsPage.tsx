@@ -63,6 +63,8 @@ type ReportType =
   | 'activity-log' | 'user-log'
   // inventory-ops (handled by dedicated panel)
   | 'inv-valuation' | 'inv-dead-stock' | 'inv-abc' | 'inv-forecast' | 'inv-top-selling'
+  // Tally-parity additions
+  | 'ratio-analysis' | 'cost-centre-pl' | 'cash-book'
 
 interface ReportMeta {
   key: ReportType
@@ -73,6 +75,7 @@ interface ReportMeta {
   dateMode: ReportDateMode
   needsCustomer?: boolean
   needsSupplier?: boolean
+  needsCostCentre?: boolean
 }
 
 // ─── Category registry ────────────────────────────────────────────────────────
@@ -99,6 +102,9 @@ const REPORTS: ReportMeta[] = [
   { key: 'gl-summary',       label: 'GL Summary',         endpoint: ACCOUNTING.REPORT_GL_SUMMARY,       icon: BookOpen,          category: 'accounting',  dateMode: 'range' },
   { key: 'gl-master',        label: 'GL Master',          endpoint: ACCOUNTING.REPORT_GL_MASTER,        icon: Layers,            category: 'accounting',  dateMode: 'range' },
   { key: 'cash-flow',        label: 'Cash Flow',          endpoint: ACCOUNTING.REPORT_CASH_FLOW,        icon: ArrowLeftRight,    category: 'accounting',  dateMode: 'range' },
+  { key: 'ratio-analysis',   label: 'Ratio Analysis',     endpoint: ACCOUNTING.REPORT_RATIO_ANALYSIS,   icon: BarChart2,         category: 'accounting',  dateMode: 'range' },
+  { key: 'cost-centre-pl',   label: 'Cost Centre P&L',    endpoint: ACCOUNTING.REPORT_COST_CENTRE_PL,   icon: Layers,            category: 'accounting',  dateMode: 'range', needsCostCentre: true },
+  { key: 'cash-book',        label: 'Cash / Bank Book',   endpoint: ACCOUNTING.REPORT_CASH_BOOK,         icon: BookOpen,          category: 'accounting',  dateMode: 'range' },
   // ── Receivables ──────────────────────────────────────────────────────────
   { key: 'aged-receivables',            label: 'Aged Receivables',   endpoint: ACCOUNTING.REPORT_AGED_RECEIVABLES,            icon: AlertCircle, category: 'receivables', dateMode: 'asof'  },
   { key: 'customer-receivable-summary', label: 'Receivable Summary', endpoint: ACCOUNTING.REPORT_CUSTOMER_RECEIVABLE_SUMMARY, icon: Users,       category: 'receivables', dateMode: 'asof'  },
@@ -149,7 +155,7 @@ const REPORTS: ReportMeta[] = [
 
 // ─── Typed data shapes ────────────────────────────────────────────────────────
 
-interface RptAccount { code: string; name: string; balance: string | number }
+interface RptAccount { id?: number; code: string; name: string; balance: string | number }
 // New Tally-style P&L with Gross Profit section
 interface PLReport {
   date_from: string; date_to: string
@@ -182,14 +188,52 @@ interface BSReport {
   total_equity_and_liabilities: string | number
   balanced: boolean
 }
-interface TBRow      { code: string; name: string; debit: string | number; credit: string | number }
-interface TBReport   { date_from: string; date_to: string; accounts: TBRow[]; total_debit: string | number; total_credit: string | number; balanced: boolean }
+interface TBRow      {
+  id?: number; code: string; name: string; type: string; group_name: string
+  opening_dr: string|number; opening_cr: string|number
+  period_dr: string|number;  period_cr: string|number
+  closing_dr: string|number; closing_cr: string|number
+}
+interface TBReport   {
+  date_from: string; date_to: string; accounts: TBRow[]
+  total_opening_dr: string|number; total_opening_cr: string|number
+  total_period_dr:  string|number; total_period_cr:  string|number
+  total_closing_dr: string|number; total_closing_cr: string|number
+  balanced: boolean
+}
 interface AgedItem   { id: number; invoice_number?: string; bill_number?: string; customer?: string; supplier?: string; due_date: string; amount_due: number }
 interface AgedBucket { items: AgedItem[]; total: number }
 interface AgedReport { as_of_date: string; current: AgedBucket; '1_30': AgedBucket; '31_60': AgedBucket; '61_90': AgedBucket; '90_plus': AgedBucket; grand_total: number }
 interface VATReport  { period_start: string; period_end: string; vat_collected: string | number; vat_reclaimable: string | number; vat_payable: string | number; invoice_count: number; bill_count: number }
 interface CFMethod   { method: string; incoming: string | number; outgoing: string | number }
+// Indirect method cash flow (new backend structure)
+interface CFReportIndirect {
+  date_from: string; date_to: string; period?: string
+  operating: {
+    net_profit: number|string; depreciation: number|string
+    working_capital_changes: { label: string; amount: number|string }[]
+    working_capital_total: number|string
+    total: number|string
+  }
+  investing:  { items: { label: string; amount: number|string }[]; total: number|string }
+  financing:  { items: { label: string; amount: number|string }[]; total: number|string }
+  net_change: number|string; opening_cash: number|string; closing_cash: number|string
+  expected_closing: number|string; difference: number|string; balanced: boolean
+  // legacy aliases (kept for CSV export)
+  total_incoming: string | number; total_outgoing: string | number; net_cash_flow: string | number; by_method: CFMethod[]
+}
+// Legacy direct-method shape (fallback)
 interface CFReport   { date_from: string; date_to: string; total_incoming: string | number; total_outgoing: string | number; net_cash_flow: string | number; by_method: CFMethod[] }
+
+// Ratio Analysis
+interface RatioReport {
+  as_of_date: string; period?: { label: string } | null
+  current_ratio: number|null; quick_ratio: number|null; cash_ratio: number|null
+  working_capital: string
+  debt_to_equity: number|null; debt_to_assets: number|null; interest_coverage: number|null
+  gross_margin_pct: number|null; net_margin_pct: number|null; roe_pct: number|null; roa_pct: number|null
+  days_sales_outstanding: number|null; days_payable_outstanding: number|null
+}
 
 // ─── Report sub-components ────────────────────────────────────────────────────
 
@@ -201,6 +245,164 @@ function RptSection({ title, children }: { title: string; children: React.ReactN
       </div>
       {children}
     </div>
+  )
+}
+
+/** Tally-style collapsible group header with a total line. */
+function CollapsibleGroup({
+  title, total, children, defaultOpen = true,
+}: {
+  title: string; total: string|number; children: React.ReactNode; defaultOpen?: boolean
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-4 py-2 bg-gray-50 border-y border-gray-200 hover:bg-gray-100 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <span className={`text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} style={{ display: 'inline-block' }}>
+            &#9654;
+          </span>
+          <span className="text-xs font-semibold text-gray-600 uppercase tracking-widest">{title}</span>
+        </div>
+        <span className="text-sm font-semibold tabular-nums text-gray-700">{npr(total)}</span>
+      </button>
+      {open && <div>{children}</div>}
+    </div>
+  )
+}
+
+/** Drill-down modal: shows all vouchers for a single account in the report period. */
+function DrillDownModal({
+  accountId, accountName, dateFrom, dateTo, onClose,
+}: {
+  accountId: number; accountName: string
+  dateFrom: string; dateTo: string
+  onClose: () => void
+}) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['account-vouchers', accountId, dateFrom, dateTo],
+    queryFn: async () => {
+      const r = await apiClient.get(ACCOUNTING.REPORT_ACCOUNT_VOUCHERS, {
+        params: { account_id: accountId, date_from: dateFrom, date_to: dateTo },
+      })
+      return r.data.data
+    },
+    staleTime: 30_000,
+  })
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[80vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-200">
+          <div>
+            <p className="text-sm font-semibold text-gray-900">{data?.account_code ?? '…'} — {accountName}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{fmt(dateFrom)} → {fmt(dateTo)}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">&times;</button>
+        </div>
+
+        {/* Body */}
+        <div className="overflow-auto flex-1">
+          {isLoading && <Spinner />}
+          {error && <div className="p-4 text-sm text-red-600">Failed to load ledger.</div>}
+          {data && (
+            <>
+              <div className="flex items-center justify-between px-5 py-2 bg-gray-50 border-b border-gray-100 text-xs text-gray-500">
+                <span>Opening Balance</span>
+                <span className="tabular-nums font-medium text-gray-700">{npr(data.opening_balance)}</span>
+              </div>
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Date</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Ref</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Description</th>
+                    <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-28">Dr</th>
+                    <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-28">Cr</th>
+                    <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-32">Balance</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {data.rows?.map((row: {date:string;entry_number:string;description:string;debit:string|number;credit:string|number;balance:string|number}, i: number) => (
+                    <tr key={`${row.entry_number}-${i}`} className="hover:bg-gray-50">
+                      <td className="px-4 py-2 text-gray-500">{fmt(row.date)}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-gray-400">{row.entry_number}</td>
+                      <td className="px-4 py-2 text-gray-700 max-w-xs truncate">{row.description}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-gray-700">{Number.parseFloat(String(row.debit)) ? npr(row.debit) : <span className="text-gray-200">—</span>}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-gray-700">{Number.parseFloat(String(row.credit)) ? npr(row.credit) : <span className="text-gray-200">—</span>}</td>
+                      <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-900">{npr(row.balance)}</td>
+                    </tr>
+                  ))}
+                  {!data.rows?.length && (
+                    <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-400 text-xs italic">No transactions in this period.</td></tr>
+                  )}
+                </tbody>
+              </table>
+              {data.rows?.length > 0 && (
+                <div className="flex items-center justify-between px-5 py-2.5 bg-gray-800 text-white text-sm">
+                  <span className="font-semibold uppercase tracking-wide">Closing Balance</span>
+                  <span className="tabular-nums font-bold">{npr(data.rows[data.rows.length - 1]?.balance ?? 0)}</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** A single clickable account row with optional drill-down. */
+function DrillableRow({
+  account, indent = false, dateFrom, dateTo,
+}: {
+  account: RptAccount; indent?: boolean; dateFrom?: string; dateTo?: string
+}) {
+  const [modal, setModal] = useState(false)
+  const canDrill = !!account.id && !!dateFrom && !!dateTo
+
+  const rowContent = (
+    <div className="flex items-center justify-between w-full">
+      <div className="flex items-center gap-3 min-w-0">
+        <span className="font-mono text-xs text-gray-400 w-14 shrink-0">{account.code}</span>
+        <span className="text-sm truncate text-gray-700 group-hover:text-indigo-700">{account.name}</span>
+        {canDrill && <span className="text-gray-300 group-hover:text-indigo-400 text-xs shrink-0">&#8599;</span>}
+      </div>
+      <span className="text-sm tabular-nums shrink-0 ml-4 text-gray-700">{npr(account.balance)}</span>
+    </div>
+  )
+
+  return (
+    <>
+      {canDrill ? (
+        <button
+          type="button"
+          className={`w-full flex items-center justify-between px-4 py-1.5 border-b border-gray-100 last:border-0 text-left group cursor-pointer hover:bg-indigo-50 ${indent ? 'pl-8' : ''}`}
+          onClick={() => setModal(true)}
+          title="Click to view vouchers"
+        >
+          {rowContent}
+        </button>
+      ) : (
+        <div className={`flex items-center justify-between px-4 py-1.5 border-b border-gray-100 last:border-0 hover:bg-gray-50 ${indent ? 'pl-8' : ''}`}>
+          {rowContent}
+        </div>
+      )}
+      {Boolean(modal) && account.id != null && dateFrom && dateTo && (
+        <DrillDownModal
+          accountId={account.id}
+          accountName={account.name}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          onClose={() => setModal(false)}
+        />
+      )}
+    </>
   )
 }
 
@@ -243,44 +445,53 @@ function RptDateBadge({ label }: { label: string }) {
 
 // ─── Profit & Loss ───────────────────────────────────────────────────────────
 
-function PLReportView({ data }: { data: PLReport }) {
-  const gp  = parseFloat(String(data.gross_profit))
-  const net = parseFloat(String(data.net_profit))
+function PLReportView({ data, dateFrom, dateTo }: { data: PLReport; dateFrom?: string; dateTo?: string }) {
+  const gp  = Number.parseFloat(String(data.gross_profit))
+  const net = Number.parseFloat(String(data.net_profit))
   const isProfit = net >= 0
 
   function emptyNote(msg: string) {
     return <p className="px-8 py-2 text-xs text-gray-400 italic">{msg}</p>
   }
+  function accounts(list: RptAccount[]) {
+    return list?.map(r => <DrillableRow key={r.code} account={r} indent dateFrom={dateFrom} dateTo={dateTo} />)
+  }
 
   return (
     <div className="divide-y divide-gray-100">
       {/* ── Gross Revenue ───────────────────────────────────────────── */}
-      <RptSection title="Sales / Revenue">
-        {data.sales?.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
-        {!data.sales?.length && emptyNote('No sales accounts with activity.')}
-      </RptSection>
-      {data.direct_income?.length > 0 && (
-        <RptSection title="Direct Income">
-          {data.direct_income.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
-        </RptSection>
-      )}
-      <RptTotal label="Gross Revenue" amount={data.gross_revenue} />
+      <CollapsibleGroup title="Sales / Revenue" total={data.gross_revenue}>
+        {data.sales?.length ? accounts(data.sales) : emptyNote('No sales accounts with activity.')}
+        {data.direct_income?.length > 0 && (
+          <>
+            <div className="bg-gray-50 px-4 py-1 border-b border-gray-100">
+              <span className="text-xs text-gray-500">Direct Income</span>
+            </div>
+            {accounts(data.direct_income)}
+          </>
+        )}
+      </CollapsibleGroup>
 
       {/* ── Direct Costs ────────────────────────────────────────────── */}
       {(data.purchases?.length > 0 || data.direct_expenses?.length > 0) && (
-        <>
+        <CollapsibleGroup title="Direct Costs (COGS)" total={data.total_direct_cost}>
           {data.purchases?.length > 0 && (
-            <RptSection title="Purchases / COGS">
-              {data.purchases.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
-            </RptSection>
+            <>
+              <div className="bg-gray-50 px-4 py-1 border-b border-gray-100">
+                <span className="text-xs text-gray-500">Purchases / COGS</span>
+              </div>
+              {accounts(data.purchases)}
+            </>
           )}
           {data.direct_expenses?.length > 0 && (
-            <RptSection title="Direct Expenses">
-              {data.direct_expenses.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
-            </RptSection>
+            <>
+              <div className="bg-gray-50 px-4 py-1 border-b border-gray-100">
+                <span className="text-xs text-gray-500">Direct Expenses</span>
+              </div>
+              {accounts(data.direct_expenses)}
+            </>
           )}
-          <RptTotal label="Total Direct Costs" amount={data.total_direct_cost} />
-        </>
+        </CollapsibleGroup>
       )}
 
       {/* ── Gross Profit ────────────────────────────────────────────── */}
@@ -295,18 +506,16 @@ function PLReportView({ data }: { data: PLReport }) {
 
       {/* ── Indirect Expenses ───────────────────────────────────────── */}
       {data.indirect_expenses?.length > 0 && (
-        <RptSection title="Indirect Expenses (Overhead)">
-          {data.indirect_expenses.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
-          <RptTotal label="Total Indirect Expenses" amount={data.total_indirect_exp} />
-        </RptSection>
+        <CollapsibleGroup title="Indirect Expenses (Overhead)" total={data.total_indirect_exp}>
+          {accounts(data.indirect_expenses)}
+        </CollapsibleGroup>
       )}
 
       {/* ── Indirect / Other Income ─────────────────────────────────── */}
       {data.indirect_income?.length > 0 && (
-        <RptSection title="Other Income">
-          {data.indirect_income.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
-          <RptTotal label="Total Other Income" amount={data.total_indirect_inc} />
-        </RptSection>
+        <CollapsibleGroup title="Other Income" total={data.total_indirect_inc}>
+          {accounts(data.indirect_income)}
+        </CollapsibleGroup>
       )}
 
       {/* ── Net Profit ──────────────────────────────────────────────── */}
@@ -321,12 +530,13 @@ function PLReportView({ data }: { data: PLReport }) {
 
 // ─── Balance Sheet ────────────────────────────────────────────────────────────
 
-function BSReportView({ data }: { data: BSReport }) {
+function BSReportView({ data, asOf }: { data: BSReport; asOf?: string }) {
   function emptyNote(msg: string) {
     return <p className="px-8 py-2 text-xs text-gray-400 italic">{msg}</p>
   }
-  function sectionRows(items: RptAccount[]) {
-    return items?.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)
+  function accountRows(items: RptAccount[]) {
+    // Balance sheet accounts use as_of_date as both from and to for the ledger drill-down.
+    return items?.map(r => <DrillableRow key={r.code} account={r} indent dateFrom={asOf} dateTo={asOf} />)
   }
 
   return (
@@ -340,25 +550,20 @@ function BSReportView({ data }: { data: BSReport }) {
 
         {/* ── LEFT — Capital & Liabilities ─────────────────────────── */}
         <div className="space-y-2">
-          <RptSection title="Capital Account">
-            {sectionRows(data.capital)}
-            {!data.capital?.length && emptyNote('None')}
-            <RptTotal label="Total Capital" amount={data.total_capital} />
-          </RptSection>
+          <CollapsibleGroup title="Capital Account" total={data.total_capital}>
+            {data.capital?.length ? accountRows(data.capital) : emptyNote('None')}
+          </CollapsibleGroup>
 
           {((data.bank_od?.length ?? 0) + (data.loans?.length ?? 0)) > 0 && (
-            <RptSection title="Loans &amp; Borrowings">
-              {sectionRows(data.bank_od)}
-              {sectionRows(data.loans)}
-              <RptTotal label="Total Loans" amount={data.total_loans} />
-            </RptSection>
+            <CollapsibleGroup title="Loans &amp; Borrowings" total={data.total_loans}>
+              {accountRows(data.bank_od)}
+              {accountRows(data.loans)}
+            </CollapsibleGroup>
           )}
 
-          <RptSection title="Current Liabilities">
-            {sectionRows(data.current_liabilities)}
-            {!data.current_liabilities?.length && emptyNote('None')}
-            <RptTotal label="Total Current Liabilities" amount={data.total_current_liabilities} />
-          </RptSection>
+          <CollapsibleGroup title="Current Liabilities" total={data.total_current_liabilities}>
+            {data.current_liabilities?.length ? accountRows(data.current_liabilities) : emptyNote('None')}
+          </CollapsibleGroup>
 
           <RptGrandTotal
             label="Total Capital + Liabilities"
@@ -370,26 +575,20 @@ function BSReportView({ data }: { data: BSReport }) {
         {/* ── RIGHT — Assets ───────────────────────────────────────── */}
         <div className="space-y-2">
           {data.fixed_assets?.length > 0 && (
-            <RptSection title="Fixed Assets">
-              {sectionRows(data.fixed_assets)}
-              <RptTotal label="Total Fixed Assets" amount={data.total_fixed_assets} />
-            </RptSection>
+            <CollapsibleGroup title="Fixed Assets" total={data.total_fixed_assets}>
+              {accountRows(data.fixed_assets)}
+            </CollapsibleGroup>
           )}
           {data.investments?.length > 0 && (
-            <RptSection title="Investments">
-              {sectionRows(data.investments)}
-              <RptTotal label="Total Investments" amount={data.total_investments} />
-            </RptSection>
+            <CollapsibleGroup title="Investments" total={data.total_investments}>
+              {accountRows(data.investments)}
+            </CollapsibleGroup>
           )}
-          <RptSection title="Current Assets">
-            {sectionRows(data.current_assets)}
-            {!data.current_assets?.length && emptyNote('None')}
-            <RptTotal label="Total Current Assets" amount={data.total_current_assets} />
-          </RptSection>
-          <RptGrandTotal
-            label="Total Assets"
-            amount={data.total_assets}
-          />
+          <CollapsibleGroup title="Current Assets" total={data.total_current_assets}>
+            {data.current_assets?.length ? accountRows(data.current_assets) : emptyNote('None')}
+          </CollapsibleGroup>
+
+          <RptGrandTotal label="Total Assets" amount={data.total_assets} />
         </div>
 
       </div>
@@ -399,26 +598,73 @@ function BSReportView({ data }: { data: BSReport }) {
 
 // ─── Trial Balance ────────────────────────────────────────────────────────────
 
-function TBReportView({ data }: { data: TBReport }) {
+function TBReportView({ data, dateFrom, dateTo }: { data: TBReport; dateFrom?: string; dateTo?: string }) {
+  const [drill, setDrill] = useState<TBRow | null>(null)
+  const n = (v: string|number) => Number.parseFloat(String(v))
+  const dash = <span className="text-gray-200">—</span>
+
+  // Group accounts by group_name for collapsible sections
+  const groups = data.accounts?.reduce<Record<string, TBRow[]>>((acc, row) => {
+    const g = row.group_name || row.type || 'Other'
+    if (!acc[g]) acc[g] = []
+    acc[g].push(row)
+    return acc
+  }, {})
+
+  function TBAccountRow({ row }: { row: TBRow }) {
+    return (
+      <tr
+        key={row.code}
+        className={`border-b border-gray-100 ${row.id && dateFrom ? 'cursor-pointer hover:bg-indigo-50 group' : 'hover:bg-gray-50'}`}
+        onClick={row.id && dateFrom ? () => setDrill(row) : undefined}
+        title={row.id && dateFrom ? 'Click to view vouchers' : undefined}
+      >
+        <td className="px-4 py-2 font-mono text-xs text-gray-400">{row.code}</td>
+        <td className="px-4 py-2 text-gray-700 group-hover:text-indigo-700">
+          {row.name}
+          {(row.id != null) && dateFrom && <span className="ml-1 text-gray-300 group-hover:text-indigo-400 text-xs">&#8599;</span>}
+        </td>
+        <td className="px-4 py-2 text-right tabular-nums text-gray-600">{n(row.opening_dr) ? npr(row.opening_dr) : dash}</td>
+        <td className="px-4 py-2 text-right tabular-nums text-gray-600">{n(row.opening_cr) ? npr(row.opening_cr) : dash}</td>
+        <td className="px-4 py-2 text-right tabular-nums text-blue-700">{n(row.period_dr) ? npr(row.period_dr) : dash}</td>
+        <td className="px-4 py-2 text-right tabular-nums text-blue-700">{n(row.period_cr) ? npr(row.period_cr) : dash}</td>
+        <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-900">{n(row.closing_dr) ? npr(row.closing_dr) : dash}</td>
+        <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-900">{n(row.closing_cr) ? npr(row.closing_cr) : dash}</td>
+      </tr>
+    )
+  }
+
   return (
     <div>
       <table className="w-full text-sm">
-        <thead className="bg-gray-50 border-b border-gray-200">
+        <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
           <tr>
-            <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-20">Code</th>
-            <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Account Name</th>
-            <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Debit (Dr)</th>
-            <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Credit (Cr)</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-16">Code</th>
+            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Account Name</th>
+            <th className="px-4 py-2 text-right text-xs font-semibold text-gray-400 uppercase tracking-wide w-28" colSpan={2}>Opening Balance</th>
+            <th className="px-4 py-2 text-right text-xs font-semibold text-blue-500 uppercase tracking-wide w-28" colSpan={2}>Period Movement</th>
+            <th className="px-4 py-2 text-right text-xs font-semibold text-gray-700 uppercase tracking-wide w-28" colSpan={2}>Closing Balance</th>
+          </tr>
+          <tr className="border-b border-gray-200 bg-gray-50">
+            <th colSpan={2} />
+            <th className="px-4 py-1 text-right text-xs text-gray-400 font-medium">Dr</th>
+            <th className="px-4 py-1 text-right text-xs text-gray-400 font-medium">Cr</th>
+            <th className="px-4 py-1 text-right text-xs text-blue-400 font-medium">Dr</th>
+            <th className="px-4 py-1 text-right text-xs text-blue-400 font-medium">Cr</th>
+            <th className="px-4 py-1 text-right text-xs text-gray-600 font-medium">Dr</th>
+            <th className="px-4 py-1 text-right text-xs text-gray-600 font-medium">Cr</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-100">
-          {data.accounts?.map(row => (
-            <tr key={row.code} className="hover:bg-gray-50">
-              <td className="px-4 py-2 font-mono text-xs text-gray-400">{row.code}</td>
-              <td className="px-4 py-2 text-gray-700">{row.name}</td>
-              <td className="px-4 py-2 text-right tabular-nums text-gray-800">{parseFloat(String(row.debit)) ? npr(row.debit) : <span className="text-gray-300">—</span>}</td>
-              <td className="px-4 py-2 text-right tabular-nums text-gray-800">{parseFloat(String(row.credit)) ? npr(row.credit) : <span className="text-gray-300">—</span>}</td>
-            </tr>
+        <tbody>
+          {Object.entries(groups ?? {}).map(([groupName, rows]) => (
+            <>
+              <tr key={`g-${groupName}`} className="bg-gray-100">
+                <td colSpan={8} className="px-4 py-1.5">
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">{groupName}</span>
+                </td>
+              </tr>
+              {rows.map(row => <TBAccountRow key={row.code} row={row} />)}
+            </>
           ))}
         </tbody>
         <tfoot className="bg-gray-800 text-white">
@@ -429,12 +675,26 @@ function TBReportView({ data }: { data: TBReport }) {
                 {data.balanced ? '(Balanced ✓)' : '(NOT balanced ✗)'}
               </span>
             </td>
-            <td className="px-4 py-2.5 text-right font-bold tabular-nums">{npr(data.total_debit)}</td>
-            <td className="px-4 py-2.5 text-right font-bold tabular-nums">{npr(data.total_credit)}</td>
+            <td className="px-4 py-2.5 text-right font-bold tabular-nums">{npr(data.total_opening_dr)}</td>
+            <td className="px-4 py-2.5 text-right font-bold tabular-nums">{npr(data.total_opening_cr)}</td>
+            <td className="px-4 py-2.5 text-right font-bold tabular-nums">{npr(data.total_period_dr)}</td>
+            <td className="px-4 py-2.5 text-right font-bold tabular-nums">{npr(data.total_period_cr)}</td>
+            <td className="px-4 py-2.5 text-right font-bold tabular-nums">{npr(data.total_closing_dr)}</td>
+            <td className="px-4 py-2.5 text-right font-bold tabular-nums">{npr(data.total_closing_cr)}</td>
           </tr>
         </tfoot>
       </table>
-      {!data.accounts?.length && <EmptyState message="No posted journal entries in this period." />}
+      {!data.accounts?.length && <EmptyState message="No accounts with activity in this period." />}
+
+      {drill != null && drill.id != null && dateFrom != null && dateTo != null && (
+        <DrillDownModal
+          accountId={drill.id}
+          accountName={drill.name}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          onClose={() => setDrill(null)}
+        />
+      )}
     </div>
   )
 }
@@ -545,78 +805,300 @@ function VATReportView({ data }: { data: VATReport }) {
   )
 }
 
-// ─── Cash Flow ────────────────────────────────────────────────────────────────
+// ─── Cash Flow (Indirect Method) ─────────────────────────────────────────────
 
-function CFReportView({ data }: { data: CFReport }) {
-  const net = parseFloat(String(data.net_cash_flow))
-  const isPos = net >= 0
-  const METHOD_LABELS: Record<string, string> = {
-    cash: 'Cash', bank_transfer: 'Bank Transfer', cheque: 'Cheque',
-    esewa: 'eSewa', khalti: 'Khalti', credit_note: 'Credit Note',
+function CFReportView({ data }: { data: CFReportIndirect }) {
+  // New indirect structure has `operating` / `investing` / `financing` keys.
+  // Fall back to legacy direct-method display when those keys are absent.
+  const isIndirect = 'operating' in data && data.operating != null
+
+  const n    = (v: number | string | null | undefined) => parseFloat(String(v ?? 0))
+  const fmt  = (v: number | string) => {
+    const x = n(v)
+    return x < 0 ? `(${npr(Math.abs(x))})` : npr(x)
   }
+
+  if (!isIndirect) {
+    // Legacy fallback
+    const ld = data as unknown as CFReport
+    const net = n(ld.net_cash_flow)
+    return (
+      <div>
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Description</th>
+              <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-40">Amount</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            <tr><td className="px-4 py-3 text-gray-700">Total Cash Inflows</td><td className="px-4 py-3 text-right tabular-nums">{npr(ld.total_incoming)}</td></tr>
+            <tr><td className="px-4 py-3 text-gray-700">Total Cash Outflows</td><td className="px-4 py-3 text-right tabular-nums">({npr(ld.total_outgoing)})</td></tr>
+          </tbody>
+          <tfoot className="bg-gray-800 text-white">
+            <tr>
+              <td className="px-4 py-2.5 font-bold uppercase tracking-wide text-sm">Net Cash Flow</td>
+              <td className="px-4 py-2.5 text-right font-bold tabular-nums">{net < 0 ? '(' : ''}{npr(Math.abs(net))}{net < 0 ? ')' : ''}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    )
+  }
+
+  // ── Indirect method ──────────────────────────────────────────────────────
+  function Section({ title, children, total }: { title: string; children: React.ReactNode; total: number|string }) {
+    return (
+      <div className="mb-1">
+        <div className="bg-indigo-50 px-4 py-2 border-y border-indigo-100">
+          <span className="text-xs font-bold text-indigo-700 uppercase tracking-widest">{title}</span>
+        </div>
+        {children}
+        <div className="flex justify-between px-4 py-2 bg-gray-50 border-b border-gray-200 font-semibold text-sm">
+          <span className="text-gray-700">Net {title} Activities</span>
+          <span className={`tabular-nums ${n(total) < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmt(total)}</span>
+        </div>
+      </div>
+    )
+  }
+
+  function ItemRow({ label, amount }: { label: string; amount: number|string }) {
+    return (
+      <div className="flex justify-between px-6 py-2 hover:bg-gray-50 border-b border-gray-100 text-sm">
+        <span className="text-gray-700">{label}</span>
+        <span className="tabular-nums text-gray-800">{fmt(amount)}</span>
+      </div>
+    )
+  }
+
+  const op  = data.operating
+  const inv = data.investing
+  const fin = data.financing
+  const netChange   = n(data.net_change)
+  const opening     = n(data.opening_cash)
+  const closing     = n(data.closing_cash)
+
   return (
     <div>
+      <Section title="Operating" total={op.total}>
+        <ItemRow label="Net Profit / (Loss)" amount={op.net_profit} />
+        {n(op.depreciation) !== 0 && <ItemRow label="Add: Depreciation & Amortisation" amount={op.depreciation} />}
+        {op.working_capital_changes?.length > 0 && (
+          <div className="bg-gray-50 px-4 py-1.5 border-b border-gray-200">
+            <span className="text-xs text-gray-500 font-semibold uppercase tracking-widest">Working Capital Changes</span>
+          </div>
+        )}
+        {op.working_capital_changes?.map(wc => <ItemRow key={wc.label} label={wc.label} amount={wc.amount} />)}
+        {op.working_capital_changes?.length > 0 && (
+          <div className="flex justify-between px-6 py-1.5 border-b border-gray-100 text-xs font-semibold">
+            <span className="text-gray-600">Net Working Capital Changes</span>
+            <span className={`tabular-nums ${n(op.working_capital_total) < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmt(op.working_capital_total ?? 0)}</span>
+          </div>
+        )}
+      </Section>
+      <Section title="Investing" total={inv.total}>
+        {inv.items?.length ? inv.items.map(it => <ItemRow key={it.label} label={it.label} amount={it.amount} />) :
+          <p className="px-6 py-2 text-xs text-gray-400 italic">No investing activities.</p>}
+      </Section>
+      <Section title="Financing" total={fin.total}>
+        {fin.items?.length ? fin.items.map(it => <ItemRow key={it.label} label={it.label} amount={it.amount} />) :
+          <p className="px-6 py-2 text-xs text-gray-400 italic">No financing activities.</p>}
+      </Section>
+      {/* Reconciliation */}
+      <div className="mt-2 mx-4 mb-4 border border-gray-200 rounded text-sm">
+        <div className="flex justify-between px-4 py-2 border-b border-gray-100">
+          <span className="text-gray-600">Opening Cash &amp; Bank Balance</span>
+          <span className="tabular-nums font-medium">{npr(opening)}</span>
+        </div>
+        <div className="flex justify-between px-4 py-2 border-b border-gray-100">
+          <span className="text-gray-600">Net Change in Cash</span>
+          <span className={`tabular-nums font-medium ${netChange < 0 ? 'text-red-600' : 'text-green-700'}`}>{fmt(netChange)}</span>
+        </div>
+        {'expected_closing' in data && (
+          <div className="flex justify-between px-4 py-2 border-b border-gray-100">
+            <span className="text-gray-500 text-xs">Expected Closing (Opening + Net Change)</span>
+            <span className="tabular-nums text-xs font-medium text-gray-700">{npr(n(data.expected_closing))}</span>
+          </div>
+        )}
+        <div className="flex justify-between px-4 py-2.5 bg-gray-800 text-white rounded-b font-bold">
+          <span>Closing Cash &amp; Bank Balance</span>
+          <span className="tabular-nums">{npr(closing)}</span>
+        </div>
+        {'balanced' in data && (
+          <div className={`flex items-center justify-between px-4 py-2 rounded-b border-t ${data.balanced ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
+            <span className={`text-xs font-semibold ${data.balanced ? 'text-green-700' : 'text-red-700'}`}>
+              {data.balanced ? 'Statement balanced' : 'Out of balance'}
+            </span>
+            {!data.balanced && (
+              <span className="text-xs text-red-600 tabular-nums">Difference: {fmt(n(data.difference))}</span>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+
+// ─── Ratio Analysis ───────────────────────────────────────────────────────────
+
+function RatioAnalysisView({ data }: { data: RatioReport }) {
+  function RatioRow({ label, value, suffix = '', description }: { label: string; value: number|null; suffix?: string; description: string }) {
+    return (
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 hover:bg-gray-50 text-sm">
+        <div>
+          <span className="font-medium text-gray-800">{label}</span>
+          <p className="text-xs text-gray-400 mt-0.5">{description}</p>
+        </div>
+        <span className="tabular-nums font-semibold text-gray-900 ml-4">
+          {value == null ? <span className="text-gray-400 font-normal">—</span> : `${value.toFixed(2)}${suffix}`}
+        </span>
+      </div>
+    )
+  }
+
+  const wc = parseFloat(data.working_capital ?? '0')
+
+  return (
+    <div className="divide-y divide-gray-200">
+      <RptSection title="Liquidity">
+        <RatioRow label="Current Ratio"  value={data.current_ratio}  description="Current Assets / Current Liabilities — should be > 2" />
+        <RatioRow label="Quick Ratio"    value={data.quick_ratio}    description="(Current Assets − Inventory) / Current Liabilities — should be > 1" />
+        <RatioRow label="Cash Ratio"     value={data.cash_ratio}     description="(Cash + Bank) / Current Liabilities" />
+        <div className="flex justify-between px-4 py-3 border-b border-gray-100 text-sm">
+          <div>
+            <span className="font-medium text-gray-800">Working Capital</span>
+            <p className="text-xs text-gray-400 mt-0.5">Current Assets − Current Liabilities</p>
+          </div>
+          <span className={`tabular-nums font-semibold ${wc < 0 ? 'text-red-600' : 'text-gray-900'}`}>{npr(wc)}</span>
+        </div>
+      </RptSection>
+      <RptSection title="Leverage">
+        <RatioRow label="Debt to Equity"     value={data.debt_to_equity}     description="Total Liabilities / Total Capital" />
+        <RatioRow label="Debt to Assets"     value={data.debt_to_assets}     description="Total Liabilities / Total Assets" />
+        <RatioRow label="Interest Coverage"  value={data.interest_coverage}  description="EBIT / Interest Expense — should be > 3" />
+      </RptSection>
+      {(data.gross_margin_pct != null || data.net_margin_pct != null) && (
+        <RptSection title="Profitability">
+          <RatioRow label="Gross Margin"  value={data.gross_margin_pct} suffix="%" description="Gross Profit / Revenue × 100" />
+          <RatioRow label="Net Margin"    value={data.net_margin_pct}   suffix="%" description="Net Profit / Revenue × 100" />
+          <RatioRow label="Return on Equity (ROE)" value={data.roe_pct} suffix="%" description="Net Profit / Total Capital × 100" />
+          <RatioRow label="Return on Assets (ROA)" value={data.roa_pct} suffix="%" description="Net Profit / Total Assets × 100" />
+        </RptSection>
+      )}
+      {(data.days_sales_outstanding != null || data.days_payable_outstanding != null) && (
+        <RptSection title="Activity">
+          <RatioRow label="Days Sales Outstanding (DSO)"   value={data.days_sales_outstanding}  suffix=" days" description="(Debtors / Revenue) × Period Days" />
+          <RatioRow label="Days Payable Outstanding (DPO)" value={data.days_payable_outstanding} suffix=" days" description="(Creditors / Purchases) × Period Days" />
+        </RptSection>
+      )}
+    </div>
+  )
+}
+
+// ─── Cash Book / Bank Book ─────────────────────────────────────────────────────
+
+interface CashBookTx {
+  date: string; entry_number: string; description: string; narration: string
+  reference_type: string; reference_id: number | null; voucher_number: string
+  debit: string; credit: string; balance: string
+}
+interface CashBookReport {
+  bank_account: { id: number; name: string } | null
+  date_from: string; date_to: string
+  opening_balance: string; closing_balance: string
+  transactions: CashBookTx[]
+}
+
+function CashBookView({ data }: { data: CashBookReport }) {
+  const opening  = parseFloat(data.opening_balance  ?? '0')
+  const closing  = parseFloat(data.closing_balance  ?? '0')
+  const txs      = data.transactions ?? []
+  const totalDr  = txs.reduce((s, r) => s + parseFloat(r.debit  ?? '0'), 0)
+  const totalCr  = txs.reduce((s, r) => s + parseFloat(r.credit ?? '0'), 0)
+  const isBank   = !!data.bank_account
+
+  return (
+    <div>
+      {/* ── Summary strip ──────────────────────────────────────── */}
+      <div className="grid grid-cols-4 divide-x divide-gray-200 border-b border-gray-200 bg-gray-50">
+        {[
+          { label: 'Opening Balance', value: opening  },
+          { label: 'Total Receipts',  value: totalDr  },
+          { label: 'Total Payments',  value: totalCr  },
+          { label: 'Closing Balance', value: closing  },
+        ].map(s => (
+          <div key={s.label} className="px-4 py-3 text-center">
+            <p className="text-xs text-gray-500 font-medium mb-0.5">{s.label}</p>
+            <p className={`text-sm font-bold tabular-nums ${
+              s.label === 'Closing Balance' && closing < 0 ? 'text-red-600' : 'text-gray-900'
+            }`}>{npr(s.value.toFixed(2))}</p>
+          </div>
+        ))}
+      </div>
+
+      {isBank && (
+        <p className="px-4 py-2 text-xs text-gray-500 border-b border-gray-100">
+          Showing Bank Book for: <span className="font-medium text-gray-800">{data.bank_account!.name}</span>
+        </p>
+      )}
+
+      {/* ── Transaction table ───────────────────────────────────── */}
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-b border-gray-200">
           <tr>
-            <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Description</th>
-            <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-40">Amount</th>
+            <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-24">Date</th>
+            <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-28">Voucher #</th>
+            <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Particulars</th>
+            <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-32">Receipt (Dr)</th>
+            <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-32">Payment (Cr)</th>
+            <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Balance</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
-          <tr className="hover:bg-gray-50">
-            <td className="px-4 py-3 text-gray-700">Total Cash Inflows</td>
-            <td className="px-4 py-3 text-right tabular-nums text-gray-800 font-medium">{npr(data.total_incoming)}</td>
+          {/* Opening balance row */}
+          <tr className="bg-amber-50">
+            <td className="px-3 py-2 text-gray-400 text-xs font-medium">{fmt(data.date_from)}</td>
+            <td className="px-3 py-2 text-gray-400 text-xs">—</td>
+            <td className="px-3 py-2 text-gray-600 font-medium">Opening Balance B/F</td>
+            <td className="px-3 py-2" />
+            <td className="px-3 py-2" />
+            <td className="px-3 py-2 text-right tabular-nums font-semibold text-gray-800">{npr(opening.toFixed(2))}</td>
           </tr>
-          <tr className="hover:bg-gray-50">
-            <td className="px-4 py-3 text-gray-700">Total Cash Outflows</td>
-            <td className="px-4 py-3 text-right tabular-nums text-gray-800 font-medium">({npr(data.total_outgoing)})</td>
-          </tr>
+          {txs.map((tx, i) => {
+            const bal = parseFloat(tx.balance)
+            return (
+              <tr key={i} className="hover:bg-gray-50">
+                <td className="px-3 py-1.5 text-xs text-gray-500">{fmt(tx.date)}</td>
+                <td className="px-3 py-1.5 text-xs font-mono text-indigo-600">
+                  {tx.voucher_number || tx.entry_number || '—'}
+                </td>
+                <td className="px-3 py-1.5 text-gray-700">
+                  {tx.narration || tx.description}
+                </td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-emerald-700">
+                  {parseFloat(tx.debit) ? npr(tx.debit) : <span className="text-gray-200">—</span>}
+                </td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-red-600">
+                  {parseFloat(tx.credit) ? npr(tx.credit) : <span className="text-gray-200">—</span>}
+                </td>
+                <td className={`px-3 py-1.5 text-right tabular-nums font-medium ${
+                  bal < 0 ? 'text-red-600' : 'text-gray-800'
+                }`}>{npr(bal.toFixed(2))}</td>
+              </tr>
+            )
+          })}
         </tbody>
         <tfoot className="bg-gray-800 text-white">
           <tr>
-            <td className="px-4 py-2.5 text-sm font-bold uppercase tracking-wide">
-              Net Cash Flow
-              <span className="ml-2 text-xs text-gray-400 font-normal">{isPos ? '(Positive)' : '(Negative)'}</span>
-            </td>
-            <td className="px-4 py-2.5 text-right font-bold tabular-nums">
-              {isPos ? '' : '('}{npr(Math.abs(net).toFixed(2))}{isPos ? '' : ')'}
-            </td>
+            <td colSpan={3} className="px-3 py-2.5 text-sm font-bold uppercase tracking-wide">Closing Balance C/F</td>
+            <td className="px-3 py-2.5 text-right font-bold tabular-nums">{npr(totalDr.toFixed(2))}</td>
+            <td className="px-3 py-2.5 text-right font-bold tabular-nums">{npr(totalCr.toFixed(2))}</td>
+            <td className="px-3 py-2.5 text-right font-bold tabular-nums">{npr(closing.toFixed(2))}</td>
           </tr>
         </tfoot>
       </table>
-      {data.by_method?.length > 0 && (
-        <div className="mt-4 border-t border-gray-200">
-          <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Breakdown by Payment Method</span>
-          </div>
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Method</th>
-                <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Inflows</th>
-                <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Outflows</th>
-                <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Net</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {data.by_method.map(m => {
-                const mNet = parseFloat(String(m.incoming)) - parseFloat(String(m.outgoing))
-                return (
-                  <tr key={m.method} className="hover:bg-gray-50">
-                    <td className="px-4 py-2 text-gray-700">{METHOD_LABELS[m.method] ?? m.method}</td>
-                    <td className="px-4 py-2 text-right tabular-nums text-gray-700">{npr(m.incoming)}</td>
-                    <td className="px-4 py-2 text-right tabular-nums text-gray-700">({npr(m.outgoing)})</td>
-                    <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-900">
-                      {mNet < 0 ? '(' : ''}{npr(Math.abs(mNet).toFixed(2))}{mNet < 0 ? ')' : ''}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {!txs.length && <EmptyState message="No cash/bank movements in this period." />}
     </div>
   )
 }
@@ -943,9 +1425,9 @@ function toCSV(key: ReportType, data: Record<string, unknown>): string {
     }
     case 'trial-balance': {
       const d = data as unknown as TBReport
-      row('Code', 'Account', 'Debit (Dr)', 'Credit (Cr)')
-      d.accounts?.forEach(r => row(r.code, r.name, r.debit, r.credit))
-      row('', 'TOTAL', d.total_debit, d.total_credit)
+      row('Code', 'Account', 'Opening Dr', 'Opening Cr', 'Period Dr', 'Period Cr', 'Closing Dr', 'Closing Cr')
+      d.accounts?.forEach(r => row(r.code, r.name, r.opening_dr, r.opening_cr, r.period_dr, r.period_cr, r.closing_dr, r.closing_cr))
+      row('', 'TOTAL', d.total_opening_dr, d.total_opening_cr, d.total_period_dr, d.total_period_cr, d.total_closing_dr, d.total_closing_cr)
       break
     }
     case 'aged-receivables':
@@ -971,13 +1453,34 @@ function toCSV(key: ReportType, data: Record<string, unknown>): string {
       break
     }
     case 'cash-flow': {
-      const d = data as unknown as CFReport
-      row('Method', 'Inflows', 'Outflows', 'Net')
-      d.by_method?.forEach(m =>
-        row(m.method, m.incoming, m.outgoing,
-          (parseFloat(String(m.incoming)) - parseFloat(String(m.outgoing))).toFixed(2))
-      )
-      row('TOTAL', d.total_incoming, d.total_outgoing, d.net_cash_flow)
+      const d = data as unknown as CFReportIndirect
+      const isIndirect = 'operating' in d && d.operating != null
+      if (isIndirect) {
+        row('Section', 'Line', 'Amount')
+        row('Operating', 'Net Profit / (Loss)', d.operating.net_profit)
+        if (Number(d.operating.depreciation) !== 0) row('Operating', 'Add: Depreciation & Amortisation', d.operating.depreciation)
+        d.operating.working_capital_changes?.forEach(wc => row('Operating', wc.label, wc.amount))
+        if (d.operating.working_capital_total != null) row('Operating', 'Net Working Capital Changes', d.operating.working_capital_total)
+        row('Operating', 'Net Operating Activities', d.operating.total)
+        d.investing.items?.forEach(it => row('Investing', it.label, it.amount))
+        row('Investing', 'Net Investing Activities', d.investing.total)
+        d.financing.items?.forEach(it => row('Financing', it.label, it.amount))
+        row('Financing', 'Net Financing Activities', d.financing.total)
+        row('', 'Net Change in Cash', d.net_change)
+        row('', 'Opening Cash & Bank', d.opening_cash)
+        row('', 'Closing Cash & Bank', d.closing_cash)
+        if (d.expected_closing != null) row('', 'Expected Closing', d.expected_closing)
+        if (d.difference != null) row('', 'Difference (Out of Balance)', d.difference)
+        row('', 'Balanced', d.balanced ? 'Yes' : 'No')
+      } else {
+        const ld = data as unknown as CFReport
+        row('Method', 'Inflows', 'Outflows', 'Net')
+        ld.by_method?.forEach(m =>
+          row(m.method, m.incoming, m.outgoing,
+            (parseFloat(String(m.incoming)) - parseFloat(String(m.outgoing))).toFixed(2))
+        )
+        row('TOTAL', ld.total_incoming, ld.total_outgoing, ld.net_cash_flow)
+      }
       break
     }
     default: {
@@ -1297,11 +1800,17 @@ export default function ReportsPage() {
   const [dateTo, setDateTo] = useState(today)
   const [customerId, setCustomerId] = useState<number | null>(null)
   const [supplierId, setSupplierId] = useState<number | null>(null)
+  const [costCentreId, setCostCentreId] = useState<number | null>(null)
+  // Compare period — optional, used by P&L and Balance Sheet
+  const [compareEnabled, setCompareEnabled] = useState(false)
+  const [compareFrom, setCompareFrom] = useState('')
+  const [compareTo, setCompareTo]     = useState('')
   const printRef = useRef<HTMLDivElement>(null)
 
   const report = REPORTS.find(r => r.key === reportKey)!
   const catReports = REPORTS.filter(r => r.category === category)
   const isInvOps = category === 'inventory-ops'
+  const supportsCompare = reportKey === 'pl' || reportKey === 'balance-sheet'
 
   function handleCategoryChange(cat: ReportCategory) {
     setCategory(cat)
@@ -1320,6 +1829,14 @@ export default function ReportsPage() {
     }
     if (report.needsCustomer && customerId) parts.push(`customer_id=${customerId}`)
     if (report.needsSupplier && supplierId) parts.push(`supplier_id=${supplierId}`)
+    if (report.needsCostCentre && costCentreId) parts.push(`cost_centre_id=${costCentreId}`)
+    if (supportsCompare && compareEnabled) {
+      if (reportKey === 'pl' && compareFrom && compareTo) {
+        parts.push(`compare_from=${compareFrom}`, `compare_to=${compareTo}`)
+      } else if (reportKey === 'balance-sheet' && compareTo) {
+        parts.push(`compare_as_of=${compareTo}`)
+      }
+    }
     return parts.length ? `?${parts.join('&')}` : ''
   }
 
@@ -1341,8 +1858,21 @@ export default function ReportsPage() {
     staleTime: 60_000,
   })
 
+  const { data: costCentreList } = useQuery<{ id: number; name: string; code: string }[]>({
+    queryKey: ['report-cost-centres-dropdown'],
+    queryFn: () => apiClient.get(`${ACCOUNTING.COST_CENTRES}?page_size=500`).then(r => {
+      const list = Array.isArray(r.data?.data) ? r.data.data
+                 : Array.isArray(r.data?.data?.results) ? r.data.data.results
+                 : Array.isArray(r.data?.results) ? r.data.results
+                 : []
+      return list.map((c: { id: number; name: string; code: string }) => ({ id: c.id, name: c.name, code: c.code }))
+    }),
+    enabled: report?.needsCostCentre ?? false,
+    staleTime: 60_000,
+  })
+
   const { data: reportData, isLoading, isError, error, refetch } = useQuery<Record<string, unknown>>({
-    queryKey: ['report', reportKey, dateFrom, dateTo, customerId, supplierId],
+    queryKey: ['report', reportKey, dateFrom, dateTo, customerId, supplierId, costCentreId, compareEnabled, compareFrom, compareTo],
     queryFn: () => apiClient.get(report.endpoint + buildParams()).then(r => r.data?.data ?? r.data),
     enabled: false,
   })
@@ -1397,13 +1927,32 @@ ${el.innerHTML}
     const d = reportData
 
     switch (reportKey) {
-      case 'pl':               return <PLReportView data={d as unknown as PLReport} />
-      case 'balance-sheet':    return <BSReportView data={d as unknown as BSReport} />
-      case 'trial-balance':    return <TBReportView data={d as unknown as TBReport} />
+      case 'pl':               return <PLReportView data={d as unknown as PLReport} dateFrom={dateFrom} dateTo={dateTo} />
+      case 'balance-sheet':    return <BSReportView data={d as unknown as BSReport} asOf={dateTo} />
+      case 'trial-balance':    return <TBReportView data={d as unknown as TBReport} dateFrom={dateFrom} dateTo={dateTo} />
       case 'aged-receivables': return <AgedReportView data={d as unknown as AgedReport} type="receivables" />
       case 'aged-payables':    return <AgedReportView data={d as unknown as AgedReport} type="payables" />
       case 'vat':              return <VATReportView data={d as unknown as VATReport} />
-      case 'cash-flow':        return <CFReportView data={d as unknown as CFReport} />
+      case 'cash-flow':        return <CFReportView data={d as unknown as CFReportIndirect} />
+      case 'ratio-analysis':   return <RatioAnalysisView data={d as unknown as RatioReport} />
+      case 'cost-centre-pl': {
+        const cc = (d as Record<string, unknown>).cost_centre as { name: string; code: string } | null
+        return (
+          <div>
+            {cc && (
+              <div className="px-4 py-2.5 bg-indigo-50 border-b border-indigo-100 flex items-center gap-2">
+                <Layers size={14} className="text-indigo-500 shrink-0" />
+                <span className="text-sm font-semibold text-indigo-800">
+                  {cc.code ? `[${cc.code}] ` : ''}{cc.name}
+                </span>
+                <span className="text-xs text-indigo-500 ml-1">— Cost Centre P&L</span>
+              </div>
+            )}
+            <PLReportView data={d as unknown as PLReport} dateFrom={dateFrom} dateTo={dateTo} />
+          </div>
+        )
+      }
+      case 'cash-book':         return <CashBookView data={d as unknown as CashBookReport} />
       case 'gl-summary':       return <GLSummaryView data={d as unknown as { groups: Record<string, GLSummaryGroup> }} />
       case 'annex-5':          return <Annex5View data={d} />
       case 'sales-summary':    return <SalesSummaryView data={d} />
@@ -1565,6 +2114,25 @@ ${el.innerHTML}
                   </div>
                 )}
 
+                {report.needsCostCentre && (
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1 font-medium">Cost Centre</label>
+                    <select
+                      value={costCentreId ?? ''}
+                      onChange={e => setCostCentreId(e.target.value ? parseInt(e.target.value) : null)}
+                      className="h-9 px-3 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 min-w-[200px]"
+                    >
+                      <option value="">— Select cost centre —</option>
+                      {(costCentreList ?? []).map(c => (
+                        <option key={c.id} value={c.id}>{c.code ? `[${c.code}] ` : ''}{c.name}</option>
+                      ))}
+                    </select>
+                    {report.needsCostCentre && !costCentreId && (
+                      <p className="mt-1 text-xs text-amber-600">Select a cost centre to generate this report.</p>
+                    )}
+                  </div>
+                )}
+
                 {report.dateMode === 'range' && (
                   <div className="flex gap-2 pb-0.5">
                     <button
@@ -1589,9 +2157,42 @@ ${el.innerHTML}
                   </div>
                 )}
 
+                {/* Compare period — P&L and Balance Sheet only */}
+                {supportsCompare && (
+                  <div className="flex flex-wrap items-end gap-3 w-full pt-1 border-t border-gray-100">
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-gray-600 font-medium">
+                      <input
+                        type="checkbox"
+                        checked={compareEnabled}
+                        onChange={e => setCompareEnabled(e.target.checked)}
+                        className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      Compare Period
+                    </label>
+                    {compareEnabled && reportKey === 'pl' && (
+                      <>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1 font-medium">Compare From</label>
+                          <NepaliDatePicker value={compareFrom} onChange={v => setCompareFrom(v)} />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1 font-medium">Compare To</label>
+                          <NepaliDatePicker value={compareTo} onChange={v => setCompareTo(v)} />
+                        </div>
+                      </>
+                    )}
+                    {compareEnabled && reportKey === 'balance-sheet' && (
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1 font-medium">Compare As Of</label>
+                        <NepaliDatePicker value={compareTo} onChange={v => setCompareTo(v)} />
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <button
                   onClick={() => refetch()}
-                  disabled={isLoading}
+                  disabled={isLoading || (report.needsCostCentre && !costCentreId)}
                   className="px-5 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2 disabled:opacity-60"
                 >
                   <BarChart2 size={15} /> Run Report

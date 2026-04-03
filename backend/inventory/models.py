@@ -278,6 +278,7 @@ class Supplier(TenantModel):
                                        help_text='e.g. Net 30, COD')
     notes          = models.TextField(blank=True)
     is_active      = models.BooleanField(default=True)
+    pan_number     = models.CharField(max_length=20, blank=True, help_text='Nepal PAN / VAT number (9-digit)')
 
     class Meta:
         ordering = ['name']

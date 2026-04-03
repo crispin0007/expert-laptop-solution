@@ -4,6 +4,10 @@ DEBUG = True
 
 ALLOWED_HOSTS = ['*']
 
+# Wrap each request in a transaction so that signal-triggered journal failures
+# roll back status changes. Matches production behavior.
+ATOMIC_REQUESTS = True
+
 # Development-specific settings
 INSTALLED_APPS += []
 

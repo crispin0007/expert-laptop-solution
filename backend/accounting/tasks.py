@@ -147,3 +147,97 @@ def task_generate_monthly_payslips(self):
     )
     log.info(summary)
     return summary
+
+
+# ─── Overdue post-dated cheques ───────────────────────────────────────────────
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def task_flag_overdue_pdcs(self):
+    """
+    Daily: find cheques in 'issued' or 'presented' state whose date is in the past.
+    Logs a warning per cheque. Future: fire notifications per tenant.
+
+    Schedule: daily at 08:00 UTC (set in CELERY_BEAT_SCHEDULE).
+    """
+    from accounting.models import Payment
+
+    today = timezone.localdate()
+
+    overdue_qs = (
+        Payment.objects
+        .filter(
+            method=Payment.METHOD_CHEQUE,
+            cheque_status__in=[Payment.CHEQUE_STATUS_ISSUED, Payment.CHEQUE_STATUS_PRESENTED],
+            date__lt=today,
+            is_deleted=False,
+        )
+        .select_related('tenant', 'invoice', 'bill')
+        .iterator(chunk_size=200)
+    )
+
+    count = 0
+    for p in overdue_qs:
+        days_overdue = (today - p.date).days
+        log.warning(
+            'Overdue PDC: payment=%s tenant=%s party="%s" amount=%s days_overdue=%s status=%s',
+            p.payment_number,
+            getattr(p.tenant, 'slug', p.tenant_id),
+            p.party_name,
+            p.amount,
+            days_overdue,
+            p.cheque_status,
+        )
+        count += 1
+
+    msg = f"task_flag_overdue_pdcs: {count} overdue cheques"
+    log.info(msg)
+    return msg
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+def task_process_reversals(self):
+    """
+    Daily task: find all posted JournalEntries with ``reversal_date <= today``
+    and ``reversed_by`` not yet set, then create and post a reversing entry.
+
+    Schedule: daily at 00:10 UTC (set in CELERY_BEAT_SCHEDULE).
+    Idempotent: checks ``reversed_by`` before acting.
+    """
+    from accounting.models import JournalEntry
+    from accounting.services.journal_service import create_reversing_entry
+    from django.db.models import Q
+
+    today = timezone.localdate()
+
+    pending = JournalEntry.objects.filter(
+        is_posted=True,
+        reversal_date__lte=today,
+        reversed_by__isnull=True,
+    ).select_related('tenant', 'created_by').iterator(chunk_size=200)
+
+    processed = 0
+    errors    = 0
+
+    for entry in pending:
+        try:
+            create_reversing_entry(
+                original_entry=entry,
+                reversal_date=entry.reversal_date,
+                created_by=entry.created_by,   # preserve original author
+            )
+            processed += 1
+            log.info(
+                "Auto-reversed entry #%s (tenant=%s, reversal_date=%s)",
+                entry.entry_number, entry.tenant_id, entry.reversal_date,
+            )
+        except Exception as exc:
+            errors += 1
+            log.error(
+                "Auto-reversal failed for entry #%s: %s",
+                entry.entry_number, exc,
+                exc_info=True,
+            )
+
+    summary = f"task_process_reversals: processed={processed}, errors={errors}"
+    log.info(summary)
+    return summary

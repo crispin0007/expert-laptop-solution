@@ -12,8 +12,17 @@ Rules:
 """
 from __future__ import annotations
 
+from decimal import Decimal
+
+from django.db.models import Sum, Value
+from django.db.models.functions import Coalesce
+
 from core.repositories import BaseRepository
 from accounting.models import Invoice
+
+
+# Reusable annotation that computes amount_paid in SQL — eliminates N+1 on list views.
+_AMOUNT_PAID_ANNOTATION = Coalesce(Sum('payments__amount'), Value(Decimal('0')))
 
 
 class InvoiceRepository(BaseRepository):
@@ -44,7 +53,7 @@ class InvoiceRepository(BaseRepository):
         qs = (
             self._qs
             .select_related("customer", "ticket", "project", "created_by")
-            .prefetch_related("payments")
+            .annotate(amount_paid_sum=_AMOUNT_PAID_ANNOTATION)
             .order_by("-created_at")
         )
         if status:
@@ -56,9 +65,14 @@ class InvoiceRepository(BaseRepository):
         if ticket_id:
             qs = qs.filter(ticket_id=ticket_id)
         if fiscal_year_start and fiscal_year_end:
+            from django.db.models import Q
+            # Prefer the explicit `date` field; fall back to created_at::date for
+            # legacy invoices created before migration 0017 added the date column.
             qs = qs.filter(
-                created_at__date__gte=fiscal_year_start,
-                created_at__date__lte=fiscal_year_end,
+                Q(date__gte=fiscal_year_start, date__lte=fiscal_year_end) |
+                Q(date__isnull=True,
+                  created_at__date__gte=fiscal_year_start,
+                  created_at__date__lte=fiscal_year_end)
             )
         return qs
 
@@ -68,6 +82,7 @@ class InvoiceRepository(BaseRepository):
             self._qs
             .filter(pk=pk)
             .select_related("customer", "ticket", "project", "created_by")
+            .annotate(amount_paid_sum=_AMOUNT_PAID_ANNOTATION)
             .prefetch_related("payments")
             .first()
         )

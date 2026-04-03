@@ -1,12 +1,13 @@
 from rest_framework import serializers
 from core.serializers import NepaliModelSerializer
 from .models import (
-    CoinTransaction, Payslip, Invoice,
+    AccountGroup, CoinTransaction, Payslip, Invoice,
     Account, JournalEntry, JournalLine, BankAccount,
     Bill, Payment, CreditNote,
     Quotation, DebitNote, TDSEntry,
     BankReconciliation, BankReconciliationLine, RecurringJournal,
     StaffSalaryProfile, Expense,
+    CostCentre, FiscalYearClose, PaymentAllocation,
 )
 
 
@@ -40,45 +41,153 @@ def _ensure_staff_in_tenant(staff, tenant, label: str = 'staff'):
         })
 
 
+def _validate_line_items(line_items):
+    """
+    Validate that line_items is a non-empty list of objects with required keys.
+    Each item must have: description (str), qty (numeric > 0), unit_price (numeric >= 0).
+    Optional: discount (numeric 0-100), name (str, accepted as alias for description).
+    Raises ValidationError that DRF will surface as a 400 with detail.
+    """
+    if not isinstance(line_items, list) or len(line_items) == 0:
+        raise serializers.ValidationError({'line_items': 'At least one line item is required.'})
+
+    for i, item in enumerate(line_items):
+        if not isinstance(item, dict):
+            raise serializers.ValidationError(
+                {'line_items': f'Item {i + 1}: must be an object.'}
+            )
+        description = item.get('description') or item.get('name', '')
+        if not isinstance(description, str) or not description.strip():
+            raise serializers.ValidationError(
+                {'line_items': f'Item {i + 1}: "description" must be a non-empty string.'}
+            )
+        try:
+            qty = float(item.get('qty', 0))
+        except (TypeError, ValueError):
+            raise serializers.ValidationError(
+                {'line_items': f'Item {i + 1}: "qty" must be a number.'}
+            )
+        if qty <= 0:
+            raise serializers.ValidationError(
+                {'line_items': f'Item {i + 1}: "qty" must be greater than 0.'}
+            )
+        try:
+            unit_price = float(item.get('unit_price', -1))
+        except (TypeError, ValueError):
+            raise serializers.ValidationError(
+                {'line_items': f'Item {i + 1}: "unit_price" must be a number.'}
+            )
+        if unit_price < 0:
+            raise serializers.ValidationError(
+                {'line_items': f'Item {i + 1}: "unit_price" must be 0 or greater.'}
+            )
+        discount = item.get('discount', 0)
+        if discount is not None:
+            try:
+                discount = float(discount)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    {'line_items': f'Item {i + 1}: "discount" must be a number.'}
+                )
+            if not (0 <= discount <= 100):
+                raise serializers.ValidationError(
+                    {'line_items': f'Item {i + 1}: "discount" must be between 0 and 100.'}
+                )
+
+
+# ─── Account Groups ──────────────────────────────────────────────────────────
+
+class AccountGroupSerializer(serializers.ModelSerializer):
+    """Read-only serializer for AccountGroup (list + detail)."""
+
+    class Meta:
+        model  = AccountGroup
+        fields = (
+            'id', 'slug', 'name', 'description', 'type',
+            'report_section', 'affects_gross_profit', 'normal_balance',
+            'order', 'is_system', 'is_active',
+        )
+        read_only_fields = fields
+
+
 # ─── Chart of Accounts ───────────────────────────────────────────────────────
 
 class AccountSerializer(serializers.ModelSerializer):
     parent_name = serializers.CharField(source='parent.name', read_only=True, default='')
+    group_name  = serializers.CharField(source='group.name',  read_only=True, default='')
+    group_slug  = serializers.CharField(source='group.slug',  read_only=True, default='')
     balance     = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
 
     class Meta:
         model  = Account
         fields = (
-            'id', 'code', 'name', 'type', 'parent', 'parent_name',
+            'id', 'code', 'name', 'type',
+            'group', 'group_name', 'group_slug',
+            'parent', 'parent_name',
             'description', 'is_system', 'is_active', 'balance', 'created_at',
         )
-        read_only_fields = ('is_system', 'balance', 'created_at')
+        read_only_fields = ('is_system', 'balance', 'created_at', 'group_name', 'group_slug', 'parent_name')
+
+    def validate_group(self, group):
+        if group is None:
+            return group
+        tenant = _tenant_from_context(self)
+        _ensure_same_tenant(group, tenant, 'group')
+        return group
+
+    def validate(self, attrs):
+        # Enforce that group type matches account type when both are provided
+        group = attrs.get('group') or (self.instance.group if self.instance else None)
+        acct_type = attrs.get('type') or (self.instance.type if self.instance else None)
+        if group and acct_type and group.type != acct_type:
+            raise serializers.ValidationError({
+                'group': f"Group type '{group.type}' does not match account type '{acct_type}'."
+            })
+        # Require group on new accounts (not on system accounts patched server-side)
+        if self.instance is None and group is None:
+            raise serializers.ValidationError({
+                'group': 'Account group is required. Select a group from the Chart of Accounts groups.'
+            })
+        return attrs
 
 
 # ─── Journal Entries ─────────────────────────────────────────────────────────
 
 class JournalLineSerializer(serializers.ModelSerializer):
-    account_code = serializers.CharField(source='account.code', read_only=True)
-    account_name = serializers.CharField(source='account.name', read_only=True)
+    account_code     = serializers.CharField(source='account.code', read_only=True)
+    account_name     = serializers.CharField(source='account.name', read_only=True)
+    cost_centre_name = serializers.CharField(source='cost_centre.name', read_only=True, default='')
 
     class Meta:
         model  = JournalLine
-        fields = ('id', 'account', 'account_code', 'account_name', 'debit', 'credit', 'description')
+        fields = (
+            'id', 'account', 'account_code', 'account_name',
+            'debit', 'credit', 'description',
+            'cost_centre', 'cost_centre_name',
+        )
 
 
 class JournalEntrySerializer(serializers.ModelSerializer):
-    lines        = JournalLineSerializer(many=True, read_only=True)
-    created_by_name = serializers.CharField(source='created_by.full_name', read_only=True, default='')
+    lines                 = JournalLineSerializer(many=True, read_only=True)
+    created_by_name       = serializers.CharField(source='created_by.full_name',          read_only=True, default='')
+    reversed_by_id        = serializers.PrimaryKeyRelatedField(source='reversed_by',       read_only=True)
+    reversed_by_user_name = serializers.CharField(source='reversed_by_user.full_name',    read_only=True, default='')
 
     class Meta:
         model  = JournalEntry
         fields = (
             'id', 'entry_number', 'date', 'description',
             'reference_type', 'reference_id',
+            'purpose',
             'is_posted', 'total_debit', 'total_credit',
+            'reversal_date', 'is_reversal', 'reversed_by_id',
+            'reversal_reason', 'reversed_by_user_name', 'reversal_timestamp',
             'lines', 'created_by_name', 'created_at',
         )
-        read_only_fields = ('entry_number', 'is_posted', 'total_debit', 'total_credit', 'created_at')
+        read_only_fields = (
+            'entry_number', 'is_posted', 'total_debit', 'total_credit',
+            'is_reversal', 'reversed_by_id', 'reversal_timestamp', 'created_at',
+        )
 
 
 class JournalEntryWriteSerializer(serializers.ModelSerializer):
@@ -143,6 +252,7 @@ class BillSerializer(NepaliModelSerializer):
     supplier_display = serializers.SerializerMethodField()
     amount_paid      = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
     amount_due       = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    po_number        = serializers.CharField(source='purchase_order.po_number', read_only=True, default=None)
 
     apply_vat = serializers.BooleanField(default=True, write_only=True, required=False)
 
@@ -150,6 +260,7 @@ class BillSerializer(NepaliModelSerializer):
         model  = Bill
         fields = (
             'id', 'bill_number', 'supplier', 'supplier_name', 'supplier_display',
+            'date', 'purchase_order', 'po_number',
             'line_items', 'subtotal', 'discount', 'vat_rate', 'vat_amount', 'total',
             'status', 'due_date', 'reference', 'notes',
             'approved_at', 'paid_at', 'amount_paid', 'amount_due',
@@ -158,6 +269,7 @@ class BillSerializer(NepaliModelSerializer):
         read_only_fields = (
             'bill_number', 'vat_rate', 'vat_amount', 'subtotal', 'total',
             'approved_at', 'paid_at', 'amount_paid', 'amount_due',
+            'purchase_order', 'po_number',
             'created_at', 'updated_at',
         )
 
@@ -170,16 +282,21 @@ class BillSerializer(NepaliModelSerializer):
         tenant = _tenant_from_context(self)
         supplier = attrs.get('supplier', getattr(self.instance, 'supplier', None))
         _ensure_same_tenant(supplier, tenant, 'supplier')
+        # Validate line items schema on create/update
+        line_items = attrs.get('line_items')
+        if line_items is not None:
+            _validate_line_items(line_items)
         return attrs
 
 
 # ─── Payments ────────────────────────────────────────────────────────────────
 
 class PaymentSerializer(NepaliModelSerializer):
-    invoice_number  = serializers.CharField(source='invoice.invoice_number', read_only=True, default='')
-    bill_number     = serializers.CharField(source='bill.bill_number',       read_only=True, default='')
-    bank_account_name = serializers.CharField(source='bank_account.name',   read_only=True, default='')
-    created_by_name   = serializers.CharField(source='created_by.full_name', read_only=True, default='')
+    invoice_number    = serializers.CharField(source='invoice.invoice_number', read_only=True, default='')
+    bill_number       = serializers.CharField(source='bill.bill_number',       read_only=True, default='')
+    bank_account_name = serializers.CharField(source='bank_account.name',     read_only=True, default='')
+    created_by_name   = serializers.CharField(source='created_by.full_name',  read_only=True, default='')
+    account_name      = serializers.CharField(source='account.name',           read_only=True, default='')
 
     class Meta:
         model  = Payment
@@ -188,6 +305,7 @@ class PaymentSerializer(NepaliModelSerializer):
             'bank_account', 'bank_account_name',
             'invoice', 'invoice_number',
             'bill', 'bill_number',
+            'account', 'account_name',
             'reference', 'notes',
             'party_name', 'cheque_status',
             'created_by_name', 'created_at',
@@ -227,6 +345,12 @@ class CreditNoteSerializer(serializers.ModelSerializer):
         read_only_fields = (
             'credit_note_number', 'issued_at', 'created_at',
         )
+
+    def validate(self, attrs):
+        line_items = attrs.get('line_items', getattr(self.instance, 'line_items', None) or [])
+        if line_items:
+            _validate_line_items(line_items)
+        return attrs
 
 
 # ─── Coins ───────────────────────────────────────────────────────────────────
@@ -366,25 +490,32 @@ class StaffSalaryProfileSerializer(serializers.ModelSerializer):
 class PayslipSerializer(NepaliModelSerializer):
     staff_name        = serializers.SerializerMethodField()
     bank_account_name = serializers.CharField(source='bank_account.name', read_only=True, default='')
+    cash_credit       = serializers.SerializerMethodField()
 
     def get_staff_name(self, obj):
         if not obj.staff:
             return ''
         return obj.staff.full_name or obj.staff.email or ''
 
+    def get_cash_credit(self, obj):
+        """Derived: gross − TDS − sum(deductions). Matches the cash/bank credit line in the payroll journal."""
+        from decimal import Decimal
+        return str((obj.gross_amount - obj.tds_amount - obj.deductions).quantize(Decimal('0.01')))
+
     class Meta:
         model  = Payslip
         fields = (
             'id', 'staff', 'staff_name', 'period_start', 'period_end',
             'total_coins', 'coin_to_money_rate', 'gross_amount',
-            'base_salary', 'bonus', 'tds_amount', 'deductions', 'net_pay',
+            'base_salary', 'bonus', 'tds_amount', 'deductions', 'deduction_breakdown',
+            'net_pay', 'cash_credit',
             'status', 'issued_at', 'paid_at',
             'payment_method', 'bank_account', 'bank_account_name',
             'created_at',
         )
         read_only_fields = (
             'total_coins', 'coin_to_money_rate', 'gross_amount', 'net_pay',
-            'tds_amount',
+            'tds_amount', 'cash_credit',
             'issued_at', 'paid_at', 'payment_method', 'bank_account',
             'bank_account_name', 'created_at',
         )
@@ -419,6 +550,7 @@ class InvoiceSerializer(NepaliModelSerializer):
             'ticket', 'ticket_number',
             'project', 'project_name',
             'buyer_pan',
+            'date',
             'line_items', 'subtotal', 'discount', 'vat_rate',
             'vat_amount', 'total', 'amount_paid', 'amount_due',
             'status', 'due_date', 'paid_at',
@@ -427,7 +559,7 @@ class InvoiceSerializer(NepaliModelSerializer):
             'apply_vat',
             # Billing workflow fields
             'finance_status',
-            'payment_received', 'payment_method',
+            'payment_method',  # B19: payment_received boolean removed; use amount_due <= 0
             'payment_received_at', 'payment_received_by', 'payment_received_by_name',
             'finance_reviewed_by', 'finance_reviewed_by_name',
             'finance_reviewed_at', 'finance_notes',
@@ -436,7 +568,7 @@ class InvoiceSerializer(NepaliModelSerializer):
             'invoice_number', 'vat_rate', 'vat_amount', 'subtotal',
             'total', 'amount_paid', 'amount_due', 'paid_at',
             'created_at', 'updated_at',
-            'payment_received_at', 'payment_received_by',
+            'payment_received_at', 'payment_received_by',  # B19: still kept as metadata
             'finance_reviewed_by', 'finance_reviewed_at',
         )
 
@@ -458,6 +590,10 @@ class InvoiceSerializer(NepaliModelSerializer):
         _ensure_same_tenant(customer, tenant, 'customer')
         _ensure_same_tenant(ticket, tenant, 'ticket')
         _ensure_same_tenant(project, tenant, 'project')
+        # Validate line items schema on create/update
+        line_items = attrs.get('line_items')
+        if line_items is not None:
+            _validate_line_items(line_items)
         return attrs
 
 
@@ -508,6 +644,12 @@ class DebitNoteSerializer(serializers.ModelSerializer):
             'debit_note_number', 'subtotal', 'vat_amount', 'total',
             'issued_at', 'created_at', 'updated_at',
         )
+
+    def validate(self, attrs):
+        line_items = attrs.get('line_items', getattr(self.instance, 'line_items', None) or [])
+        if line_items:
+            _validate_line_items(line_items)
+        return attrs
 
 
 # ─── TDS ─────────────────────────────────────────────────────────────────────
@@ -570,23 +712,56 @@ class RecurringJournalSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('last_run_at', 'created_at', 'updated_at')
 
+    def validate_template_lines(self, lines):
+        """Ensure template lines are non-empty, individually valid, and balanced."""
+        from decimal import Decimal as D
+        if not lines:
+            raise serializers.ValidationError('template_lines cannot be empty.')
+        for i, line in enumerate(lines, 1):
+            try:
+                dr = D(str(line.get('debit', 0)))
+                cr = D(str(line.get('credit', 0)))
+            except Exception:
+                raise serializers.ValidationError(
+                    f'Line {i}: debit and credit must be valid numbers.'
+                )
+            if dr < 0 or cr < 0:
+                raise serializers.ValidationError(
+                    f'Line {i}: debit and credit cannot be negative.'
+                )
+            if dr == 0 and cr == 0:
+                raise serializers.ValidationError(
+                    f'Line {i}: at least one of debit or credit must be > 0.'
+                )
+        total_dr = sum(D(str(l.get('debit', 0))) for l in lines)
+        total_cr = sum(D(str(l.get('credit', 0))) for l in lines)
+        if total_dr.quantize(D('0.01')) != total_cr.quantize(D('0.01')):
+            raise serializers.ValidationError(
+                f'template_lines are unbalanced: '
+                f'total debit={total_dr}, total credit={total_cr}.'
+            )
+        return lines
+
 
 # ─── Expenses ─────────────────────────────────────────────────────────────────
 
 class ExpenseSerializer(serializers.ModelSerializer):
     """Read serializer — full detail."""
-    submitted_by_name = serializers.CharField(source='submitted_by.get_full_name', default='', read_only=True)
-    approved_by_name  = serializers.CharField(source='approved_by.get_full_name',  default='', read_only=True)
-    rejected_by_name  = serializers.CharField(source='rejected_by.get_full_name',  default='', read_only=True)
-    account_name      = serializers.CharField(source='account.name', default='',   read_only=True)
-    category_display  = serializers.CharField(source='get_category_display',        read_only=True)
-    status_display    = serializers.CharField(source='get_status_display',          read_only=True)
+    submitted_by_name      = serializers.CharField(source='submitted_by.get_full_name', default='', read_only=True)
+    approved_by_name       = serializers.CharField(source='approved_by.get_full_name',  default='', read_only=True)
+    rejected_by_name       = serializers.CharField(source='rejected_by.get_full_name',  default='', read_only=True)
+    account_name           = serializers.CharField(source='account.name',               default='', read_only=True)
+    payment_account_name   = serializers.CharField(source='payment_account.name',       default='', read_only=True)
+    payment_account_code   = serializers.CharField(source='payment_account.code',       default='', read_only=True)
+    category_display       = serializers.CharField(source='get_category_display',        read_only=True)
+    status_display         = serializers.CharField(source='get_status_display',          read_only=True)
 
     class Meta:
         model  = Expense
         fields = (
             'id', 'category', 'category_display', 'description',
             'amount', 'date', 'account', 'account_name',
+            'payment_account', 'payment_account_name', 'payment_account_code',
             'receipt_url', 'notes', 'status', 'status_display',
             'submitted_by', 'submitted_by_name',
             'approved_by', 'approved_by_name', 'approved_at',
@@ -640,4 +815,150 @@ class ExpenseWriteSerializer(serializers.ModelSerializer):
                 {'next_recur_date': 'next_recur_date is required when is_recurring is True.'}
             )
         return attrs
+
+
+# ─── Cost Centre ─────────────────────────────────────────────────────────────
+
+class CostCentreSerializer(serializers.ModelSerializer):
+    parent_name    = serializers.CharField(source='parent.name', read_only=True, default='')
+    children_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = CostCentre
+        fields = (
+            'id', 'name', 'code', 'description',
+            'parent', 'parent_name', 'is_active', 'children_count',
+            'created_at',
+        )
+        read_only_fields = ('created_at',)
+
+    def get_children_count(self, obj):
+        return obj.children.count()
+
+
+class CostCentreWriteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = CostCentre
+        fields = ('name', 'code', 'description', 'parent', 'is_active')
+
+    def validate_code(self, value):
+        tenant = _tenant_from_context(self)
+        qs = CostCentre.objects.filter(tenant=tenant, code=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError('A cost centre with this code already exists.')
+        return value
+
+    def validate_parent(self, parent):
+        if parent is None:
+            return parent
+        tenant = _tenant_from_context(self)
+        _ensure_same_tenant(parent, tenant, 'parent')
+        if self.instance and parent.pk == self.instance.pk:
+            raise serializers.ValidationError('A cost centre cannot be its own parent.')
+        return parent
+
+
+# ─── Fiscal Year Close ───────────────────────────────────────────────────────
+
+class FiscalYearCloseSerializer(serializers.ModelSerializer):
+    closed_by_name = serializers.CharField(source='closed_by.full_name', read_only=True, default='')
+
+    class Meta:
+        model  = FiscalYearClose
+        fields = (
+            'id', 'fy_year', 'journal_entry', 'closed_by', 'closed_by_name',
+            'closed_at', 'retained_earnings_amount', 'notes',
+        )
+        read_only_fields = (
+            'journal_entry', 'closed_by', 'closed_at', 'retained_earnings_amount',
+        )
+
+
+# ─── Payment Allocation ──────────────────────────────────────────────────────
+
+class PaymentAllocationSerializer(serializers.ModelSerializer):
+    invoice_number = serializers.CharField(source='invoice.invoice_number', read_only=True, default='')
+    bill_number    = serializers.CharField(source='bill.bill_number',       read_only=True, default='')
+
+    class Meta:
+        model  = PaymentAllocation
+        fields = (
+            'id', 'payment',
+            'invoice', 'invoice_number',
+            'bill', 'bill_number',
+            'amount', 'allocated_at', 'note',
+        )
+        read_only_fields = ('allocated_at',)
+
+    def validate(self, attrs):
+        invoice = attrs.get('invoice')
+        bill    = attrs.get('bill')
+        if invoice and bill:
+            raise serializers.ValidationError('Cannot allocate to both invoice and bill.')
+        if not invoice and not bill:
+            raise serializers.ValidationError('Must allocate to invoice or bill.')
+
+        # B11 — Over-allocation guard.
+        # Prevent allocating more than the document's remaining amount_due so that
+        # payment over-matching never produces negative balances on invoices/bills.
+        amount  = attrs.get('amount')
+        payment = attrs.get('payment')
+        instance = getattr(self, 'instance', None)   # populated on update
+
+        if amount is not None and amount <= 0:
+            raise serializers.ValidationError({'amount': 'Allocated amount must be greater than zero.'})
+
+        if invoice and amount is not None:
+            current_allocation = instance.amount if instance else 0
+            if hasattr(invoice, 'amount_due') and invoice.amount_due is not None:
+                available = invoice.amount_due + current_allocation
+                if amount > available:
+                    raise serializers.ValidationError({
+                        'amount': (
+                            f'Allocation of {amount} exceeds invoice amount_due '
+                            f'({available} remaining on invoice {invoice.invoice_number}). '
+                            'Reduce the allocated amount or issue a credit note.'
+                        ),
+                    })
+
+        if bill and amount is not None:
+            current_allocation = instance.amount if instance else 0
+            if hasattr(bill, 'amount_due') and bill.amount_due is not None:
+                available = bill.amount_due + current_allocation
+                if amount > available:
+                    raise serializers.ValidationError({
+                        'amount': (
+                            f'Allocation of {amount} exceeds bill amount_due '
+                            f'({available} remaining on bill {bill.bill_number}). '
+                            'Reduce the allocated amount.'
+                        ),
+                    })
+
+        if payment and amount is not None:
+            # Guard: cannot allocate more than the payment itself
+            if amount > payment.amount:
+                raise serializers.ValidationError({
+                    'amount': (
+                        f'Allocation of {amount} exceeds payment amount ({payment.amount}). '
+                        'Reduce the allocated amount.'
+                    ),
+                })
+
+        return attrs
+
+    def validate_payment(self, payment):
+        _ensure_same_tenant(payment, _tenant_from_context(self), 'payment')
+        return payment
+
+    def validate_invoice(self, invoice):
+        if invoice is not None:
+            _ensure_same_tenant(invoice, _tenant_from_context(self), 'invoice')
+        return invoice
+
+    def validate_bill(self, bill):
+        if bill is not None:
+            _ensure_same_tenant(bill, _tenant_from_context(self), 'bill')
+        return bill
 

@@ -136,6 +136,31 @@ def receive_purchase_order(po, lines: list, notes: str, user) -> object:
             po.received_at = timezone.now()
         po.save(update_fields=['status', 'received_by', 'received_at'])
 
+        # Fire event so accounting can auto-create a draft Bill for this receipt batch.
+        try:
+            received_lines = [
+                {
+                    'product_name': items_map[line['item_id']].product.name,
+                    'quantity': line['quantity_received'],
+                    'unit_cost': str(items_map[line['item_id']].unit_cost),
+                }
+                for line in lines
+                if line.get('quantity_received', 0) > 0
+            ]
+            EventBus.publish('inventory.po.received', {
+                'id': po.pk,
+                'tenant_id': po.tenant_id,
+                'supplier_id': po.supplier_id,
+                'supplier_name': po.supplier.name if po.supplier else '',
+                'po_number': po.po_number,
+                'lines': received_lines,
+            }, tenant=po.tenant)
+        except Exception as exc:
+            logger.warning(
+                'EventBus.publish inventory.po.received failed for PO %s: %s',
+                po.pk, exc, exc_info=True,
+            )
+
     return po
 
 

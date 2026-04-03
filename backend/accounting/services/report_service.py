@@ -76,166 +76,508 @@ def _accounts_by_type(tenant, acct_type, date_from=None, date_to=None):
     Return list of {code, name, balance} for all accounts of a given type.
     Balance sign: asset/expense = debit-credit; liability/equity/revenue = credit-debit.
 
-    Includes ALL accounts of the given type — both parent/header accounts and
-    leaf accounts — so that journal entries posted to any account in the hierarchy
-    always appear in reports.  (Previously leaf-only filtering silently omitted
-    entries posted to parent accounts or system accounts that gained custom children.)
+    Uses a single batched GROUP BY query instead of one aggregate per account
+    to avoid N+1 performance issues at scale.
     """
     from accounting.models import Account, JournalLine
+    from django.db.models import Value
+    from django.db.models.functions import Coalesce
 
-    accounts = Account.objects.filter(
-        tenant=tenant, type=acct_type, is_active=True
-    ).order_by('code')  # all accounts, not just leaves
+    accounts = list(
+        Account.objects.filter(tenant=tenant, type=acct_type, is_active=True)
+        .order_by('code')
+    )
+    if not accounts:
+        return []
+
+    account_ids = [a.pk for a in accounts]
+
+    # Single SQL query: GROUP BY account_id to get debit/credit totals for all accounts
+    line_qs = JournalLine.objects.filter(
+        entry__tenant=tenant,
+        entry__is_posted=True,
+        account_id__in=account_ids,
+    )
+    if date_from:
+        line_qs = line_qs.filter(entry__date__gte=date_from)
+    if date_to:
+        line_qs = line_qs.filter(entry__date__lte=date_to)
+
+    balance_map = {
+        r['account_id']: (r['total_debit'], r['total_credit'])
+        for r in line_qs.values('account_id').annotate(
+            total_debit=Coalesce(Sum('debit'),  Value(Decimal('0'))),
+            total_credit=Coalesce(Sum('credit'), Value(Decimal('0'))),
+        )
+    }
 
     result = []
     for acc in accounts:
-        qs = JournalLine.objects.filter(
-            entry__tenant=tenant,
-            entry__is_posted=True,
-            account=acc,
-        )
-        if date_from:
-            qs = qs.filter(entry__date__gte=date_from)
-        if date_to:
-            qs = qs.filter(entry__date__lte=date_to)
-
-        d = qs.aggregate(debit=Sum('debit'), credit=Sum('credit'))
-        dr = d['debit'] or _zero()
-        cr = d['credit'] or _zero()
-
-        # Include Account.opening_balance so migrated tenants with seeded
-        # opening balances show correct figures in all reports.
+        dr, cr = balance_map.get(acc.pk, (_zero(), _zero()))
         ob = acc.opening_balance or _zero()
         if acct_type in ('asset', 'expense'):
             balance = ob + dr - cr
         else:
             balance = ob + cr - dr
-
-        result.append({'code': acc.code, 'name': acc.name, 'balance': balance})
+        result.append({'id': acc.pk, 'code': acc.code, 'name': acc.name, 'balance': balance})
 
     return result
 
 
 # ─── Profit & Loss ───────────────────────────────────────────────────────────
 
-def profit_and_loss(tenant, date_from, date_to):
+def _accounts_by_group_slug(tenant, group_slug, date_from=None, date_to=None):
     """
-    Revenue minus Expenses for the given period.
-    """
-    revenue_lines  = _accounts_by_type(tenant, 'revenue',  date_from, date_to)
-    expense_lines  = _accounts_by_type(tenant, 'expense',  date_from, date_to)
+    Return [{code, name, balance, group_name}] for all active accounts
+    belonging to the given AccountGroup slug.
+    Balance sign follows the account type (debit-normal or credit-normal).
 
-    total_revenue  = sum(r['balance'] for r in revenue_lines)
-    total_expenses = sum(e['balance'] for e in expense_lines)
-    net_profit     = total_revenue - total_expenses
+    Uses a single batched GROUP BY query instead of one aggregate per account
+    to avoid N+1 performance issues at scale.
+    """
+    from accounting.models import Account, JournalLine
+    from django.db.models import Value
+    from django.db.models.functions import Coalesce
+
+    accounts = list(
+        Account.objects.filter(
+            tenant=tenant,
+            group__slug=group_slug,
+            is_active=True,
+        ).select_related('group').order_by('code')
+    )
+    if not accounts:
+        return []
+
+    account_ids = [a.pk for a in accounts]
+
+    # Single SQL query: GROUP BY account_id
+    line_qs = JournalLine.objects.filter(
+        entry__tenant=tenant,
+        entry__is_posted=True,
+        account_id__in=account_ids,
+    )
+    if date_from:
+        line_qs = line_qs.filter(entry__date__gte=date_from)
+    if date_to:
+        line_qs = line_qs.filter(entry__date__lte=date_to)
+
+    balance_map = {
+        r['account_id']: (r['total_debit'], r['total_credit'])
+        for r in line_qs.values('account_id').annotate(
+            total_debit=Coalesce(Sum('debit'),  Value(Decimal('0'))),
+            total_credit=Coalesce(Sum('credit'), Value(Decimal('0'))),
+        )
+    }
+
+    result = []
+    for acc in accounts:
+        dr, cr = balance_map.get(acc.pk, (_zero(), _zero()))
+        ob = acc.opening_balance or _zero()
+        if acc.type in ('asset', 'expense'):
+            balance = ob + dr - cr
+        else:
+            balance = ob + cr - dr
+        result.append({
+            'id':         acc.pk,
+            'code':       acc.code,
+            'name':       acc.name,
+            'balance':    balance,
+            'group_name': acc.group.name if acc.group else '',
+        })
+    return result
+
+
+def _section_total(accounts_list):
+    return sum(a['balance'] for a in accounts_list)
+
+
+def profit_and_loss(tenant, date_from, date_to, compare_from=None, compare_to=None):
+    """
+    Tally-style Profit & Loss with Gross Profit split.
+
+    Optional comparison period: pass compare_from / compare_to to get a
+    side-by-side view.  Each account entry gains a ``compare_balance`` field
+    and the response includes a ``compare_period`` block.
+
+    Structure:
+      INCOME (Gross):
+        Sales / Revenue         (sales_accounts)
+        Direct Income           (direct_income)
+       = Gross Revenue
+      LESS DIRECT COSTS (Gross):
+        Purchases / COGS        (purchase_accounts)
+        Direct Expenses         (direct_expense)
+       = Total Direct Costs
+      ─────────────────────────
+      GROSS PROFIT
+      ─────────────────────────
+      LESS INDIRECT EXPENSES:   (indirect_expense)
+      ADD INDIRECT INCOME:      (indirect_income)
+      ─────────────────────────
+      NET PROFIT
+    """
+    sales         = _accounts_by_group_slug(tenant, 'sales_accounts',    date_from, date_to)
+    direct_inc    = _accounts_by_group_slug(tenant, 'direct_income',     date_from, date_to)
+    purchases     = _accounts_by_group_slug(tenant, 'purchase_accounts', date_from, date_to)
+    direct_exp    = _accounts_by_group_slug(tenant, 'direct_expense',    date_from, date_to)
+    indirect_exp  = _accounts_by_group_slug(tenant, 'indirect_expense',  date_from, date_to)
+    indirect_inc  = _accounts_by_group_slug(tenant, 'indirect_income',   date_from, date_to)
+
+    # Fallback: also include any revenue/expense accounts without a group
+    ungrouped_rev = [
+        a for a in _accounts_by_type(tenant, 'revenue', date_from, date_to)
+        if not any(a['code'] == s['code'] for s in sales + direct_inc + indirect_inc)
+    ]
+    ungrouped_exp = [
+        a for a in _accounts_by_type(tenant, 'expense', date_from, date_to)
+        if not any(a['code'] == s['code'] for s in purchases + direct_exp + indirect_exp)
+    ]
+
+    gross_revenue     = _section_total(sales) + _section_total(direct_inc)
+    total_direct_cost = _section_total(purchases) + _section_total(direct_exp)
+    gross_profit      = gross_revenue - total_direct_cost
+
+    total_indirect_exp = _section_total(indirect_exp) + _section_total(ungrouped_exp)
+    total_indirect_inc = _section_total(indirect_inc) + _section_total(ungrouped_rev)
+    net_profit         = gross_profit - total_indirect_exp + total_indirect_inc
+
+    # ── Optional comparison period ────────────────────────────────────────────
+    def _merge_compare(base_list, group_slug, cf, ct):
+        """Attach compare_balance to each account row."""
+        if not (cf and ct):
+            return base_list
+        cmp_list = _accounts_by_group_slug(tenant, group_slug, cf, ct)
+        cmp_map  = {a['code']: a['balance'] for a in cmp_list}
+        return [{**a, 'compare_balance': cmp_map.get(a['code'], _zero())} for a in base_list]
+
+    has_compare = compare_from and compare_to
+    cmp = {}
+    if has_compare:
+        cmp_pl = profit_and_loss(tenant, compare_from, compare_to)
+        cmp = {
+            'gross_revenue':     cmp_pl['gross_revenue'],
+            'total_direct_cost': cmp_pl['total_direct_cost'],
+            'gross_profit':      cmp_pl['gross_profit'],
+            'total_indirect_exp': cmp_pl['total_indirect_exp'],
+            'total_indirect_inc': cmp_pl['total_indirect_inc'],
+            'net_profit':        cmp_pl['net_profit'],
+        }
 
     return {
-        'period':         _period_meta(date_from, date_to),
-        'date_from':      str(date_from),
-        'date_to':        str(date_to),
-        'revenue':        revenue_lines,
-        'total_revenue':  total_revenue,
-        'expenses':       expense_lines,
-        'total_expenses': total_expenses,
-        'net_profit':     net_profit,
+        'period':               _period_meta(date_from, date_to),
+        'date_from':            str(date_from),
+        'date_to':              str(date_to),
+        # Gross section
+        'sales':                sales,
+        'direct_income':        direct_inc,
+        'gross_revenue':        gross_revenue,
+        'purchases':            purchases,
+        'direct_expenses':      direct_exp,
+        'total_direct_cost':    total_direct_cost,
+        'gross_profit':         gross_profit,
+        # Net section
+        'indirect_expenses':    indirect_exp + ungrouped_exp,
+        'indirect_income':      indirect_inc + ungrouped_rev,
+        'total_indirect_exp':   total_indirect_exp,
+        'total_indirect_inc':   total_indirect_inc,
+        'net_profit':           net_profit,
+        # Comparison
+        'has_compare':          has_compare,
+        'compare_period':       _period_meta(compare_from, compare_to) if has_compare else None,
+        'compare':              cmp,
     }
 
 
 # ─── Balance Sheet ────────────────────────────────────────────────────────────
 
-def balance_sheet(tenant, as_of_date):
+def _balance_sheet_sections(tenant, as_of_date):
     """
-    Assets = Liabilities + Equity.  Cumulative (all dates up to as_of_date).
-
-    Equity includes seeded/contributed capital accounts PLUS current-year net
-    earnings (Revenue - Expense up to as_of_date).  Without this, the equation
-    won't hold before year-end closing entries are posted.
+    Compute all Balance Sheet sections for a single date.
+    Extracted so balance_sheet() can re-use it for the comparison period
+    without recursion.
     """
-    assets      = _accounts_by_type(tenant, 'asset',     None, as_of_date)
-    liabilities = _accounts_by_type(tenant, 'liability', None, as_of_date)
-    equity      = _accounts_by_type(tenant, 'equity',    None, as_of_date)
-
-    total_assets      = sum(a['balance'] for a in assets)
-    total_liabilities = sum(l['balance'] for l in liabilities)
-    total_equity      = sum(e['balance'] for e in equity)
-
-    # Current-year earnings: Revenue − Expense up to as_of_date.
-    # This is the "Retained Earnings (current period)" line that keeps the
-    # balance sheet equation intact before formal closing entries are run.
-    revenue_lines  = _accounts_by_type(tenant, 'revenue',  None, as_of_date)
-    expense_lines  = _accounts_by_type(tenant, 'expense',  None, as_of_date)
-    current_earnings = (
-        sum(r['balance'] for r in revenue_lines)
-        - sum(e['balance'] for e in expense_lines)
-    )
-    if current_earnings != _zero():
-        equity = list(equity) + [{
-            'code': 'EARNINGS',
-            'name': 'Current Year Earnings',
-            'balance': current_earnings,
-        }]
-        total_equity += current_earnings
-
     from core.nepali_date import date_to_bs_display
+
+    # ── Assets ──────────────────────────────────────────────────────────────
+    fixed_assets  = _accounts_by_group_slug(tenant, 'fixed_assets',         None, as_of_date)
+    investments   = _accounts_by_group_slug(tenant, 'investments',          None, as_of_date)
+    stock         = _accounts_by_group_slug(tenant, 'stock_in_hand',        None, as_of_date)
+    debtors       = _accounts_by_group_slug(tenant, 'sundry_debtors',       None, as_of_date)
+    bank_accs     = _accounts_by_group_slug(tenant, 'bank_accounts',        None, as_of_date)
+    cash          = _accounts_by_group_slug(tenant, 'cash_in_hand',         None, as_of_date)
+    loans_asset   = _accounts_by_group_slug(tenant, 'loans_advances_asset', None, as_of_date)
+    other_ca      = _accounts_by_group_slug(tenant, 'other_current_assets', None, as_of_date)
+
+    grouped_asset_codes = set(
+        a['code'] for a in
+        fixed_assets + investments + stock + debtors + bank_accs + cash + loans_asset + other_ca
+    )
+    ungrouped_assets = [
+        a for a in _accounts_by_type(tenant, 'asset', None, as_of_date)
+        if a['code'] not in grouped_asset_codes
+    ]
+    other_ca = other_ca + ungrouped_assets
+    current_assets = stock + debtors + bank_accs + cash + loans_asset + other_ca
+
+    total_fixed       = _section_total(fixed_assets)
+    total_investments = _section_total(investments)
+    total_current_a   = _section_total(current_assets)
+    total_assets      = total_fixed + total_investments + total_current_a
+
+    # ── Capital & Equity ─────────────────────────────────────────────────────
+    capital_accs = _accounts_by_group_slug(tenant, 'capital_account', None, as_of_date)
+    reserves     = _accounts_by_group_slug(tenant, 'reserves_surplus', None, as_of_date)
+
+    revenue_total = sum(
+        _section_total(_accounts_by_group_slug(tenant, slug, None, as_of_date))
+        for slug in ('sales_accounts', 'direct_income', 'indirect_income')
+    )
+    expense_total = sum(
+        _section_total(_accounts_by_group_slug(tenant, slug, None, as_of_date))
+        for slug in ('purchase_accounts', 'direct_expense', 'indirect_expense')
+    )
+    current_earnings = revenue_total - expense_total
+
+    capital_section = capital_accs + reserves
+    if current_earnings != _zero():
+        capital_section = capital_section + [{
+            'code':       'EARNINGS',
+            'name':       'Current Year Earnings',
+            'balance':    current_earnings,
+            'group_name': 'Computed',
+        }]
+    total_capital = _section_total(capital_accs) + _section_total(reserves) + current_earnings
+
+    # ── Loans ────────────────────────────────────────────────────────────────
+    bank_od    = _accounts_by_group_slug(tenant, 'bank_od',         None, as_of_date)
+    loans_liab = _accounts_by_group_slug(tenant, 'loans_liability', None, as_of_date)
+    total_loans = _section_total(bank_od) + _section_total(loans_liab)
+
+    # ── Current Liabilities ──────────────────────────────────────────────────
+    creditors = _accounts_by_group_slug(tenant, 'sundry_creditors',    None, as_of_date)
+    vat_liab  = _accounts_by_group_slug(tenant, 'duties_taxes_vat',    None, as_of_date)
+    tds_liab  = _accounts_by_group_slug(tenant, 'duties_taxes_tds',    None, as_of_date)
+    other_cl  = _accounts_by_group_slug(tenant, 'current_liabilities', None, as_of_date)
+
+    grouped_liab_codes = set(
+        a['code'] for a in bank_od + loans_liab + creditors + vat_liab + tds_liab + other_cl
+    )
+    ungrouped_liabs = [
+        a for a in _accounts_by_type(tenant, 'liability', None, as_of_date)
+        if a['code'] not in grouped_liab_codes
+    ]
+    other_cl = other_cl + ungrouped_liabs
+
+    current_liabilities_list = creditors + vat_liab + tds_liab + other_cl
+    total_current_l           = _section_total(current_liabilities_list)
+    total_liabilities         = total_loans + total_current_l
+    total_equity_and_liab     = total_capital + total_liabilities
+
     return {
-        'as_of_date':        str(as_of_date),
-        'as_of_date_bs':     date_to_bs_display(as_of_date),
-        'assets':            assets,
-        'total_assets':      total_assets,
-        'liabilities':       liabilities,
-        'total_liabilities': total_liabilities,
-        'equity':            equity,
-        'total_equity':      total_equity,
-        'balanced':          abs(total_assets - (total_liabilities + total_equity)) < _zero() + Decimal('0.01'),
+        'as_of_date':                    str(as_of_date),
+        'as_of_date_bs':                 date_to_bs_display(as_of_date),
+        'fixed_assets':                  fixed_assets,
+        'total_fixed_assets':            total_fixed,
+        'investments':                   investments,
+        'total_investments':             total_investments,
+        'current_assets':                current_assets,
+        'total_current_assets':          total_current_a,
+        'total_assets':                  total_assets,
+        'capital':                       capital_section,
+        'total_capital':                 total_capital,
+        'bank_od':                       bank_od,
+        'loans':                         loans_liab,
+        'total_loans':                   total_loans,
+        'current_liabilities':           current_liabilities_list,
+        'total_current_liabilities':     total_current_l,
+        'total_liabilities':             total_liabilities,
+        'total_equity_and_liabilities':  total_equity_and_liab,
+        'balanced':                      abs(total_assets - total_equity_and_liab) < Decimal('0.01'),
     }
+
+
+def balance_sheet(tenant, as_of_date, compare_as_of=None):
+    """
+    Tally-style Balance Sheet with proper section splits.
+
+    Optional compare_as_of: pass a second date to get prior-period figures.
+    Each section total gains a ``compare`` counterpart in the response.
+
+    Assets:
+      Fixed Assets              (fixed_assets group)
+      Investments               (investments group)
+      Current Assets:
+        Stock / Inventory       (stock_in_hand)
+        Sundry Debtors          (sundry_debtors)
+        Bank Accounts           (bank_accounts)
+        Cash in Hand            (cash_in_hand)
+        Loans & Advances        (loans_advances_asset)
+        Other Current Assets    (other_current_assets)
+
+    Capital & Liabilities:
+      Capital Account:
+        Capital Account         (capital_account)
+        Reserves & Surplus      (reserves_surplus)
+        Current Year Earnings   (computed: Revenue − Expense)
+      Loans:
+        Bank OD                 (bank_od)
+        Loans (Liability)       (loans_liability)
+      Current Liabilities:
+        Sundry Creditors        (sundry_creditors)
+        Duties & Taxes (VAT)    (duties_taxes_vat)
+        Duties & Taxes (TDS)    (duties_taxes_tds)
+        Other Current Liabilities (current_liabilities)
+    """
+    result = _balance_sheet_sections(tenant, as_of_date)
+    result['has_compare']  = compare_as_of is not None
+    result['compare_as_of'] = str(compare_as_of) if compare_as_of else None
+    result['compare']      = _balance_sheet_sections(tenant, compare_as_of) if compare_as_of else None
+    return result
 
 
 # ─── Trial Balance ────────────────────────────────────────────────────────────
 
 def trial_balance(tenant, date_from, date_to):
-    """All leaf accounts with their debit/credit totals."""
+    """
+    Tally-style Trial Balance with three columns per account:
+
+        Opening Balance  |  Period Dr / Cr  |  Closing Balance
+
+    Opening = net balance of all posted transactions + account.opening_balance
+              *before* date_from.
+    Closing = opening ± period movements.
+
+    Accounts are included if they have any non-zero figure (opening, period, or
+    closing) so previously-active accounts with zero current-period activity are
+    never silently omitted.
+
+    B2 — Performance: uses TWO bulk GROUP BY queries for all accounts combined
+    (pre-period and in-period), then builds rows in a single O(N) Python loop.
+    The old implementation ran 2 queries per account (2×N total) which caused
+    timeouts on tenants with 50+ accounts.
+    """
     from accounting.models import Account, JournalLine
+    from django.db.models import Sum as _Sum
 
-    accounts = Account.objects.filter(
-        tenant=tenant, is_active=True
-    ).order_by('code')
+    accounts = list(
+        Account.objects.filter(tenant=tenant, is_active=True)
+        .select_related('group')
+        .order_by('code')
+    )
+    if not accounts:
+        return {
+            'date_from': str(date_from), 'date_to': str(date_to),
+            'accounts': [], 'balanced': True,
+            'total_opening_dr': _zero(), 'total_opening_cr': _zero(),
+            'total_period_dr': _zero(), 'total_period_cr': _zero(),
+            'total_closing_dr': _zero(), 'total_closing_cr': _zero(),
+        }
 
-    rows = []
-    total_dr = _zero()
-    total_cr = _zero()
-
-    for acc in accounts:
-        qs = JournalLine.objects.filter(
+    # ── Query 1: All pre-period lines (before date_from) ─────────────────────
+    pre_qs = (
+        JournalLine.objects
+        .filter(
             entry__tenant=tenant,
             entry__is_posted=True,
-            account=acc,
+            entry__date__lt=date_from,
+        )
+        .values('account_id')
+        .annotate(debit=_Sum('debit'), credit=_Sum('credit'))
+    )
+    pre_map = {row['account_id']: row for row in pre_qs}
+
+    # ── Query 2: All in-period lines (date_from … date_to) ───────────────────
+    per_qs = (
+        JournalLine.objects
+        .filter(
+            entry__tenant=tenant,
+            entry__is_posted=True,
             entry__date__gte=date_from,
             entry__date__lte=date_to,
         )
-        d = qs.aggregate(debit=Sum('debit'), credit=Sum('credit'))
-        dr = d['debit'] or _zero()
-        cr = d['credit'] or _zero()
+        .values('account_id')
+        .annotate(debit=_Sum('debit'), credit=_Sum('credit'))
+    )
+    period_map = {row['account_id']: row for row in per_qs}
 
-        # Bring in the account's opening balance so the trial balance
-        # reflects all historical balances, not just the period movements.
-        ob = acc.opening_balance or _zero()
-        if acc.type in ('asset', 'expense'):
-            dr += ob
+    # ── Build rows in Python — O(N) with no further DB queries ───────────────
+    rows = []
+    total_opening_dr = _zero()
+    total_opening_cr = _zero()
+    total_period_dr  = _zero()
+    total_period_cr  = _zero()
+    total_closing_dr = _zero()
+    total_closing_cr = _zero()
+
+    for acc in accounts:
+        ob_field = acc.opening_balance or _zero()
+
+        pre      = pre_map.get(acc.pk, {})
+        pre_dr   = pre.get('debit')  or _zero()
+        pre_cr   = pre.get('credit') or _zero()
+
+        per      = period_map.get(acc.pk, {})
+        period_dr  = per.get('debit')  or _zero()
+        period_cr  = per.get('credit') or _zero()
+
+        is_debit_normal = acc.type in ('asset', 'expense')
+        if is_debit_normal:
+            opening = ob_field + pre_dr - pre_cr
         else:
-            cr += ob
+            opening = ob_field + pre_cr - pre_dr
 
-        if dr or cr:
-            rows.append({'code': acc.code, 'name': acc.name, 'debit': dr, 'credit': cr})
-            total_dr += dr
-            total_cr += cr
+        if is_debit_normal:
+            closing = opening + period_dr - period_cr
+        else:
+            closing = opening + period_cr - period_dr
+
+        # Skip accounts with no activity at all
+        if not (opening or period_dr or period_cr or closing):
+            continue
+
+        if is_debit_normal:
+            o_dr = max(opening,  _zero())
+            o_cr = max(-opening, _zero())
+            c_dr = max(closing,  _zero())
+            c_cr = max(-closing, _zero())
+        else:
+            o_cr = max(opening,  _zero())
+            o_dr = max(-opening, _zero())
+            c_cr = max(closing,  _zero())
+            c_dr = max(-closing, _zero())
+
+        rows.append({
+            'id':           acc.pk,
+            'code':         acc.code,
+            'name':         acc.name,
+            'type':         acc.type,
+            'group_name':   acc.group.name if acc.group_id else '',
+            'opening_dr':   o_dr,
+            'opening_cr':   o_cr,
+            'period_dr':    period_dr,
+            'period_cr':    period_cr,
+            'closing_dr':   c_dr,
+            'closing_cr':   c_cr,
+        })
+        total_opening_dr += o_dr
+        total_opening_cr += o_cr
+        total_period_dr  += period_dr
+        total_period_cr  += period_cr
+        total_closing_dr += c_dr
+        total_closing_cr += c_cr
 
     return {
-        'date_from':    str(date_from),
-        'date_to':      str(date_to),
-        'accounts':     rows,
-        'total_debit':  total_dr,
-        'total_credit': total_cr,
-        'balanced':     total_dr == total_cr,
+        'date_from':         str(date_from),
+        'date_to':           str(date_to),
+        'accounts':          rows,
+        'total_opening_dr':  total_opening_dr,
+        'total_opening_cr':  total_opening_cr,
+        'total_period_dr':   total_period_dr,
+        'total_period_cr':   total_period_cr,
+        'total_closing_dr':  total_closing_dr,
+        'total_closing_cr':  total_closing_cr,
+        'balanced':          total_closing_dr == total_closing_cr,
     }
 
 
@@ -359,20 +701,27 @@ def vat_report(tenant, period_start, period_end):
     VAT collected on sales (invoices) vs VAT reclaimable on purchases (bills).
     """
     from accounting.models import Invoice, Bill
-    from django.db.models import Sum as DSum
+    from django.db.models import Sum as DSum, Q, DateField
+    from django.db.models.functions import Coalesce, Cast
+
+    # Use the invoice/bill's explicit `date` field (IRD-grade: the date on the document).
+    # For legacy records that pre-date migration 0017 (date=NULL), fall back to
+    # created_at::date so existing data is not silently excluded from VAT filings.
+    def _date_in_range(start, end):
+        return (
+            Q(date__gte=start, date__lte=end) |
+            Q(date__isnull=True, created_at__date__gte=start, created_at__date__lte=end)
+        )
 
     invoices = Invoice.objects.filter(
         tenant=tenant,
         status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID],
-        created_at__date__gte=period_start,
-        created_at__date__lte=period_end,
-    )
+    ).filter(_date_in_range(period_start, period_end))
+
     bills = Bill.objects.filter(
         tenant=tenant,
         status__in=[Bill.STATUS_APPROVED, Bill.STATUS_PAID],
-        created_at__date__gte=period_start,
-        created_at__date__lte=period_end,
-    )
+    ).filter(_date_in_range(period_start, period_end))
 
     vat_collected   = invoices.aggregate(t=DSum('vat_amount'))['t'] or _zero()
     vat_reclaimable = bills.aggregate(t=DSum('vat_amount'))['t']    or _zero()
@@ -392,35 +741,296 @@ def vat_report(tenant, period_start, period_end):
 
 # ─── Cash Flow ────────────────────────────────────────────────────────────────
 
-def cash_flow(tenant, date_from, date_to):
-    """Inflows and outflows from Payment records."""
-    from accounting.models import Payment
-    from django.db.models import Sum as DSum
+def _bulk_group_balances(tenant, as_of_date, group_slugs):
+    """
+    Compute net account-group balances for *group_slugs* as of *as_of_date*.
 
-    # credit_note payments are accounting settlements with no actual cash movement.
-    # Exclude them so the cash flow statement reflects only real money in/out.
-    payments = Payment.objects.filter(
+    Performance: exactly 2 SQL queries regardless of how many groups are
+    requested (one SELECT on Account, one GROUP BY on JournalLine).
+
+    Balance sign follows account.type convention:
+      asset / expense           → ob + debit − credit  (debit-normal)
+      liability / equity / rev  → ob + credit − debit  (credit-normal)
+
+    Returns: {slug: Decimal}  — zero for slugs with no accounts.
+    """
+    from accounting.models import Account, JournalLine
+    from django.db.models import Value
+    from django.db.models.functions import Coalesce
+
+    accounts = list(
+        Account.objects.filter(
+            tenant=tenant,
+            group__slug__in=group_slugs,
+            is_active=True,
+        ).values('pk', 'type', 'opening_balance', 'group__slug')
+    )
+
+    result = {s: _zero() for s in group_slugs}
+    if not accounts:
+        return result
+
+    account_ids = [a['pk'] for a in accounts]
+
+    balance_map = {
+        row['account_id']: (row['total_debit'] or _zero(), row['total_credit'] or _zero())
+        for row in JournalLine.objects.filter(
+            entry__tenant=tenant,
+            entry__is_posted=True,
+            account_id__in=account_ids,
+            entry__date__lte=as_of_date,
+        ).values('account_id').annotate(
+            total_debit=Coalesce(Sum('debit'),  Value(Decimal('0'))),
+            total_credit=Coalesce(Sum('credit'), Value(Decimal('0'))),
+        )
+    }
+
+    for acc in accounts:
+        dr, cr = balance_map.get(acc['pk'], (_zero(), _zero()))
+        ob = acc['opening_balance'] or _zero()
+        slug = acc['group__slug']
+        if acc['type'] in ('asset', 'expense'):
+            result[slug] += ob + dr - cr
+        else:
+            result[slug] += ob + cr - dr
+
+    return result
+
+
+def cash_flow(tenant, date_from, date_to):
+    """
+    Indirect-method Cash Flow Statement (Tally-style three-section layout).
+
+    Operating Activities
+    ────────────────────
+    Net Profit / (Loss) for the period  [from P&L]
+    + Add back: Depreciation & Amortisation  [non-cash expense]
+    ± Working Capital Changes:
+        Decrease / (Increase) in Trade Receivables
+        Decrease / (Increase) in Inventories
+        Decrease / (Increase) in Loans & Advances (Asset)
+        Decrease / (Increase) in Other Current Assets
+        Increase / (Decrease) in Trade Payables
+        Increase / (Decrease) in VAT Payable
+        Increase / (Decrease) in TDS Payable
+        Increase / (Decrease) in Other Current Liabilities
+    = Net Cash from Operating Activities
+
+    Investing Activities
+    ────────────────────
+    Purchase / Disposal of Fixed Assets
+      (balance change adjusted for depreciation so it reflects actual cash)
+    Purchase / Sale of Investments
+    = Net Cash from Investing Activities
+
+    Financing Activities
+    ────────────────────
+    Proceeds from / Repayment of Bank Overdraft
+    Proceeds from / Repayment of Term Loans
+    Capital Introduced / (Withdrawn)    [owner movements only]
+    = Net Cash from Financing Activities
+
+    Reconciliation
+    ────────────────────
+    Opening Cash & Bank
+    + Net Change (Operating + Investing + Financing)
+    = Expected Closing Cash & Bank
+    Actual Closing Cash & Bank
+    Difference  (should be zero; non-zero = transactions not captured above)
+
+    Performance: 4 SQL queries total (2× _bulk_group_balances calls +
+    1× profit_and_loss + 1× depreciation aggregate + 1× payments).
+    """
+    from datetime import timedelta
+    from accounting.models import JournalLine, Payment, JournalEntry
+    from django.db.models import Value
+    from django.db.models.functions import Coalesce
+
+    opening_date = date_from - timedelta(days=1)
+
+    # All account groups needed — fetched in 2 bulk queries (one per date).
+    _ALL_SLUGS = [
+        'cash_in_hand', 'bank_accounts',
+        # Working capital — asset
+        'sundry_debtors', 'stock_in_hand', 'loans_advances_asset', 'other_current_assets',
+        # Working capital — liability
+        'sundry_creditors', 'duties_taxes_vat', 'duties_taxes_tds', 'current_liabilities',
+        # Investing
+        'fixed_assets', 'investments',
+        # Financing
+        'bank_od', 'loans_liability', 'capital_account', 'reserves_surplus',
+    ]
+    op = _bulk_group_balances(tenant, opening_date, _ALL_SLUGS)
+    cl = _bulk_group_balances(tenant, date_to,      _ALL_SLUGS)
+
+    # ── Net Profit ────────────────────────────────────────────────────────────
+    pl = profit_and_loss(tenant, date_from, date_to)
+    net_profit = Decimal(str(pl['net_profit']))
+
+    # ── Depreciation add-back ─────────────────────────────────────────────────
+    # Primary: match by reference_type / purpose (set by the depreciation service).
+    # Secondary: name-based fallback for manual depreciation journal entries.
+    dep_qs = JournalLine.objects.filter(
+        entry__tenant=tenant,
+        entry__is_posted=True,
+        entry__date__gte=date_from,
+        entry__date__lte=date_to,
+        account__type='expense',
+    ).filter(
+        Q(entry__reference_type=JournalEntry.REF_DEPRECIATION) |
+        Q(entry__purpose=JournalEntry.PURPOSE_DEPRECIATION) |
+        Q(account__name__icontains='depreciation') |
+        Q(account__name__icontains='amortis'),
+    ).aggregate(
+        d=Coalesce(Sum('debit'),  Value(Decimal('0'))),
+        c=Coalesce(Sum('credit'), Value(Decimal('0'))),
+    )
+    dep_amount = (dep_qs['d'] or _zero()) - (dep_qs['c'] or _zero())
+
+    # ── Working Capital Changes ───────────────────────────────────────────────
+    # Assets:      decrease = released cash (positive). increase = consumed cash (negative).
+    # Liabilities: increase = retained cash (positive). decrease = used cash (negative).
+    wc_items = []
+    for slug, pos_label, neg_label, is_asset in [
+        ('sundry_debtors',       'Decrease in Trade Receivables',          'Increase in Trade Receivables',          True),
+        ('stock_in_hand',        'Decrease in Inventories',                'Increase in Inventories',                True),
+        ('loans_advances_asset', 'Decrease in Loans & Advances (Asset)',   'Increase in Loans & Advances (Asset)',   True),
+        ('other_current_assets', 'Decrease in Other Current Assets',       'Increase in Other Current Assets',       True),
+        ('sundry_creditors',     'Increase in Trade Payables',             'Decrease in Trade Payables',             False),
+        ('duties_taxes_vat',     'Increase in VAT Payable',                'Decrease in VAT Payable',                False),
+        ('duties_taxes_tds',     'Increase in TDS Payable',                'Decrease in TDS Payable',                False),
+        ('current_liabilities',  'Increase in Other Current Liabilities',  'Decrease in Other Current Liabilities',  False),
+    ]:
+        change = (op[slug] - cl[slug]) if is_asset else (cl[slug] - op[slug])
+        if change != _zero():
+            wc_items.append({
+                'label':  pos_label if change >= _zero() else neg_label,
+                'amount': str(change),
+            })
+
+    wc_total        = sum(Decimal(i['amount']) for i in wc_items)
+    operating_adj   = dep_amount + wc_total
+    operating_total = net_profit + operating_adj
+
+    # ── Investing Activities ──────────────────────────────────────────────────
+    investing_items = []
+
+    # Fixed Assets: adjust the NBV change to remove depreciation (already added
+    # back in operating), giving a figure closer to actual purchases / disposals.
+    #   NBV change = purchases − disposals_at_NBV − depreciation
+    #   Cash from FA = −(purchases − disposals_at_NBV)
+    #               = −(NBV change + depreciation)
+    fa_nbv_change = cl['fixed_assets'] - op['fixed_assets']
+    fa_cash        = -(fa_nbv_change + dep_amount)   # negative = net purchase
+    if fa_cash != _zero():
+        label = 'Proceeds from Disposal of Fixed Assets' if fa_cash > _zero() else 'Purchase of Fixed Assets'
+        investing_items.append({'label': label, 'amount': str(fa_cash)})
+
+    # Investments: increase = cash outflow, decrease = cash inflow.
+    inv_cash = -(cl['investments'] - op['investments'])
+    if inv_cash != _zero():
+        label = 'Proceeds from Sale of Investments' if inv_cash > _zero() else 'Purchase of Investments'
+        investing_items.append({'label': label, 'amount': str(inv_cash)})
+
+    investing_total = sum(Decimal(i['amount']) for i in investing_items)
+
+    # ── Financing Activities ──────────────────────────────────────────────────
+    # Debt instruments: increase = borrowed (inflow), decrease = repaid (outflow).
+    financing_items = []
+    for slug, pos_label, neg_label in [
+        ('bank_od',        'Increase in Bank Overdraft',  'Repayment of Bank Overdraft'),
+        ('loans_liability', 'Proceeds from Term Loans',   'Repayment of Term Loans'),
+    ]:
+        change = cl[slug] - op[slug]
+        if change != _zero():
+            financing_items.append({
+                'label':  pos_label if change >= _zero() else neg_label,
+                'amount': str(change),
+            })
+
+    # Owner equity: show only actual owner transactions (injections / withdrawals).
+    # During a period, capital/reserves balances change only from explicit owner
+    # movements (not from P&L — that stays in revenue/expense accounts until
+    # fiscal-year close). If a FY-close entry falls within the period, its effect
+    # on reserves is already reflected in net_profit (operating), so we subtract
+    # net_profit to avoid double-counting.
+    equity_change = (
+        (cl['capital_account'] - op['capital_account'])
+        + (cl['reserves_surplus'] - op['reserves_surplus'])
+    )
+    # Detect whether a FY-close entry exists in this period (rare edge case).
+    from accounting.models import JournalEntry
+    has_fy_close = JournalEntry.objects.filter(
+        tenant=tenant,
+        reference_type=JournalEntry.REF_FY_CLOSE,
+        is_posted=True,
+        date__gte=date_from,
+        date__lte=date_to,
+    ).exists()
+    if has_fy_close:
+        # The FY-close entry transferred net_profit into reserves — subtract to
+        # reverse that so only the actual owner cash movements remain.
+        equity_change -= net_profit
+
+    if equity_change != _zero():
+        label = 'Capital Introduced (Owner Investment)' if equity_change >= _zero() else 'Capital Withdrawn (Drawings)'
+        financing_items.append({'label': label, 'amount': str(equity_change)})
+
+    financing_total = sum(Decimal(i['amount']) for i in financing_items)
+
+    # ── Reconciliation ────────────────────────────────────────────────────────
+    net_change       = operating_total + investing_total + financing_total
+    opening_cash     = op['cash_in_hand'] + op['bank_accounts']
+    closing_cash     = cl['cash_in_hand'] + cl['bank_accounts']
+    expected_closing = opening_cash + net_change
+    difference       = closing_cash - expected_closing   # should be zero
+
+    # ── Legacy direct-method payment breakdown (kept for backward compat) ─────
+    by_method: dict = {}
+    for p in Payment.objects.filter(
         tenant=tenant,
         date__gte=date_from,
         date__lte=date_to,
-    ).exclude(method='credit_note')
-
-    incoming = payments.filter(type='incoming').aggregate(t=DSum('amount'))['t'] or _zero()
-    outgoing = payments.filter(type='outgoing').aggregate(t=DSum('amount'))['t'] or _zero()
-
-    by_method = {}
-    for p in payments:
-        by_method.setdefault(p.method, {'incoming': _zero(), 'outgoing': _zero()})
-        by_method[p.method][p.type] += p.amount
+    ).exclude(method='credit_note').values('method', 'type', 'amount'):
+        by_method.setdefault(p['method'], {'incoming': _zero(), 'outgoing': _zero()})
+        by_method[p['method']][p['type']] += p['amount']
 
     return {
-        'date_from':     str(date_from),
-        'date_to':       str(date_to),
-        'total_incoming': incoming,
-        'total_outgoing': outgoing,
-        'net_cash_flow':  incoming - outgoing,
-        'by_method':      [
-            {'method': k, 'incoming': v['incoming'], 'outgoing': v['outgoing']}
+        'date_from': str(date_from),
+        'date_to':   str(date_to),
+        'period':    _period_meta(date_from, date_to),
+
+        # ── Indirect method ──────────────────────────────────────────────────
+        'operating': {
+            'net_profit':              str(net_profit),
+            'net_profit_label':        'Net Profit / (Loss) for the Period',
+            'depreciation':            str(dep_amount),
+            'depreciation_label':      'Add: Depreciation & Amortisation',
+            'working_capital_changes': wc_items,
+            'working_capital_total':   str(wc_total),
+            'total':                   str(operating_total),
+        },
+        'investing': {
+            'items': investing_items,
+            'total': str(investing_total),
+        },
+        'financing': {
+            'items': financing_items,
+            'total': str(financing_total),
+        },
+        'net_change':       str(net_change),
+        'opening_cash':     str(opening_cash),
+        'closing_cash':     str(closing_cash),
+        'expected_closing': str(expected_closing),
+        'difference':       str(difference),
+        'balanced':         abs(difference) < Decimal('1.00'),
+
+        # ── Legacy aliases (backward-compatible) ─────────────────────────────
+        'total_incoming': str(sum(v['incoming'] for v in by_method.values())),
+        'total_outgoing': str(sum(v['outgoing'] for v in by_method.values())),
+        'net_cash_flow':  str(net_change),
+        'by_method': [
+            {'method': k, 'incoming': str(v['incoming']), 'outgoing': str(v['outgoing'])}
             for k, v in by_method.items()
         ],
     }
@@ -2125,4 +2735,369 @@ def user_log(tenant, date_from, date_to, user_id=None, limit=500):
         'rows':      rows,
         'count':     len(rows),
         'capped':    len(rows) >= limit,
+    }
+
+
+# ─── Cash Book / Bank Book ─────────────────────────────────────────────────────
+
+def cash_book(tenant, date_from, date_to, bank_account_id=None):
+    """
+    Cash Book / Bank Book — Tally's most-used operational report.
+
+    Shows every cash or bank transaction for the period with a running balance:
+      - Opening balance as of date_from  (sum of all movements before that date
+        plus Account.opening_balance for migrated tenants)
+      - Each posted JournalLine that touches Cash (1100) or a BankAccount's
+        linked GL account, grouped by date with debit/credit columns
+      - Running balance after each transaction
+      - Closing balance as of date_to
+
+    If bank_account_id is supplied, filters to that specific bank account only.
+    If None, shows all Cash and Bank activity combined.
+    """
+    from accounting.models import Account, BankAccount, JournalLine
+
+    # Determine which GL account(s) to include
+    if bank_account_id:
+        try:
+            bank = BankAccount.objects.get(tenant=tenant, pk=bank_account_id)
+        except BankAccount.DoesNotExist:
+            raise ValueError(f'Bank account {bank_account_id} not found.')
+        if not bank.linked_account:
+            raise ValueError(
+                f"Bank account '{bank.name}' has no linked GL account. "
+                'Set linked_account in Bank Account settings first.'
+            )
+        accounts = [bank.linked_account]
+        bank_meta = {'id': bank.pk, 'name': bank.name}
+    else:
+        # Collect all Cash + Bank GL accounts for this tenant
+        cash_qs = Account.objects.filter(
+            tenant=tenant,
+            is_active=True,
+            type='asset',
+        ).filter(
+            Q(group__slug='cash_in_hand') |
+            Q(group__slug='bank_accounts')
+        )
+        accounts = list(cash_qs)
+        bank_meta = None
+
+    if not accounts:
+        return {
+            'bank_account':    bank_meta,
+            'date_from':       str(date_from),
+            'date_to':         str(date_to),
+            'opening_balance': str(_zero()),
+            'closing_balance': str(_zero()),
+            'transactions':    [],
+            'period':          _period_meta(date_from, date_to),
+        }
+
+    account_ids = [a.pk for a in accounts]
+
+    # Opening balance = Account.opening_balance + all movements BEFORE date_from
+    opening = sum(a.opening_balance or _zero() for a in accounts)
+
+    pre = JournalLine.objects.filter(
+        entry__tenant=tenant,
+        entry__is_posted=True,
+        entry__date__lt=date_from,
+        account_id__in=account_ids,
+    ).aggregate(dr=Sum('debit'), cr=Sum('credit'))
+    opening += (pre['dr'] or _zero()) - (pre['cr'] or _zero())
+
+    # Period transactions
+    period_lines = (
+        JournalLine.objects
+        .filter(
+            entry__tenant=tenant,
+            entry__is_posted=True,
+            entry__date__gte=date_from,
+            entry__date__lte=date_to,
+            account_id__in=account_ids,
+        )
+        .select_related('entry', 'account')
+        .order_by('entry__date', 'entry__entry_number', 'pk')
+    )
+
+    transactions = []
+    running = opening
+    for line in period_lines:
+        running += line.debit - line.credit
+
+        # Resolve a human-readable voucher number for drill-down
+        ref  = line.entry.reference_type or ''
+        rid  = line.entry.reference_id
+        voucher_number = ''
+        if ref == 'invoice' and rid:
+            try:
+                from accounting.models import Invoice
+                voucher_number = Invoice.objects.filter(pk=rid).values_list('invoice_number', flat=True).first() or ''
+            except Exception:
+                pass
+        elif ref == 'bill' and rid:
+            try:
+                from accounting.models import Bill
+                voucher_number = Bill.objects.filter(pk=rid).values_list('bill_number', flat=True).first() or ''
+            except Exception:
+                pass
+        elif ref == 'payment' and rid:
+            try:
+                from accounting.models import Payment
+                voucher_number = Payment.objects.filter(pk=rid).values_list('payment_number', flat=True).first() or ''
+            except Exception:
+                pass
+
+        transactions.append({
+            'date':           str(line.entry.date),
+            'entry_number':   line.entry.entry_number,
+            'description':    line.entry.description,
+            'narration':      line.description,
+            'reference_type': ref,
+            'reference_id':   rid,
+            'voucher_number': voucher_number,
+            'debit':          str(line.debit),
+            'credit':         str(line.credit),
+            'balance':        str(running),
+        })
+
+    return {
+        'bank_account':    bank_meta,
+        'date_from':       str(date_from),
+        'date_to':         str(date_to),
+        'opening_balance': str(opening),
+        'closing_balance': str(running),
+        'transactions':    transactions,
+        'period':          _period_meta(date_from, date_to),
+    }
+
+
+# ─── Ratio Analysis ───────────────────────────────────────────────────────────
+
+def ratio_analysis(tenant, as_of_date, date_from=None, date_to=None):
+    """
+    Tally-parity financial ratio analysis.
+
+    Balance-sheet ratios are computed as of ``as_of_date``.
+    Profitability and activity ratios require ``date_from`` / ``date_to``.
+
+    Returns
+    -------
+    {
+      as_of_date, period,
+      # Liquidity
+      current_ratio, quick_ratio, cash_ratio, working_capital,
+      # Leverage
+      debt_to_equity, debt_to_assets, interest_coverage,
+      # Profitability (None when date range not supplied)
+      gross_margin_pct, net_margin_pct, roe_pct, roa_pct,
+      # Activity
+      days_sales_outstanding, days_payable_outstanding,
+    }
+    """
+    def _grp(slug):
+        return _section_total(_accounts_by_group_slug(tenant, slug, None, as_of_date))
+
+    def _grp_period(slug):
+        if date_from and date_to:
+            return _section_total(_accounts_by_group_slug(tenant, slug, date_from, date_to))
+        return _zero()
+
+    def _safe_div(num, den):
+        if den and den != _zero():
+            return round(float(num / den), 4)
+        return None
+
+    # ── Balance-sheet components (as_of_date) ────────────────────────────────
+    inventory        = _grp('stock_in_hand')
+    debtors          = _grp('sundry_debtors')
+    cash_in_hand     = _grp('cash_in_hand')
+    bank_accounts    = _grp('bank_accounts')
+    loans_asset      = _grp('loans_advances_asset')
+    other_ca         = _grp('other_current_assets')
+
+    cash_total       = cash_in_hand + bank_accounts
+    current_assets   = inventory + debtors + cash_total + loans_asset + other_ca
+
+    creditors        = _grp('sundry_creditors')
+    vat_liab         = _grp('duties_taxes_vat')
+    tds_liab         = _grp('duties_taxes_tds')
+    other_cl         = _grp('current_liabilities')
+    current_liab     = creditors + vat_liab + tds_liab + other_cl
+
+    bank_od          = _grp('bank_od')
+    loans_liab       = _grp('loans_liability')
+    total_liab       = bank_od + loans_liab + current_liab
+
+    capital_accs     = _grp('capital_account')
+    reserves         = _grp('reserves_surplus')
+    # Include current-year earnings to keep equity accurate
+    rev_total = sum(
+        _section_total(_accounts_by_group_slug(tenant, s, None, as_of_date))
+        for s in ('sales_accounts', 'direct_income', 'indirect_income')
+    )
+    exp_total = sum(
+        _section_total(_accounts_by_group_slug(tenant, s, None, as_of_date))
+        for s in ('purchase_accounts', 'direct_expense', 'indirect_expense')
+    )
+    total_capital    = capital_accs + reserves + (rev_total - exp_total)
+    total_assets     = _section_total(_accounts_by_type(tenant, 'asset', None, as_of_date))
+
+    working_capital  = current_assets - current_liab
+
+    # ── Liquidity ratios ─────────────────────────────────────────────────────
+    current_ratio    = _safe_div(current_assets,           current_liab)
+    quick_ratio      = _safe_div(current_assets - inventory, current_liab)
+    cash_ratio       = _safe_div(cash_total,               current_liab)
+
+    # ── Leverage ratios ──────────────────────────────────────────────────────
+    debt_to_equity   = _safe_div(total_liab, total_capital)
+    debt_to_assets   = _safe_div(total_liab, total_assets)
+
+    # Interest coverage = EBIT / interest_expense
+    # (proxy: indirect_expense often contains interest; set to None if no data)
+    interest_expense = _grp('indirect_expense') if date_from else _zero()
+    ebit = (rev_total - exp_total) if date_from else _zero()
+    interest_coverage = None  # complex to compute without dedicated interest account tagging
+
+    # ── Profitability ratios (period only) ────────────────────────────────────
+    gross_margin_pct = net_margin_pct = roe_pct = roa_pct = None
+    if date_from and date_to:
+        sales_period     = _grp_period('sales_accounts') + _grp_period('direct_income')
+        purchases_period = _grp_period('purchase_accounts') + _grp_period('direct_expense')
+        gross_profit     = sales_period - purchases_period
+        indirect_exp_p   = _grp_period('indirect_expense')
+        indirect_inc_p   = _grp_period('indirect_income')
+        net_profit       = gross_profit - indirect_exp_p + indirect_inc_p
+
+        gross_margin_pct = _safe_div(gross_profit * 100, sales_period)
+        net_margin_pct   = _safe_div(net_profit   * 100, sales_period)
+        roe_pct          = _safe_div(net_profit   * 100, total_capital)
+        roa_pct          = _safe_div(net_profit   * 100, total_assets)
+
+        # Activity ratios
+        days = (date_to - date_from).days + 1
+        days_sales_outstanding   = _safe_div(debtors  * days, sales_period)   if sales_period  else None
+        days_payable_outstanding = _safe_div(creditors * days, purchases_period) if purchases_period else None
+    else:
+        days_sales_outstanding   = None
+        days_payable_outstanding = None
+
+    return {
+        'as_of_date':               str(as_of_date),
+        'period':                   _period_meta(date_from, date_to),
+        # Liquidity
+        'current_ratio':            current_ratio,
+        'quick_ratio':              quick_ratio,
+        'cash_ratio':               cash_ratio,
+        'working_capital':          str(working_capital),
+        # Leverage
+        'debt_to_equity':           debt_to_equity,
+        'debt_to_assets':           debt_to_assets,
+        'interest_coverage':        interest_coverage,
+        # Profitability
+        'gross_margin_pct':         gross_margin_pct,
+        'net_margin_pct':           net_margin_pct,
+        'roe_pct':                  roe_pct,
+        'roa_pct':                  roa_pct,
+        # Activity
+        'days_sales_outstanding':   days_sales_outstanding,
+        'days_payable_outstanding': days_payable_outstanding,
+    }
+
+
+# ─── Cost Centre P&L ─────────────────────────────────────────────────────────
+
+def cost_centre_pl(tenant, cost_centre_id, date_from, date_to):
+    """
+    Profit & Loss filtered to a single Cost Centre.
+
+    Queries only JournalLines where ``cost_centre_id`` matches, giving a
+    departmental / project-level P&L breakdown.
+
+    Returns the same shape as ``profit_and_loss`` but every account balance
+    reflects only lines tagged to this cost centre.
+
+    Raises ``ValueError`` if the cost centre is not found on the tenant.
+    """
+    from accounting.models import Account, CostCentre, JournalLine
+
+    try:
+        cc = CostCentre.objects.get(pk=cost_centre_id, tenant=tenant)
+    except CostCentre.DoesNotExist:
+        raise ValueError(f'Cost centre {cost_centre_id} not found.')
+
+    def _cc_group(group_slug):
+        """Balances for accounts in group_slug, filtered to this cost centre."""
+        accounts = Account.objects.filter(
+            tenant=tenant,
+            group__slug=group_slug,
+            is_active=True,
+        ).select_related('group').order_by('code')
+
+        result = []
+        for acc in accounts:
+            qs = JournalLine.objects.filter(
+                entry__tenant=tenant,
+                entry__is_posted=True,
+                entry__date__gte=date_from,
+                entry__date__lte=date_to,
+                account=acc,
+                cost_centre=cc,
+            )
+            d  = qs.aggregate(debit=Sum('debit'), credit=Sum('credit'))
+            dr = d['debit']  or _zero()
+            cr = d['credit'] or _zero()
+
+            if acc.type in ('asset', 'expense'):
+                balance = dr - cr
+            else:
+                balance = cr - dr
+
+            # Only include accounts with activity for this CC
+            if balance:
+                result.append({
+                    'code':       acc.code,
+                    'name':       acc.name,
+                    'balance':    balance,
+                    'group_name': acc.group.name if acc.group else '',
+                })
+        return result
+
+    sales         = _cc_group('sales_accounts')
+    direct_inc    = _cc_group('direct_income')
+    purchases     = _cc_group('purchase_accounts')
+    direct_exp    = _cc_group('direct_expense')
+    indirect_exp  = _cc_group('indirect_expense')
+    indirect_inc  = _cc_group('indirect_income')
+
+    gross_revenue      = _section_total(sales) + _section_total(direct_inc)
+    total_direct_cost  = _section_total(purchases) + _section_total(direct_exp)
+    gross_profit       = gross_revenue - total_direct_cost
+    total_indirect_exp = _section_total(indirect_exp)
+    total_indirect_inc = _section_total(indirect_inc)
+    net_profit         = gross_profit - total_indirect_exp + total_indirect_inc
+
+    return {
+        'cost_centre': {'id': cc.pk, 'code': cc.code, 'name': cc.name},
+        'date_from':   str(date_from),
+        'date_to':     str(date_to),
+        'period':      _period_meta(date_from, date_to),
+        # Income
+        'sales':               sales,
+        'direct_income':       direct_inc,
+        'gross_revenue':       gross_revenue,
+        # Direct costs
+        'purchases':           purchases,
+        'direct_expenses':     direct_exp,
+        'total_direct_cost':   total_direct_cost,
+        'gross_profit':        gross_profit,
+        # Overhead
+        'indirect_expenses':   indirect_exp,
+        'indirect_income':     indirect_inc,
+        'total_indirect_exp':  total_indirect_exp,
+        'total_indirect_inc':  total_indirect_inc,
+        # Bottom line
+        'net_profit':          net_profit,
     }

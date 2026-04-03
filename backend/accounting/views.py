@@ -24,14 +24,17 @@ from accounting.services.payslip_service import PayslipService
 from accounting.services.bill_service import BillService
 from accounting.services.credit_note_service import CreditNoteService
 from .models import (
-    CoinTransaction, Payslip, Invoice,
-    Account, JournalEntry, BankAccount,
+    AccountGroup, CoinTransaction, Payslip, Invoice,
+    Account, JournalEntry, JournalLine, BankAccount,
     Bill, Payment, CreditNote,
     Quotation, DebitNote, TDSEntry,
+    log_journal_change, capture_entry_snapshot, JournalEntryAuditLog,
     BankReconciliation, BankReconciliationLine, RecurringJournal,
     StaffSalaryProfile,
+    CostCentre, FiscalYearClose, PaymentAllocation,
 )
 from .serializers import (
+    AccountGroupSerializer,
     CoinTransactionSerializer, PayslipSerializer, InvoiceSerializer,
     AccountSerializer, JournalEntrySerializer, JournalEntryWriteSerializer,
     BankAccountSerializer, BillSerializer, PaymentSerializer, CreditNoteSerializer,
@@ -39,7 +42,36 @@ from .serializers import (
     BankReconciliationSerializer, BankReconciliationLineSerializer,
     RecurringJournalSerializer,
     StaffSalaryProfileSerializer,
+    CostCentreSerializer, CostCentreWriteSerializer,
+    FiscalYearCloseSerializer, PaymentAllocationSerializer,
 )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Account Groups
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AccountGroupViewSet(NexusViewSet):
+    """
+    Read-only list + detail of AccountGroups for the current tenant.
+    Used by the frontend Account creation form to populate the group dropdown.
+    """
+
+    queryset         = AccountGroup.objects.all()
+    serializer_class = AccountGroupSerializer
+    required_module  = 'accounting'
+    http_method_names = ['get', 'head', 'options']
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = AccountGroup.objects.filter(tenant=self.tenant, is_active=True).order_by('order', 'name')
+        if acct_type := self.request.query_params.get('type'):
+            types = [t.strip() for t in acct_type.split(',') if t.strip()]
+            qs = qs.filter(type__in=types) if len(types) > 1 else qs.filter(type=types[0])
+        return qs
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -59,10 +91,23 @@ class AccountViewSet(NexusViewSet):
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
 
     def get_queryset(self):
+        from django.db.models import Q, Sum, DecimalField
+        from django.db.models.functions import Coalesce
         self.ensure_tenant()
-        qs = Account.objects.filter(tenant=self.tenant).select_related('parent').order_by('code')
+        qs = Account.objects.filter(tenant=self.tenant).select_related('parent', 'group').order_by('code')
         if acct_type := self.request.query_params.get('type'):
-            qs = qs.filter(type=acct_type)
+            types = [t.strip() for t in acct_type.split(',') if t.strip()]
+            qs = qs.filter(type__in=types) if len(types) > 1 else qs.filter(type=types[0])
+        if group_slug := self.request.query_params.get('group_slug'):
+            qs = qs.filter(group__slug=group_slug)
+        # B10 — Annotate pre-computed debit/credit sums so Account.balance
+        # reads from the annotation rather than firing a per-row DB query.
+        _posted = Q(journal_lines__entry__is_posted=True)
+        _dec    = DecimalField(max_digits=14, decimal_places=2)
+        qs = qs.annotate(
+            _annotated_debit=Coalesce(Sum('journal_lines__debit',  filter=_posted), 0, output_field=_dec),
+            _annotated_credit=Coalesce(Sum('journal_lines__credit', filter=_posted), 0, output_field=_dec),
+        )
         return qs
 
     def paginate_queryset(self, queryset):
@@ -117,6 +162,79 @@ class BankAccountViewSet(NexusViewSet):
     def get_queryset(self):
         self.ensure_tenant()
         return BankAccount.objects.filter(tenant=self.tenant).select_related('linked_account')
+
+    # ── helpers ────────────────────────────────────────────────────────────
+
+    def _auto_link_coa_account(self, bank):
+        """
+        Auto-create and link a CoA Account (type=asset, group=bank_accounts)
+        for a BankAccount that has no linked_account.
+
+        Picks the first free code in the 1150–1199 range designated for bank
+        accounts in ACCOUNT_CODE_TO_GROUP.  Safe to call multiple times — does
+        nothing if linked_account is already set.
+        """
+        if bank.linked_account_id:
+            return
+
+        from accounting.models import Account, AccountGroup
+
+        tenant = bank.tenant
+        try:
+            group = AccountGroup.objects.get(tenant=tenant, slug='bank_accounts')
+        except AccountGroup.DoesNotExist:
+            group = None
+
+        # Find the first unused code in the bank accounts range (1150–1199)
+        existing = set(
+            Account.objects.filter(tenant=tenant, code__regex=r'^11[5-9]\d$')
+            .values_list('code', flat=True)
+        )
+        code = next(
+            (str(n) for n in range(1150, 1200) if str(n) not in existing),
+            None,
+        )
+        if code is None:
+            # Range exhausted — skip auto-link (user must assign manually)
+            return
+
+        account = Account.objects.create(
+            tenant=tenant,
+            code=code,
+            name=bank.name,
+            type=Account.TYPE_ASSET,
+            group=group,
+            description=f'Bank account: {bank.bank_name or bank.name}',
+            opening_balance=bank.opening_balance,
+            is_system=False,
+        )
+        bank.linked_account = account
+        bank.save(update_fields=['linked_account'])
+
+    # ── create / update overrides ──────────────────────────────────────────
+
+    def create(self, request, *args, **kwargs):
+        self.ensure_tenant()
+        serializer = BankAccountSerializer(
+            data=request.data,
+            context=self.get_serializer_context(),
+        )
+        serializer.is_valid(raise_exception=True)
+        bank = serializer.save(tenant=self.tenant, created_by=request.user)
+        self._auto_link_coa_account(bank)
+        return ApiResponse.created(data=BankAccountSerializer(bank).data)
+
+    def update(self, request, *args, **kwargs):
+        partial  = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = BankAccountSerializer(
+            instance, data=request.data, partial=partial,
+            context=self.get_serializer_context(),
+        )
+        serializer.is_valid(raise_exception=True)
+        bank = serializer.save()
+        self._auto_link_coa_account(bank)
+        return ApiResponse.success(data=BankAccountSerializer(bank).data)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -175,6 +293,12 @@ class JournalEntryViewSet(NexusViewSet):
             created_by=self.request.user,
             reference_type=JournalEntry.REF_MANUAL,
         )
+        # B25 — audit trail for manually created unposted draft entries.
+        log_journal_change(
+            entry,
+            action=JournalEntryAuditLog.ACTION_CREATE,
+            changed_by=request.user,
+        )
         return ApiResponse.created(data=JournalEntrySerializer(entry).data)
 
     def update(self, request, *args, **kwargs):
@@ -187,13 +311,27 @@ class JournalEntryViewSet(NexusViewSet):
             context=self.get_serializer_context(),
         )
         serializer.is_valid(raise_exception=True)
+        # B25 — capture state before save so field_changes diff is accurate.
+        before = capture_entry_snapshot(instance)
         instance = serializer.save()
+        log_journal_change(
+            instance,
+            action=JournalEntryAuditLog.ACTION_UPDATE,
+            changed_by=request.user,
+            before_snapshot=before,
+        )
         return ApiResponse.success(data=JournalEntrySerializer(instance).data)
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         if instance.is_posted:
             raise ConflictError('Posted entries cannot be deleted.')
+        # B25 — log before delete so journal_entry FK is still valid.
+        log_journal_change(
+            instance,
+            action=JournalEntryAuditLog.ACTION_DELETE,
+            changed_by=request.user,
+        )
         instance.delete()
         return ApiResponse.no_content()
 
@@ -203,11 +341,73 @@ class JournalEntryViewSet(NexusViewSet):
         entry = self.get_object()
         if entry.is_posted:
             raise ConflictError('Already posted.')
+        # B25 — capture before so is_posted diff shows False→True.
+        before = capture_entry_snapshot(entry)
         try:
             entry.post()
         except ValueError as exc:
             raise AppValidationError(str(exc))
+        log_journal_change(
+            entry,
+            action=JournalEntryAuditLog.ACTION_UPDATE,
+            changed_by=request.user,
+            reason='Manually posted',
+            before_snapshot=before,
+        )
         return ApiResponse.success(data=JournalEntrySerializer(entry).data)
+
+    @action(detail=False, methods=['post'], url_path='contra')
+    def contra(self, request):
+        """
+        POST /journals/contra/ — Contra voucher shortcut.
+
+        Body: { date, from_account, to_account, amount, description }
+        Creates a balanced DR/CR entry and immediately posts it.
+        Typical use: cash-to-bank or bank-to-cash transfers.
+        """
+        from .services.journal_service import create_contra_entry
+        self.ensure_tenant()
+        required = ['date', 'from_account', 'to_account', 'amount']
+        for field in required:
+            if not request.data.get(field):
+                raise AppValidationError(f'{field} is required.')
+        try:
+            entry = create_contra_entry(
+                tenant=self.tenant,
+                created_by=request.user,
+                date=request.data['date'],
+                from_account_id=request.data['from_account'],
+                to_account_id=request.data['to_account'],
+                amount=request.data['amount'],
+                description=request.data.get('description', 'Contra entry'),
+            )
+        except (ValueError, Account.DoesNotExist) as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.created(data=JournalEntrySerializer(entry).data)
+
+    @action(detail=True, methods=['post'], url_path='reverse')
+    def reverse(self, request, pk=None):
+        """
+        POST /journals/{id}/reverse/ — Create an immediate reversing entry.
+
+        Body: { date (optional, defaults to today) }
+        Swaps DR↔CR on every line and posts the new entry immediately.
+        Marks the original entry's `reversed_by` with the new entry ID.
+        """
+        from .services.journal_service import create_reversing_entry
+        entry = self.get_object()
+        if not entry.is_posted:
+            raise AppValidationError('Only posted entries can be reversed.')
+        if entry.reversed_by_id:
+            raise ConflictError('Entry has already been reversed.')
+        try:
+            from datetime import date as _date
+            rev_date_raw = request.data.get('date')
+            rev_date     = _date.fromisoformat(rev_date_raw) if rev_date_raw else _date.today()
+            reversal     = create_reversing_entry(entry, rev_date, request.user)
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.created(data=JournalEntrySerializer(reversal).data)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -383,56 +583,21 @@ class PaymentViewSet(NexusViewSet):
         invoice_id = request.data.get('invoice')
         bill_id    = request.data.get('bill')
 
-        if invoice_id and bill_id:
-            raise AppValidationError({'detail': 'Provide either invoice or bill, not both.'})
-
+        invoice = None
+        bill    = None
         if invoice_id:
-            if payment.type != Payment.TYPE_INCOMING:
-                raise AppValidationError({'detail': 'Only incoming payments can be linked to invoices.'})
-            if payment.invoice_id is not None:
-                raise ConflictError('Payment is already linked to an invoice.')
             try:
                 invoice = Invoice.objects.for_tenant(self.tenant).get(id=invoice_id)
             except Invoice.DoesNotExist:
                 raise NotFoundError('Invoice not found.')
-            payment.invoice = invoice
-            payment.save(update_fields=['invoice'])
-            # Auto-settle invoice if now fully paid
-            if invoice.amount_due <= Decimal('0'):
-                invoice.status = 'paid'
-                invoice.paid_at = timezone.now()
-                invoice.save(update_fields=['status', 'paid_at'])
-                try:
-                    from core.events import EventBus
-                    EventBus.publish('invoice.paid', {
-                        'id': invoice.pk,
-                        'tenant_id': self.tenant.id,
-                        'customer_id': invoice.customer_id,
-                        'amount': str(payment.amount),
-                        'paid_at': invoice.paid_at.isoformat(),
-                    }, tenant=self.tenant)
-                except Exception:
-                    pass
-
         elif bill_id:
-            if payment.type != Payment.TYPE_OUTGOING:
-                raise AppValidationError({'detail': 'Only outgoing payments can be linked to bills.'})
-            if payment.bill_id is not None:
-                raise ConflictError('Payment is already linked to a bill.')
             try:
                 bill = Bill.objects.for_tenant(self.tenant).get(id=bill_id)
             except Bill.DoesNotExist:
                 raise NotFoundError('Bill not found.')
-            payment.bill = bill
-            payment.save(update_fields=['bill'])
-            if bill.amount_due <= Decimal('0'):
-                bill.status = 'paid'
-                bill.paid_at = timezone.now()
-                bill.save(update_fields=['status', 'paid_at'])
 
-        else:
-            raise AppValidationError({'detail': 'Provide invoice or bill to allocate.'})
-
+        from .services.payment_service import allocate_payment
+        payment = allocate_payment(payment, tenant=self.tenant, invoice=invoice, bill=bill)
         return ApiResponse.success(data=PaymentSerializer(payment).data, message='Payment allocated.')
 
     def update(self, request, *args, **kwargs):
@@ -455,12 +620,63 @@ class PaymentViewSet(NexusViewSet):
         payment.save(update_fields=['cheque_status'])
         return ApiResponse.success(data=PaymentSerializer(payment).data, message='Cheque status updated.')
 
+    @action(detail=True, methods=['post'], url_path='bounce')
+    def bounce_cheque(self, request, *args, **kwargs):
+        """Bounce a cheque: reverse journal, reopen invoice/bill, optional bank charge.
+
+        Body (all optional):
+          reason              str   — narrative / reason for bounce
+          bank_charge_amount  str   — bank penalty amount (e.g. "500.00")
+          bank_charge_account int   — Account.id to debit for the charge (defaults to Other Expenses 5300)
+        """
+        payment = self.get_object()
+        reason = request.data.get('reason', '')
+
+        bank_charge_amount = request.data.get('bank_charge_amount') or None
+        bank_charge_account = None
+        bank_charge_account_id = request.data.get('bank_charge_account') or None
+        if bank_charge_account_id:
+            from accounting.models import Account
+            try:
+                bank_charge_account = Account.objects.for_tenant(self.tenant).get(id=bank_charge_account_id)
+            except Account.DoesNotExist:
+                raise NotFoundError('Bank charge account not found.')
+
+        from accounting.services.payment_service import bounce_cheque as _bounce
+        try:
+            payment = _bounce(
+                payment,
+                reason=reason,
+                bank_charge_amount=bank_charge_amount,
+                bank_charge_account=bank_charge_account,
+                user=request.user,
+            )
+        except ValueError as exc:
+            raise AppValidationError({'detail': str(exc)})
+
+        return ApiResponse.success(
+            data=PaymentSerializer(payment).data,
+            message='Cheque bounced — journal reversed and invoice/bill reopened.',
+        )
+
     def destroy(self, request, *args, **kwargs):
-        """Admin-only hard delete. Note: linked journal entries are NOT auto-reversed.
-        Admin should post a manual reversing journal entry if needed."""
+        """Admin-only hard delete.  Blocked when a posted journal entry exists for the
+        payment — deleting the payment row while leaving a Dr Cash / Cr AR entry posted
+        would show a cash receipt with no source document in the general ledger.
+        Admin must post a manual reversing entry first, then delete the payment."""
         if not self._is_admin():
             raise ForbiddenError('Only admins can delete payments.')
         instance = self.get_object()
+        if JournalEntry.objects.filter(
+            tenant=instance.tenant,
+            reference_type='payment',
+            reference_id=instance.pk,
+            is_posted=True,
+        ).exists():
+            raise ConflictError(
+                'Cannot delete a payment that has a posted journal entry. '
+                'Post a reversing entry for the journal first, then delete the payment.'
+            )
         instance.delete()
         return ApiResponse.no_content()
 
@@ -567,7 +783,7 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
                 fy = FiscalYear(bs_year=int(fy_raw))
                 start_ad, end_ad = fiscal_year_date_range(fy)
                 return [start_ad, end_ad]
-            except (ValueError, KeyError):
+            except Exception:
                 pass  # fall through to normal parsing
 
         result = []
@@ -625,23 +841,39 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
 
     @action(detail=False, methods=['get'], url_path='profit-loss')
     def profit_loss(self, request):
+        """
+        GET /reports/profit-loss/?date_from=&date_to=
+        Optional comparison period: &compare_from=&compare_to=
+        """
         from .services.report_service import profit_and_loss
         self.ensure_tenant()
         try:
             df, dt = self._parse_dates(request, 'date_from', 'date_to')
+            compare_from = compare_to = None
+            if request.query_params.get('compare_from'):
+                compare_from, compare_to = self._parse_dates(request, 'compare_from', 'compare_to')
         except ValueError as exc:
             raise AppValidationError(str(exc))
-        return ApiResponse.success(data=profit_and_loss(self.tenant, df, dt))
+        return ApiResponse.success(
+            data=profit_and_loss(self.tenant, df, dt, compare_from=compare_from, compare_to=compare_to),
+        )
 
     @action(detail=False, methods=['get'], url_path='balance-sheet')
     def balance_sheet(self, request):
+        """
+        GET /reports/balance-sheet/?as_of_date=
+        Optional comparison: &compare_as_of=
+        """
         from .services.report_service import balance_sheet
         self.ensure_tenant()
         try:
             (as_of,) = self._parse_dates(request, 'as_of_date')
+            compare_as_of = None
+            if request.query_params.get('compare_as_of'):
+                (compare_as_of,) = self._parse_dates(request, 'compare_as_of')
         except ValueError as exc:
             raise AppValidationError(str(exc))
-        return ApiResponse.success(data=balance_sheet(self.tenant, as_of))
+        return ApiResponse.success(data=balance_sheet(self.tenant, as_of, compare_as_of=compare_as_of))
 
     @action(detail=False, methods=['get'], url_path='trial-balance')
     def trial_balance(self, request):
@@ -706,6 +938,36 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
         except ValueError as exc:
             raise AppValidationError(str(exc))
         return ApiResponse.success(data=ledger_report(self.tenant, account_code, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='account-vouchers')
+    def account_vouchers(self, request):
+        """
+        GET /reports/account-vouchers/?account_id=42&date_from=YYYY-MM-DD&date_to=YYYY-MM-DD
+
+        Returns a running-balance ledger for a single account, identical in
+        structure to the ``ledger`` endpoint but keyed by primary key (id)
+        rather than account code.  Used by the frontend drill-down modal to
+        show the source transactions behind any P&L / Balance Sheet row.
+        """
+        from accounting.models import Account
+        from .services.report_service import ledger_report
+        self.ensure_tenant()
+        account_id = request.query_params.get('account_id')
+        if not account_id:
+            raise AppValidationError('account_id is required.')
+        try:
+            account_id = int(account_id)
+        except (TypeError, ValueError):
+            raise AppValidationError('account_id must be an integer.')
+        try:
+            acct = Account.objects.get(pk=account_id, tenant=self.tenant, is_active=True)
+        except Account.DoesNotExist:
+            raise AppValidationError('Account not found.')
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=ledger_report(self.tenant, acct.code, df, dt))
 
     @action(detail=False, methods=['get'], url_path='day-book')
     def day_book(self, request):
@@ -1100,6 +1362,121 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
         uid = int(uid_raw) if uid_raw and uid_raw.isdigit() else None
         return ApiResponse.success(data=user_log(self.tenant, df, dt, user_id=uid))
 
+    @action(detail=False, methods=['get'], url_path='ratio-analysis')
+    def ratio_analysis(self, request):
+        """
+        GET /reports/ratio-analysis/?as_of_date=&date_from=&date_to=
+
+        Returns liquidity, leverage, profitability and activity ratios.
+        date_from / date_to are optional but required for profitability ratios.
+        """
+        from .services.report_service import ratio_analysis
+        self.ensure_tenant()
+        try:
+            (as_of,) = self._parse_dates(request, 'as_of_date')
+            df = dt = None
+            if request.query_params.get('date_from'):
+                df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=ratio_analysis(self.tenant, as_of, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='cost-centre-pl')
+    def cost_centre_pl(self, request):
+        """
+        GET /reports/cost-centre-pl/?cost_centre_id=&date_from=&date_to=
+        """
+        from .services.report_service import cost_centre_pl
+        self.ensure_tenant()
+        cc_id = request.query_params.get('cost_centre_id')
+        if not cc_id or not cc_id.isdigit():
+            raise AppValidationError('cost_centre_id is required.')
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        try:
+            data = cost_centre_pl(self.tenant, int(cc_id), df, dt)
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=data)
+
+    @action(detail=False, methods=['post'], url_path='close-fiscal-year')
+    def close_fiscal_year(self, request):
+        """
+        POST /reports/close-fiscal-year/
+        Body: { fy_year: 2081 }
+
+        Creates a closing journal entry that transfers net P&L to Retained Earnings
+        and records the FiscalYearClose record so the FY appears closed in the UI.
+        """
+        from .services.fiscal_year_service import close_fiscal_year
+        self.ensure_tenant()
+        fy_year = request.data.get('fy_year')
+        if not fy_year:
+            raise AppValidationError('fy_year is required.')
+        try:
+            fy_close = close_fiscal_year(
+                tenant=self.tenant,
+                fy_year=int(fy_year),
+                closed_by=request.user,
+                notes=request.data.get('notes', ''),
+            )
+        except (ValueError, ConflictError) as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.created(data=FiscalYearCloseSerializer(fy_close).data)
+
+    @action(detail=False, methods=['get'], url_path='fiscal-year-status')
+    def fiscal_year_status(self, request):
+        """
+        GET /reports/fiscal-year-status/
+
+        Returns list of fiscal years with open/closed status
+        based on FiscalYearClose records for the current tenant.
+        """
+        from core.nepali_date import current_fiscal_year
+        self.ensure_tenant()
+        current_fy = current_fiscal_year().bs_year
+        closed_fys  = set(
+            FiscalYearClose.objects.filter(tenant=self.tenant)
+            .values_list('fy_year', flat=True)
+        )
+        oldest_fy = min(closed_fys, default=current_fy - 2)
+        years = list(range(oldest_fy, current_fy + 1))
+        return ApiResponse.success(data={
+            'fiscal_years': [
+                {
+                    'fy_year': y,
+                    'label':   f'{y}/{str(y + 1)[2:]}',
+                    'is_closed': y in closed_fys,
+                }
+                for y in sorted(years, reverse=True)
+            ]
+        })
+
+    @action(detail=False, methods=['get'], url_path='cash-book')
+    def cash_book(self, request):
+        """
+        GET /reports/cash-book/?date_from=&date_to=&bank_account_id=
+
+        Returns opening balance, all cash/bank movements for the period with
+        running balance, and closing balance.  Pass bank_account_id to filter
+        to a single BankAccount (Bank Book); omit for combined Cash Book.
+        """
+        from .services.report_service import cash_book
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        ba_raw = request.query_params.get('bank_account_id')
+        ba_id  = int(ba_raw) if ba_raw and ba_raw.isdigit() else None
+        try:
+            data = cash_book(self.tenant, df, dt, bank_account_id=ba_id)
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=data)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Coins
@@ -1432,10 +1809,10 @@ class InvoiceViewSet(NexusViewSet):
         ticket_id = params.get('ticket')
         if not self.is_manager_role() and self.user_role not in STAFF_ROLES:
             if not ticket_id:
-                return self.get_service().list(  # return empty queryset safely
-                    ticket_id=-1,
-                    fiscal_year_start=fy_start,
-                    fiscal_year_end=fy_end,
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied(
+                    'Viewer accounts must supply ?ticket=<id> to view invoices. '
+                    'Only manager and staff roles can list all invoices.'
                 )
             from tickets.models import Ticket
             try:
@@ -1448,7 +1825,8 @@ class InvoiceViewSet(NexusViewSet):
                 ticket_obj.team_members.filter(id=self.request.user.id).exists()
             )
             if not is_assigned:
-                return self.get_service().list(ticket_id=-1)  # empty
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied('You are not assigned to ticket %s.' % ticket_id)
 
         return self.get_service().list(
             status=params.get('status'),
@@ -1831,6 +2209,18 @@ class TDSEntryViewSet(NexusViewSet):
         entry.deposited_at      = timezone.now()
         entry.deposit_reference = request.data.get('deposit_reference', '')
         entry.save(update_fields=['status', 'deposited_at', 'deposit_reference'])
+        # Bug 2 fix: auto-journal Dr TDS Payable 2300 / Cr Cash 1100 to clear GL liability
+        try:
+            from accounting.services.journal_service import record_tds_remittance
+            import logging as _log
+            period = f"{entry.period_year}-{entry.period_month:02d}"
+            record_tds_remittance(
+                self.tenant, entry.tds_amount, period, created_by=request.user
+            )
+        except Exception as exc:
+            _log.getLogger(__name__).warning(
+                "TDS GL journal failed for entry %s: %s", entry.pk, exc, exc_info=True
+            )
         return ApiResponse.success(data=TDSEntrySerializer(entry).data)
 
     @action(detail=False, methods=['get'], url_path='summary')
@@ -2154,11 +2544,127 @@ class ExpenseViewSet(NexusViewSet):
 
     @action(detail=True, methods=['post'], url_path='post')
     def post_expense(self, request, pk=None):
-        """POST /expenses/{id}/post/ — post approved expense to double-entry ledger."""
+        """POST /expenses/{id}/post/ — post approved expense to double-entry ledger.
+
+        Optional body: { "payment_account": <account_id> }
+        Identifies the credit side of the journal (Cash, Bank, Staff Payable, etc.).
+        If omitted, falls back to the account saved on the expense, then Cash.
+        """
         expense = self.get_object()
+        payment_account_id = request.data.get('payment_account') or None
+        if payment_account_id:
+            try:
+                payment_account_id = int(payment_account_id)
+            except (TypeError, ValueError):
+                raise AppValidationError('payment_account must be a valid account ID.')
         try:
-            expense = self._get_service().post(expense)
+            expense = self._get_service().post(expense, payment_account_id=payment_account_id)
         except (ConflictError, AppValidationError):
             raise
         from accounting.serializers import ExpenseSerializer
         return ApiResponse.success(data=ExpenseSerializer(expense).data)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cost Centres
+# ─────────────────────────────────────────────────────────────────────────────
+
+class CostCentreViewSet(NexusViewSet):
+    """
+    CRUD for Cost Centres.
+
+    GET    /cost-centres/           — list all (active by default)
+    POST   /cost-centres/           — create
+    GET    /cost-centres/{id}/      — detail
+    PUT    /cost-centres/{id}/      — update
+    DELETE /cost-centres/{id}/      — soft delete (sets is_active=False)
+    """
+
+    queryset         = CostCentre.objects.all()
+    serializer_class = CostCentreSerializer
+    required_module  = 'accounting'
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
+
+    def get_serializer_class(self):
+        if self.action in ('create', 'update', 'partial_update'):
+            return CostCentreWriteSerializer
+        return CostCentreSerializer
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = CostCentre.objects.filter(tenant=self.tenant)
+        if self.request.query_params.get('active_only', 'true').lower() == 'true':
+            qs = qs.filter(is_active=True)
+        return qs.order_by('name')
+
+    def create(self, request, *args, **kwargs):
+        self.ensure_tenant()
+        ser = CostCentreWriteSerializer(data=request.data, context=self.get_serializer_context())
+        ser.is_valid(raise_exception=True)
+        cc = ser.save(tenant=self.tenant)
+        return ApiResponse.created(data=CostCentreSerializer(cc).data)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        partial  = kwargs.pop('partial', False)
+        ser = CostCentreWriteSerializer(
+            instance, data=request.data, partial=partial,
+            context=self.get_serializer_context(),
+        )
+        ser.is_valid(raise_exception=True)
+        cc = ser.save()
+        return ApiResponse.success(data=CostCentreSerializer(cc).data)
+
+    def destroy(self, request, *args, **kwargs):
+        """Soft-deactivate instead of hard-delete to preserve historical allocations."""
+        instance = self.get_object()
+        instance.is_active = False
+        instance.save(update_fields=['is_active'])
+        return ApiResponse.no_content()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Payment Allocations  (bill-by-bill settlement)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PaymentAllocationViewSet(NexusViewSet):
+    """
+    Manage bill-by-bill payment allocations.
+
+    GET    /payment-allocations/?payment=<id>   — allocations for a payment
+    GET    /payment-allocations/?invoice=<id>   — allocations for an invoice
+    GET    /payment-allocations/?bill=<id>      — allocations for a bill
+    POST   /payment-allocations/               — create allocation
+    DELETE /payment-allocations/{id}/          — remove allocation
+    """
+
+    queryset         = PaymentAllocation.objects.all()
+    serializer_class = PaymentAllocationSerializer
+    required_module  = 'accounting'
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = PaymentAllocation.objects.filter(tenant=self.tenant).select_related('payment', 'invoice', 'bill')
+        if pid := self.request.query_params.get('payment'):
+            qs = qs.filter(payment_id=pid)
+        if iid := self.request.query_params.get('invoice'):
+            qs = qs.filter(invoice_id=iid)
+        if bid := self.request.query_params.get('bill'):
+            qs = qs.filter(bill_id=bid)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        self.ensure_tenant()
+        ser = PaymentAllocationSerializer(data=request.data, context=self.get_serializer_context())
+        ser.is_valid(raise_exception=True)
+        alloc = ser.save(tenant=self.tenant)
+        return ApiResponse.created(data=PaymentAllocationSerializer(alloc).data)

@@ -42,6 +42,7 @@ EVENT_CATALOGUE: dict[str, str] = {
     'inventory.stock.out':       'Product out of stock',
     'inventory.stock.added':     'Stock quantity increased',
     'inventory.product.published': 'Product published to website',
+    'inventory.po.received':     'Purchase order goods received (triggers draft bill)',
 
     # ── ACCOUNTING ────────────────────────────────────────────────────────────
     'invoice.created':           'Invoice generated',

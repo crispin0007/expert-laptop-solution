@@ -17,6 +17,53 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 
+def _snapshot_cost_prices(line_items: list, tenant) -> list:
+    """
+    B24 — Return a new list of line_items with 'cost_price_snapshot' injected
+    for every product line that lacks one.
+
+    The snapshot captures the product's current cost_price at the moment the
+    invoice is created.  Later changes to inventory cost (re-stocking at a
+    different price) do not affect historical COGS for already-issued invoices.
+
+    If the product doesn't exist or has no cost price, the key is set to '0'
+    so create_cogs_journal() can still log the warning correctly.
+
+    This function is intentionally non-destructive: lines without 'product_id'
+    or already having 'cost_price_snapshot' are returned unchanged.
+    """
+    from inventory.models import Product
+
+    product_ids = [
+        item.get('product_id')
+        for item in line_items
+        if item.get('line_type') == 'product'
+        and item.get('product_id')
+        and 'cost_price_snapshot' not in item
+    ]
+    if not product_ids:
+        return line_items
+
+    # One query for all relevant products
+    cost_map = dict(
+        Product.objects.filter(pk__in=product_ids, tenant=tenant)
+        .values_list('pk', 'cost_price')
+    )
+
+    snapped = []
+    for item in line_items:
+        if (
+            item.get('line_type') == 'product'
+            and item.get('product_id')
+            and 'cost_price_snapshot' not in item
+        ):
+            pid = item['product_id']
+            cost = cost_map.get(pid)
+            item = {**item, 'cost_price_snapshot': str(cost) if cost is not None else '0'}
+        snapped.append(item)
+    return snapped
+
+
 def compute_invoice_totals(line_items, discount, vat_rate):
     """
     Return (subtotal, vat_amount, total).
@@ -199,6 +246,12 @@ class InvoiceService:
         discount = validated_data.get('discount', Decimal('0'))
         apply_vat = validated_data.pop('apply_vat', True)
         totals = self._compute_totals_kwargs(line_items, discount, apply_vat=apply_vat)
+
+        # B24 — Snapshot cost_price at creation time so COGS is based on the
+        # price the tenant paid when the invoice was raised, not the current
+        # product cost (which can change after re-stocking at different prices).
+        line_items = _snapshot_cost_prices(line_items, self.tenant)
+
         instance = Invoice.objects.create(
             tenant=self.tenant,
             created_by=self.user,
@@ -216,8 +269,8 @@ class InvoiceService:
                 'customer_id': instance.customer_id,
                 'total': str(instance.total),
             }, tenant=self.tenant)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning('EventBus.publish invoice.created failed for invoice %s: %s', instance.pk, exc, exc_info=True)
         return instance
 
     @transaction.atomic
@@ -238,6 +291,13 @@ class InvoiceService:
         line_items = validated_data.get('line_items', instance.line_items)
         discount = validated_data.get('discount', instance.discount)
         totals = self._compute_totals_kwargs(line_items, discount)
+
+        # B24 — Re-snapshot any product lines that were added or re-submitted
+        # during a draft edit and lack a cost_price_snapshot. Lines that already
+        # have a snapshot are left unchanged (idempotent).
+        line_items = _snapshot_cost_prices(line_items, self.tenant)
+        if 'line_items' in validated_data:
+            validated_data = {**validated_data, 'line_items': line_items}
 
         for field, value in validated_data.items():
             setattr(instance, field, value)
@@ -261,6 +321,11 @@ class InvoiceService:
         line_items = validated_data.get('line_items', [])
         discount = validated_data.get('discount', Decimal('0'))
         totals = self._compute_totals_kwargs(line_items, discount)
+
+        # B24 — Snapshot cost_price at creation time. Same rule as create():
+        # issued invoices need locked COGS costs even more than drafts.
+        line_items = _snapshot_cost_prices(line_items, self.tenant)
+
         instance = Invoice.objects.create(
             tenant=self.tenant,
             created_by=self.user,
@@ -279,8 +344,8 @@ class InvoiceService:
                 'customer_id': instance.customer_id,
                 'total': str(instance.total),
             }, tenant=self.tenant)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning('EventBus.publish invoice.sent (create+issue) failed for invoice %s: %s', instance.pk, exc, exc_info=True)
         return instance
 
     @transaction.atomic
@@ -288,6 +353,8 @@ class InvoiceService:
         """Move a draft invoice to issued status."""
         from core.exceptions import InvoiceStateError
         from accounting.models import Invoice
+        # Re-fetch with row lock to prevent concurrent double-issue.
+        invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
         if invoice.status != Invoice.STATUS_DRAFT:
             raise InvoiceStateError("Only draft invoices can be issued.")
         invoice.status = Invoice.STATUS_ISSUED
@@ -301,8 +368,8 @@ class InvoiceService:
                 'customer_id': invoice.customer_id,
                 'total': str(invoice.total),
             }, tenant=self.tenant)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning('EventBus.publish invoice.sent (issue) failed for invoice %s: %s', invoice.pk, exc, exc_info=True)
         return invoice
 
     @transaction.atomic
@@ -316,6 +383,8 @@ class InvoiceService:
         from accounting.models import Invoice, Payment, BankAccount
         from accounting.services.payment_service import record_payment
 
+        # Re-fetch with row lock to prevent concurrent double-payment.
+        invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
         if invoice.status != Invoice.STATUS_ISSUED:
             raise InvoiceStateError(
                 "Only issued invoices can be marked as paid. Issue the invoice first."
@@ -364,6 +433,8 @@ class InvoiceService:
         from core.exceptions import InvoiceStateError
         from accounting.models import Invoice
 
+        # Re-fetch with row lock to prevent concurrent double-void.
+        invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
         if invoice.status == Invoice.STATUS_VOID:
             raise InvoiceStateError("Invoice is already voided.")
         if invoice.status == Invoice.STATUS_PAID:
@@ -381,8 +452,8 @@ class InvoiceService:
                 'tenant_id': self.tenant.id,
                 'customer_id': invoice.customer_id,
             }, tenant=self.tenant)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning('EventBus.publish invoice.cancelled failed for invoice %s: %s', invoice.pk, exc, exc_info=True)
         return invoice
 
     @transaction.atomic
