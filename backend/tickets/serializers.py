@@ -90,7 +90,8 @@ class TicketSerializer(NepaliModelSerializer):
     team_member_names  = serializers.SerializerMethodField()
     vehicles           = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
     vehicle_names      = serializers.SerializerMethodField()
-    coin_preview       = serializers.SerializerMethodField()
+    coin_preview            = serializers.SerializerMethodField()
+    coin_transaction_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Ticket
@@ -113,6 +114,7 @@ class TicketSerializer(NepaliModelSerializer):
             'resolved_at', 'closed_at',
             'service_charge',
             'coin_preview',
+            'coin_transaction_status',
             'is_deleted',
             'created_at', 'updated_at',
         )
@@ -159,6 +161,28 @@ class TicketSerializer(NepaliModelSerializer):
             from tickets.services.ticket_service import calculate_ticket_coins_from_ticket
             _, breakdown = calculate_ticket_coins_from_ticket(obj)
             return breakdown
+        except Exception:
+            return None
+
+    def get_coin_transaction_status(self, obj):
+        """
+        Returns the status of the CoinTransaction linked to this ticket,
+        or None if no coin transaction has been created yet.
+        Values: 'pending' | 'approved' | 'rejected' | None
+        """
+        try:
+            from accounting.models import CoinTransaction
+            txn = (
+                CoinTransaction.objects
+                .filter(
+                    tenant=obj.tenant,
+                    source_type=CoinTransaction.SOURCE_TICKET,
+                    source_id=obj.pk,
+                )
+                .values('status')
+                .first()
+            )
+            return txn['status'] if txn else None
         except Exception:
             return None
 

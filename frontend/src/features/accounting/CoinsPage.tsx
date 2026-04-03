@@ -718,7 +718,17 @@ export default function CoinsPage() {
                       </span>
                     </p>
                     <p className="text-xs text-gray-400">
-                      {c.source_type}{c.source_id ? ` #${c.source_id}` : ''} · <DateDisplay adDate={c.created_at} compact />
+                      {c.source_type === 'ticket' && c.source_id ? (
+                        <span
+                          onClick={e => { e.stopPropagation(); navigate(`/tickets/${c.source_id}`) }}
+                          className="text-indigo-500 hover:text-indigo-700 cursor-pointer hover:underline"
+                        >
+                          Ticket #{c.source_id}
+                        </span>
+                      ) : (
+                        <span>{c.source_type}{c.source_id ? ` #${c.source_id}` : ''}</span>
+                      )}
+                      {' · '}<DateDisplay adDate={c.created_at} compact />
                       {c.note && <span className="ml-2 italic">"{c.note}"</span>}
                     </p>
                   </div>

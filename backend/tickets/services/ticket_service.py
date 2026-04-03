@@ -492,6 +492,23 @@ class TicketService:
                 'Use POST /tickets/{id}/close/ to close a ticket and award coins.'
             )
 
+        if ticket.status == Ticket.STATUS_CLOSED:
+            raise TicketStateError(
+                'A closed ticket cannot be re-opened. The ticket is locked once closed.'
+            )
+
+        # Also block if coins have already been issued for this ticket (pending or approved)
+        from accounting.models import CoinTransaction
+        if CoinTransaction.objects.filter(
+            tenant=ticket.tenant,
+            source_type=CoinTransaction.SOURCE_TICKET,
+            source_id=ticket.pk,
+            status__in=[CoinTransaction.STATUS_PENDING, CoinTransaction.STATUS_APPROVED],
+        ).exists():
+            raise TicketStateError(
+                'This ticket has active coin transactions and cannot be re-opened or reassigned.'
+            )
+
         if not is_manager:
             if new_status != Ticket.STATUS_RESOLVED:
                 raise ForbiddenError(

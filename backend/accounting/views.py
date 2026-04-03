@@ -1532,6 +1532,7 @@ class CoinTransactionViewSet(NexusViewSet):
         return self.get_service().list(
             status=params.get('status'),
             staff_id=params.get('staff'),
+            source_type=params.get('source_type'),
             fiscal_year_start=fy_start,
             fiscal_year_end=fy_end,
             requesting_user=self.request.user,

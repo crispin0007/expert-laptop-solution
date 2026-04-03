@@ -59,6 +59,7 @@ interface TicketDetail {
     product_coins: string
     total_coins: string
   } | null
+  coin_transaction_status: 'pending' | 'approved' | 'rejected' | null
 }
 
 interface TicketAttachment {
@@ -1842,32 +1843,56 @@ export default function TicketDetailPage() {
         <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
           {managerView ? (
             <>
-              <div className="flex items-center gap-1">
-                <select
-                  value={newStatus || ticket.status}
-                  onChange={e => setNewStatus(e.target.value)}
-                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  {Object.entries(STATUS_LABELS)
-                    .filter(([v]) => v !== 'closed')
-                    .map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                </select>
-                <button
-                  onClick={() => statusMutation.mutate(newStatus || ticket.status)}
-                  disabled={statusMutation.isPending || !newStatus || newStatus === ticket.status}
-                  className="flex items-center gap-1 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition"
-                >
-                  {statusMutation.isPending && <Loader2 size={11} className="animate-spin" />}
-                  Update
-                </button>
-              </div>
+              {!['closed', 'cancelled'].includes(ticket.status) && !['pending', 'approved'].includes(ticket.coin_transaction_status ?? '') && (
+                <div className="flex items-center gap-1">
+                  <select
+                    value={newStatus || ticket.status}
+                    onChange={e => setNewStatus(e.target.value)}
+                    className="border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    {Object.entries(STATUS_LABELS)
+                      .filter(([v]) => v !== 'closed')
+                      .map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                  <button
+                    onClick={() => statusMutation.mutate(newStatus || ticket.status)}
+                    disabled={statusMutation.isPending || !newStatus || newStatus === ticket.status}
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition"
+                  >
+                    {statusMutation.isPending && <Loader2 size={11} className="animate-spin" />}
+                    Update
+                  </button>
+                </div>
+              )}
               {ticket.status === 'resolved' && can('can_close_tickets') && (
-                <button
-                  onClick={() => setShowCloseModal(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition"
-                >
-                  <Coins size={13} /> Close &amp; Award Coins
-                </button>
+                ticket.coin_transaction_status === 'pending' ? (
+                  <span className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-lg">
+                    <Coins size={13} /> Coins Pending Approval
+                  </span>
+                ) : ticket.coin_transaction_status === 'approved' ? (
+                  <span className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-green-50 border border-green-200 text-green-700 rounded-lg">
+                    <Coins size={13} /> Coins Approved
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => setShowCloseModal(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition"
+                  >
+                    <Coins size={13} /> Close &amp; Award Coins
+                  </button>
+                )
+              )}
+              {ticket.status === 'closed' && ticket.coin_transaction_status && (
+                <span className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border ${
+                  ticket.coin_transaction_status === 'approved'
+                    ? 'bg-green-50 border-green-200 text-green-700'
+                    : ticket.coin_transaction_status === 'rejected'
+                    ? 'bg-red-50 border-red-200 text-red-600'
+                    : 'bg-amber-50 border-amber-200 text-amber-700'
+                }`}>
+                  <Coins size={13} />
+                  Coins {ticket.coin_transaction_status === 'approved' ? 'Approved' : ticket.coin_transaction_status === 'rejected' ? 'Rejected' : 'Pending Approval'}
+                </span>
               )}
             </>
           ) : (

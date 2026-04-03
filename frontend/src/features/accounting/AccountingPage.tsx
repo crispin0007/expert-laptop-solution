@@ -183,7 +183,7 @@ interface StaffSalaryProfile {
 }
 interface CoinTx {
   id: number; staff: number; staff_name: string; amount: string
-  source_type: string; status: string; note: string
+  source_type: string; source_id: number | null; status: string; note: string
   approved_by_name: string | null; created_at: string
 }
 interface Customer { id: number; name: string }
@@ -3902,12 +3902,16 @@ function PayslipsTab() {
     queryKey: ['payslips', fyYear],
     queryFn: () => apiClient.get(addFyParam(ACCOUNTING.PAYSLIPS, fyYear)).then(r => toPage<Payslip>(r.data)),
   })
-  const [coinStatusFilter, setCoinStatusFilter] = useState<'pending' | 'approved' | ''>('pending')
+  const [coinStatusFilter, setCoinStatusFilter] = useState<'' | 'pending' | 'approved'>('pending')
+  const [coinSourceFilter, setCoinSourceFilter] = useState<'' | 'ticket'>('')
   const { data: coins, isLoading: coinsLoading } = useQuery<ApiPage<CoinTx>>({
-    queryKey: ['coins', coinStatusFilter],
+    queryKey: ['coins', coinStatusFilter, coinSourceFilter],
     queryFn: () => {
-      const url = coinStatusFilter ? `${ACCOUNTING.COINS}?status=${coinStatusFilter}` : ACCOUNTING.COINS
-      return apiClient.get(url).then(r => toPage<CoinTx>(r.data))
+      const params = new URLSearchParams()
+      if (coinStatusFilter) params.set('status', coinStatusFilter)
+      if (coinSourceFilter) params.set('source_type', coinSourceFilter)
+      const qs = params.toString()
+      return apiClient.get(qs ? `${ACCOUNTING.COINS}?${qs}` : ACCOUNTING.COINS).then(r => toPage<CoinTx>(r.data))
     },
   })
   // Staff list for the generate modal and salary form
@@ -4247,15 +4251,32 @@ function PayslipsTab() {
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50">
             <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Coin Transactions</span>
-            <div className="flex gap-1">
-              {([['pending', 'Pending'], ['approved', 'Approved'], ['', 'All']] as const).map(([val, label]) => (
-                <button key={label} onClick={() => setCoinStatusFilter(val)}
-                  className={`px-3 py-1 rounded-full text-xs font-medium transition ${
-                    coinStatusFilter === val ? 'bg-indigo-100 text-indigo-700' : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'
-                  }`}>
-                  {label}
-                </button>
-              ))}
+            <div className="flex gap-1 flex-wrap justify-end">
+              {([['pending', ''] as const, ['approved', ''] as const, ['' , ''] as const] as ['' | 'pending' | 'approved', '' | 'ticket'][]).map(([s, src], i) => {
+                const label = s === 'pending' && !src ? 'Pending' : s === 'approved' && !src ? 'Approved' : 'All'
+                const active = coinStatusFilter === s && coinSourceFilter === src
+                return (
+                  <button key={i} onClick={() => { setCoinStatusFilter(s); setCoinSourceFilter(src) }}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition ${
+                      active ? 'bg-indigo-100 text-indigo-700' : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'
+                    }`}>
+                    {label}
+                  </button>
+                )
+              })}
+              <span className="w-px h-5 bg-gray-200 self-center mx-0.5" />
+              {([['pending', 'ticket'] as const, ['approved', 'ticket'] as const] as ['' | 'pending' | 'approved', '' | 'ticket'][]).map(([s, src], i) => {
+                const label = s === 'pending' ? 'Ticket Pending' : 'Ticket Done'
+                const active = coinStatusFilter === s && coinSourceFilter === src
+                return (
+                  <button key={i} onClick={() => { setCoinStatusFilter(s); setCoinSourceFilter(src) }}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition ${
+                      active ? 'bg-amber-100 text-amber-700' : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'
+                    }`}>
+                    {label}
+                  </button>
+                )
+              })}
             </div>
           </div>
           <table className="w-full text-sm">
@@ -4275,7 +4296,19 @@ function PayslipsTab() {
                 >
                   <td className="px-4 py-3 text-gray-700">{c.staff_name}</td>
                   <td className="px-4 py-3 font-semibold text-indigo-700">{c.amount} coins</td>
-                  <td className="px-4 py-3 text-gray-500 text-xs capitalize">{c.source_type.replace('_', ' ')}</td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">
+                    {c.source_type === 'ticket' && c.source_id ? (
+                      <a
+                        href={`/tickets/${c.source_id}`}
+                        onClick={e => e.stopPropagation()}
+                        className="text-indigo-600 hover:underline"
+                      >
+                        Ticket #{c.source_id}
+                      </a>
+                    ) : (
+                      <span className="capitalize">{c.source_type.replace('_', ' ')}</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-gray-500 text-xs max-w-xs truncate">{c.note || '—'}</td>
                   <td className="px-4 py-3"><Badge status={c.status} /></td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{c.approved_by_name ?? '—'}</td>
@@ -4291,7 +4324,7 @@ function PayslipsTab() {
               ))}
             </tbody>
           </table>
-          {!coins?.results?.length && <EmptyState message={`No ${coinStatusFilter || ''} coin transactions.`} />}
+          {!coins?.results?.length && <EmptyState message={`No ${coinSourceFilter === 'ticket' ? 'ticket ' : ''}${coinStatusFilter || ''} coin transactions.`} />}
         </div>
       ))}
 

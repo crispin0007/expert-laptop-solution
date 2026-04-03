@@ -36,6 +36,7 @@ class CoinService:
         self,
         status=None,
         staff_id=None,
+        source_type=None,
         fiscal_year_start=None,
         fiscal_year_end=None,
         requesting_user=None,
@@ -56,6 +57,8 @@ class CoinService:
         )
         if status:
             qs = qs.filter(status=status)
+        if source_type:
+            qs = qs.filter(source_type=source_type)
         if staff_id:
             qs = qs.filter(staff_id=staff_id)
         elif not is_manager and requesting_user is not None:
@@ -189,6 +192,15 @@ class CoinService:
 
         if source_type not in dict(CoinTransaction.SOURCE_TYPES):
             source_type = CoinTransaction.SOURCE_MANUAL
+
+        # Prevent duplicate coin awards for the same ticket
+        if source_type == CoinTransaction.SOURCE_TICKET and source_id:
+            if CoinTransaction.objects.filter(
+                tenant=self.tenant,
+                source_type=CoinTransaction.SOURCE_TICKET,
+                source_id=source_id,
+            ).exists():
+                raise ValidationError('Coins have already been recorded for this ticket.')
 
         ct = CoinTransaction.objects.create(
             tenant=self.tenant,
