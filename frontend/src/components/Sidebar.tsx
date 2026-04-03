@@ -51,6 +51,8 @@ import { useAuthStore } from '../store/authStore'
 import { useTenantStore } from '../store/tenantStore'
 import { usePermissions } from '../hooks/usePermissions'
 import { useModules } from '../hooks/useModules'
+import { MODULE_SECTIONS } from '../config/moduleNav'
+import type { UserPermissions } from '../store/authStore'
 // ── Simple module nav registry ─────────────────────────────────────────────────
 // Add a new entry here and it automatically appears in the sidebar whenever the
 // module is active for the tenant — no other file needs to change.
@@ -512,13 +514,17 @@ function SidebarContent({
             {perms.can('can_manage_roles') && (
               <NavItem to="/roles"       label="Roles"       icon={Shield}     collapsed={collapsed} />
             )}
-            {/* HRM module nav */}
-            {modules.has('hrm') && perms.can('can_view_hrm') && (
-              <NavSection label="HR Management" icon={Users} basePath="/hrm" collapsed={collapsed}>
-                <SubNavItem to="/hrm?tab=directory" label="Staff Directory" icon={<UserCircle size={13} />} />
-                <SubNavItem to="/hrm?tab=leaves"    label="Leaves"          icon={<CalendarDays size={13} />} />
-              </NavSection>
-            )}
+            {/* Auto-rendered MODULE_SECTIONS — add new modules to src/config/moduleNav.tsx only */}
+            {MODULE_SECTIONS
+              .filter(m => modules.has(m.key) && (!m.perm || perms.can(m.perm as keyof UserPermissions)))
+              .map(m => (
+                <NavSection key={m.key} label={m.label} icon={m.icon} basePath={m.basePath} collapsed={collapsed}>
+                  {m.sub.map(s => (
+                    <SubNavItem key={s.to} to={s.to} label={s.label} icon={s.icon} />
+                  ))}
+                </NavSection>
+              ))
+            }
             {/* Auto-rendered people-section module items. */}
             {SIMPLE_MODULE_NAV
               .filter(m => m.section === 'people' && modules.has(m.key) && (!m.perm || perms.can(m.perm)))

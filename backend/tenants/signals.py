@@ -1,6 +1,6 @@
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, m2m_changed
 from django.dispatch import receiver
-from .models import Tenant
+from .models import Tenant, Plan
 
 
 @receiver(post_save, sender=Tenant)
@@ -53,3 +53,32 @@ def create_owner_membership(sender, instance, created, **kwargs):
         seed_leave_types(instance)
     except Exception:
         pass  # hrm may not be installed in all deployments
+
+
+@receiver(m2m_changed, sender=Plan.modules.through)
+def bust_tenant_module_cache_on_plan_change(sender, instance, action, **kwargs):
+    """
+    Whenever a Plan's module set changes (post_add / post_remove / post_clear),
+    clear the active_modules_set Redis cache for every tenant on that plan.
+
+    This fires automatically whether the change comes from:
+      - A data migration  (plan.modules.add / set)
+      - The admin panel
+      - The superadmin Plan management API
+    No more stale caches after deploying a new module migration.
+    """
+    if action not in ('post_add', 'post_remove', 'post_clear'):
+        return
+
+    # instance is a Plan when the M2M is accessed as plan.modules.*
+    # instance is a Module when accessed as module.plans.*
+    # Both cases: collect the affected plans.
+    if isinstance(instance, Plan):
+        plans = [instance]
+    else:
+        # instance is a Module — all plans that include it
+        plans = list(instance.plans.all())
+
+    for plan in plans:
+        for tenant in Tenant.objects.filter(plan=plan, is_deleted=False).only('slug'):
+            tenant.clear_module_cache()
