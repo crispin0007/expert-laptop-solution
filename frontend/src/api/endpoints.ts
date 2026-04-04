@@ -117,6 +117,7 @@ export const ACCOUNTING = {
   ACCOUNTS: '/accounting/accounts/',
   ACCOUNT_DETAIL: (id: number) => `/accounting/accounts/${id}/`,
   ACCOUNTS_TRIAL_BALANCE: '/accounting/accounts/trial-balance/',
+  ACCOUNTS_RESET_TO_DEFAULT: '/accounting/accounts/reset-to-default/',
   ACCOUNT_GROUPS: '/accounting/account-groups/',
 
   // ── Bank Accounts ────────────────────────────────────────────────────────
@@ -204,6 +205,9 @@ export const ACCOUNTING = {
   // System
   REPORT_ACTIVITY_LOG: '/accounting/reports/activity-log/',
   REPORT_USER_LOG: '/accounting/reports/user-log/',
+  // Services
+  REPORT_SERVICE_LEDGER: '/accounting/reports/service-ledger/',
+  REPORT_SERVICE_REPORT: '/accounting/reports/service-report/',
 
   // ── Coins ─────────────────────────────────────────────────────────────────
   COINS: '/accounting/coins/',
@@ -384,10 +388,15 @@ export const INVENTORY = {
   SUPPLIER_PAYMENT_SUMMARY: '/inventory/supplier-payments/summary/',
   // Purchase Order PDF
   PO_PDF: (id: number) => `/inventory/purchase-orders/${id}/pdf/`,
+  // Service catalog
+  SERVICES: '/inventory/services/',
+  SERVICE_DETAIL: (id: number) => `/inventory/services/${id}/`,
 } as const
 
 export const HRM = {
+  DASHBOARD:            '/hrm/dashboard/',
   LEAVE_TYPES:          '/hrm/leave-types/',
+  LEAVE_TYPE_DETAIL:    (id: number) => `/hrm/leave-types/${id}/`,
   LEAVE_TYPE_SEED:      '/hrm/leave-types/seed_defaults/',
   LEAVE_BALANCES:       '/hrm/leave-balances/',
   LEAVE_BALANCE_SEED:   '/hrm/leave-balances/seed_year/',
@@ -398,6 +407,23 @@ export const HRM = {
   LEAVE_REQUEST_CANCEL: (id: number) => `/hrm/leave-requests/${id}/cancel/`,
   PROFILES:             '/hrm/profiles/',
   PROFILE_DETAIL:       (id: number) => `/hrm/profiles/${id}/`,
+
+  // Attendance
+  ATTENDANCE_POLICY:        '/hrm/attendance-policy/',
+  ATTENDANCE:               '/hrm/attendance/',
+  ATTENDANCE_DETAIL:        (id: number) => `/hrm/attendance/${id}/`,
+  ATTENDANCE_CLOCK_IN:      '/hrm/attendance/clock_in/',
+  ATTENDANCE_CLOCK_OUT:     '/hrm/attendance/clock_out/',
+  ATTENDANCE_MANUAL_MARK:   '/hrm/attendance/manual_mark/',
+  ATTENDANCE_TODAY:         '/hrm/attendance/today/',
+  ATTENDANCE_SUMMARY:       '/hrm/attendance/summary/',
+  ATTENDANCE_DAILY_REPORT:  '/hrm/attendance/daily_report/',
+  ATTENDANCE_MONTHLY_REPORT:'/hrm/attendance/monthly_report/',
+  // Shifts
+  SHIFTS:                   '/hrm/shifts/',
+  SHIFT_DETAIL:             (id: number) => `/hrm/shifts/${id}/`,
+  SHIFT_ASSIGNMENTS:        '/hrm/shift-assignments/',
+  SHIFT_ASSIGNMENT_DETAIL:  (id: number) => `/hrm/shift-assignments/${id}/`,
 } as const
 
 export const CMS = {

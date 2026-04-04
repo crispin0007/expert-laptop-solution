@@ -297,3 +297,129 @@ def test_invalid_task_status_raises():
 
     with pytest.raises(ValueError):
         project_svc.update_task_status(task=task, new_status='flying')
+
+
+# ─── Round-2 fix tests ────────────────────────────────────────────────────────
+
+@pytest.mark.django_db
+def test_update_task_status_advances_updated_at():
+    """update_task_status includes updated_at in save so the column advances."""
+    import time
+    tenant = _tenant('task-updat')
+    admin = _user('admin@task-updat.com')
+    _member(admin, tenant, role='admin')
+    project = _make_project(tenant, admin)
+    task = _make_task(project, tenant, admin)
+
+    before = task.updated_at
+    time.sleep(0.05)
+    updated = project_svc.update_task_status(task=task, new_status=ProjectTask.STATUS_IN_PROGRESS)
+    updated.refresh_from_db()
+
+    assert updated.updated_at > before
+
+
+@pytest.mark.django_db
+def test_update_task_assignee_advances_updated_at():
+    """update_task_assignee includes updated_at in save."""
+    import time
+    tenant = _tenant('task-assign-up')
+    admin = _user('admin@task-assign-up.com')
+    assignee = _user('staff@task-assign-up.com')
+    _member(admin, tenant, role='admin')
+    _member(assignee, tenant, role='staff')
+    project = _make_project(tenant, admin)
+    task = _make_task(project, tenant, admin)
+
+    before = task.updated_at
+    time.sleep(0.05)
+    updated = project_svc.update_task_assignee(task=task, new_assignee_id=assignee.pk)
+    updated.refresh_from_db()
+
+    assert updated.updated_at > before
+
+
+@pytest.mark.django_db
+def test_coin_reward_reads_from_tenant():
+    """Completing a task uses tenant.task_coin_reward, not the hardcoded 1."""
+    from accounting.models import CoinTransaction
+    tenant = _tenant('coin-reward')
+    tenant.task_coin_reward = 5
+    tenant.save(update_fields=['task_coin_reward'])
+    admin = _user('admin@coin-reward.com')
+    assignee = _user('staff@coin-reward.com')
+    _member(admin, tenant, role='admin')
+    _member(assignee, tenant, role='staff')
+    project = _make_project(tenant, admin)
+    task = _make_task(project, tenant, admin, title='Rewarded task')
+    task.assigned_to = assignee
+    task.save(update_fields=['assigned_to'])
+
+    project_svc.update_task_status(task=task, new_status=ProjectTask.STATUS_DONE)
+
+    txn = CoinTransaction.objects.filter(source_type='task', source_id=task.pk).first()
+    assert txn is not None
+    assert int(txn.amount) == 5
+
+
+@pytest.mark.django_db
+def test_file_attachment_rejects_oversized():
+    """ProjectAttachmentSerializer rejects files > 20 MB."""
+    from unittest.mock import MagicMock
+    from projects.serializers import ProjectAttachmentSerializer
+    from rest_framework import serializers as drf_serializers
+
+    big_file = MagicMock()
+    big_file.size = 21 * 1024 * 1024  # 21 MB
+    big_file.content_type = 'application/pdf'
+
+    serializer = ProjectAttachmentSerializer()
+    with pytest.raises(drf_serializers.ValidationError):
+        serializer.validate_file(big_file)
+
+
+@pytest.mark.django_db
+def test_file_attachment_rejects_disallowed_type():
+    """ProjectAttachmentSerializer rejects executable content types."""
+    from unittest.mock import MagicMock
+    from projects.serializers import ProjectAttachmentSerializer
+    from rest_framework import serializers as drf_serializers
+
+    exe_file = MagicMock()
+    exe_file.size = 1024
+    exe_file.content_type = 'application/x-msdownload'
+
+    serializer = ProjectAttachmentSerializer()
+    with pytest.raises(drf_serializers.ValidationError):
+        serializer.validate_file(exe_file)
+
+
+@pytest.mark.django_db
+def test_from_db_sets_pre_state_on_project():
+    """Project.from_db() sets _pre_manager_id and _pre_status without extra query."""
+    tenant = _tenant('proj-fromdb')
+    admin = _user('admin@proj-fromdb.com')
+    _member(admin, tenant, role='admin')
+    project = _make_project(tenant, admin, status='active')
+
+    fetched = Project.objects.get(pk=project.pk)
+    assert fetched._pre_status == 'active'
+    assert fetched._pre_manager_id == fetched.manager_id
+
+
+@pytest.mark.django_db
+def test_from_db_sets_pre_state_on_task():
+    """ProjectTask.from_db() sets _pre_assigned_to_id and _pre_status."""
+    tenant = _tenant('task-fromdb')
+    admin = _user('admin@task-fromdb.com')
+    assignee = _user('staff@task-fromdb.com')
+    _member(admin, tenant, role='admin')
+    _member(assignee, tenant, role='staff')
+    project = _make_project(tenant, admin)
+    task = _make_task(project, tenant, admin)
+    task.assigned_to = assignee
+    task.save(update_fields=['assigned_to'])
+
+    fetched = ProjectTask.objects.get(pk=task.pk)
+    assert fetched._pre_status == ProjectTask.STATUS_TODO
+    assert fetched._pre_assigned_to_id == assignee.pk

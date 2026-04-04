@@ -27,17 +27,11 @@ def handle_ticket_status_change(sender, instance, created, **kwargs):
     - resolved_at / closed_at are set by the view (change_status action).
     """
     if created:
-        return  # creation handled by TicketCreateSerializer
+        return  # creation handled by TicketService
 
-    try:
-        sla = instance.sla
-    except Exception:
-        return
-
-    terminal_statuses = ('resolved', 'closed', 'cancelled')
-    if instance.status in terminal_statuses and not sla.breached:
-        # Ticket resolved before SLA breach — no further action needed.
-        pass
+    # Reserved for future SLA breach-on-close logic.
+    # All status transition side-effects are handled in TicketService.change_status()
+    # and TicketService.close_ticket() to keep logic explicit and testable.
 
 
 # ---------------------------------------------------------------------------

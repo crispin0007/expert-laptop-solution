@@ -44,6 +44,38 @@ class ProjectProductSerializer(serializers.ModelSerializer):
         read_only_fields = ('project', 'product_name', 'unit_price', 'is_service')
 
 
+class ProjectListSerializer(NepaliModelSerializer):
+    """Lightweight serializer for list endpoints — safe for mobile (4-6 fields)."""
+    tasks_count = serializers.SerializerMethodField()
+    done_tasks_count = serializers.SerializerMethodField()
+    manager_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Project
+        fields = (
+            'id', 'project_number', 'name', 'status',
+            'manager', 'manager_name', 'tasks_count', 'done_tasks_count',
+            'start_date', 'end_date', 'created_at',
+        )
+        read_only_fields = fields
+
+    def get_tasks_count(self, obj):
+        if hasattr(obj, 'tasks_count'):
+            return obj.tasks_count
+        return obj.tasks.count()
+
+    def get_done_tasks_count(self, obj):
+        if hasattr(obj, 'done_tasks_count'):
+            return obj.done_tasks_count
+        from .models import ProjectTask
+        return obj.tasks.filter(status=ProjectTask.STATUS_DONE).count()
+
+    def get_manager_name(self, obj):
+        if obj.manager:
+            return obj.manager.get_full_name() or obj.manager.email
+        return None
+
+
 class ProjectSerializer(NepaliModelSerializer):
     milestones = ProjectMilestoneSerializer(many=True, read_only=True)
     tasks_count = serializers.SerializerMethodField()
@@ -71,10 +103,31 @@ class ProjectSerializer(NepaliModelSerializer):
                             'manager_name', 'tasks_count', 'done_tasks_count',
                             'team_member_names')
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Scope team_members choices to users who are members of this tenant.
+        # Prevents cross-tenant user injection via the team_members field.
+        request = self.context.get('request')
+        if request and getattr(request, 'tenant', None):
+            from accounts.models import TenantMembership
+            tenant_user_ids = (
+                TenantMembership.objects
+                .filter(tenant=request.tenant, is_active=True)
+                .values_list('user_id', flat=True)
+            )
+            self.fields['team_members'].child_relation.queryset = (
+                User.objects.filter(pk__in=tenant_user_ids)
+            )
+
     def get_tasks_count(self, obj):
+        # Use DB annotation when available (set by ProjectViewSet.get_queryset)
+        if hasattr(obj, 'tasks_count'):
+            return obj.tasks_count
         return obj.tasks.count()
 
     def get_done_tasks_count(self, obj):
+        if hasattr(obj, 'done_tasks_count'):
+            return obj.done_tasks_count
         return obj.tasks.filter(status=ProjectTask.STATUS_DONE).count()
 
     def get_manager_name(self, obj):
@@ -83,21 +136,8 @@ class ProjectSerializer(NepaliModelSerializer):
         return None
 
     def get_team_member_names(self, obj):
+        # team_members is prefetched by ProjectViewSet.get_queryset — no extra query
         return [u.get_full_name() or u.email for u in obj.team_members.all()]
-
-    def create(self, validated_data):
-        team_members = validated_data.pop('team_members', [])
-        project = super().create(validated_data)
-        if team_members:
-            project.team_members.set(team_members)
-        return project
-
-    def update(self, instance, validated_data):
-        team_members = validated_data.pop('team_members', None)
-        instance = super().update(instance, validated_data)
-        if team_members is not None:
-            instance.team_members.set(team_members)
-        return instance
 
 
 class ProjectProductRequestSerializer(serializers.ModelSerializer):
@@ -180,3 +220,25 @@ class ProjectAttachmentSerializer(serializers.ModelSerializer):
             attrs.setdefault('file_name', f.name)
             attrs.setdefault('file_size', f.size)
         return attrs
+
+    def validate_file(self, value):
+        """Reject oversized or disallowed file types."""
+        MAX_BYTES = 20 * 1024 * 1024  # 20 MB
+        ALLOWED_TYPES = {
+            'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+            'application/pdf',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.ms-excel',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'text/plain', 'text/csv',
+            'application/zip',
+        }
+        if value.size > MAX_BYTES:
+            raise serializers.ValidationError('File too large. Maximum size is 20 MB.')
+        content_type = getattr(value, 'content_type', '')
+        if content_type and content_type not in ALLOWED_TYPES:
+            raise serializers.ValidationError(
+                f'File type "{content_type}" is not allowed.'
+            )
+        return value

@@ -33,6 +33,8 @@ def detect_overdue_tasks(self, tenant_id: int) -> None:
             ProjectTask.objects
             .filter(tenant=tenant, due_date__lt=today, is_deleted=False)
             .exclude(status=ProjectTask.STATUS_DONE)
+            # Skip tasks already notified today — prevents re-firing on every beat run
+            .exclude(overdue_notified_at__date=today)
             .iterator(chunk_size=200)
         )
 
@@ -44,6 +46,9 @@ def detect_overdue_tasks(self, tenant_id: int) -> None:
                     'project_id': task.project_id,
                     'assigned_to_id': task.assigned_to_id,
                 }, tenant=tenant)
+                ProjectTask.objects.filter(pk=task.id).update(
+                    overdue_notified_at=timezone.now()
+                )
             except Exception:
                 logger.exception('EventBus failed for task.overdue task=%s', task.id)
 

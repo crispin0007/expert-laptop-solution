@@ -60,6 +60,15 @@ class Project(TenantModel):
     def __str__(self):
         return self.name
 
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        # Cache values used by post_save signals for change detection.
+        # Avoids an extra SELECT in the pre_save signal handler.
+        instance._pre_manager_id = instance.manager_id
+        instance._pre_status = instance.status
+        return instance
+
     def save(self, *args, **kwargs):
         if not self.project_number and self.tenant_id:
             from core.models import next_seq
@@ -125,6 +134,10 @@ class ProjectTask(TenantModel):
     estimated_hours = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     actual_hours = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    overdue_notified_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text='Set when task.overdue event was last fired — prevents re-firing on every beat run.',
+    )
 
     class Meta:
         ordering = ['due_date', '-priority']
@@ -132,6 +145,13 @@ class ProjectTask(TenantModel):
     def __str__(self):
         return f"[{self.status}] {self.title} ({self.project.name})"
 
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        # Cache values used by post_save signals for change detection.
+        instance._pre_assigned_to_id = instance.assigned_to_id
+        instance._pre_status = instance.status
+        return instance
 
 class ProjectProduct(TenantModel):
     """

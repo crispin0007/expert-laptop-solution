@@ -21,11 +21,6 @@
  */
 
 import type { ElementType, ReactNode } from 'react'
-import {
-  Users,
-  CalendarDays,
-  UserCircle,
-} from 'lucide-react'
 import type { UserPermissions } from '../store/authStore'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -68,18 +63,7 @@ export type ModuleItemEntry = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const MODULE_SECTIONS: ModuleSectionEntry[] = [
-  // ── HR Management ──────────────────────────────────────────────────────────
-  {
-    key: 'hrm',
-    label: 'HR Management',
-    icon: Users,
-    basePath: '/hrm',
-    perm: 'can_view_hrm',
-    sub: [
-      { to: '/hrm?tab=directory', label: 'Staff Directory', icon: <UserCircle size={13} /> },
-      { to: '/hrm?tab=leaves',    label: 'Leaves',          icon: <CalendarDays size={13} /> },
-    ],
-  },
+  // HRM is handled explicitly in Sidebar.tsx (needs manager-only tab guards)
 
   // ── Future Phase 2 / 3 modules go here ─────────────────────────────────────
   // Example (do NOT uncomment until Phase 2):

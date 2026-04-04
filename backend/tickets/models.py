@@ -1,4 +1,5 @@
 from django.db import models
+from django.core.validators import MinValueValidator
 from core.models import TenantModel
 from django.conf import settings
 
@@ -215,6 +216,7 @@ class Ticket(TenantModel):
     # Product costs come from TicketProduct.unit_price * quantity.
     service_charge = models.DecimalField(
         max_digits=12, decimal_places=2, default=0,
+        validators=[MinValueValidator(0)],
         help_text='Service/labour fee for this ticket (separate from product costs).',
     )
 
@@ -252,6 +254,12 @@ class TicketSLA(TenantModel):
 
     class Meta:
         ordering = ['breach_at']
+        indexes = [
+            # Used by SLA beat task: filter breached=False + breach_at__lte=now
+            models.Index(fields=['tenant', 'breached', 'breach_at'], name='sla_tenant_breach_idx'),
+            # Used by SLA warning queries: breach_at range lookups
+            models.Index(fields=['tenant', 'breach_at'], name='sla_tenant_breach_at_idx'),
+        ]
 
     def __str__(self):
         return f"SLA {self.ticket} — breach_at={self.breach_at}"
@@ -503,6 +511,14 @@ class VehicleLog(TenantModel):
     @property
     def billing_amount(self):
         return round(self.distance_km * float(self.vehicle.rate_per_km), 2)
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if self.odometer_end is not None and self.odometer_start is not None:
+            if self.odometer_end < self.odometer_start:
+                raise ValidationError(
+                    {'odometer_end': 'Odometer end reading must be greater than or equal to start reading.'}
+                )
 
     def __str__(self):
         return f"{self.vehicle} on {self.date} ({self.distance_km} km)"

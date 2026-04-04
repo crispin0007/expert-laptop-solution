@@ -106,3 +106,42 @@ class TenantMembership(models.Model):
 
     def __str__(self):
         return f"{self.user} @ {self.tenant} ({self.role})"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Password Reset Token  (self-service forgot-password flow)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PasswordResetToken(models.Model):
+    """
+    Single-use token for the self-service password-reset flow.
+
+    Not tenant-scoped — a user's password is global across all their tenants.
+    Tokens expire after PASSWORD_RESET_EXPIRY_MINUTES (default 60) minutes
+    and are marked used immediately on redemption.
+    """
+
+    user       = models.ForeignKey(
+                   'accounts.User',
+                   on_delete=models.CASCADE,
+                   related_name='password_reset_tokens',
+                 )
+    token      = models.CharField(max_length=128, unique=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at    = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"PasswordResetToken(user={self.user_id}, used={self.used_at is not None})"
+
+    @property
+    def is_expired(self) -> bool:
+        from django.utils import timezone
+        return timezone.now() >= self.expires_at
+
+    @property
+    def is_used(self) -> bool:
+        return self.used_at is not None

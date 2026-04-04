@@ -261,7 +261,52 @@ class TicketService:
                 'priority': ticket.priority,
             }, tenant=self.tenant)
         except Exception:
-            pass
+            logger.error(
+                'EventBus.publish ticket.created failed for ticket %s',
+                ticket.pk, exc_info=True,
+            )
+
+        # Fire assignment event + notification when ticket is created pre-assigned.
+        # The assign() method handles the same flow for post-creation assignment.
+        if ticket.assigned_to_id:
+            TicketTimeline.objects.create(
+                tenant=self.tenant,
+                ticket=ticket,
+                event_type=TicketTimeline.EVENT_ASSIGNED,
+                description=(
+                    f"Assigned to {_user_display(ticket.assigned_to)} "
+                    f"by {_user_display(self.user)} on creation."
+                ),
+                actor=self.user,
+                created_by=self.user,
+                metadata={'to': ticket.assigned_to_id},
+            )
+            try:
+                from core.events import EventBus
+                EventBus.publish('ticket.assigned', {
+                    'id': ticket.pk,
+                    'tenant_id': self.tenant.pk,
+                    'assigned_to_id': ticket.assigned_to_id,
+                }, tenant=self.tenant)
+            except Exception:
+                logger.error(
+                    'EventBus.publish ticket.assigned (on create) failed for ticket %s',
+                    ticket.pk, exc_info=True,
+                )
+            try:
+                from notifications.tasks import task_send_ticket_assigned
+                task_send_ticket_assigned.delay(
+                    ticket_id=ticket.pk, assignee_id=ticket.assigned_to_id
+                )
+            except Exception:
+                try:
+                    from notifications.email import send_ticket_assigned
+                    send_ticket_assigned(ticket, ticket.assigned_to)
+                except Exception as _e:
+                    logger.warning(
+                        'Ticket assignment email (on create) failed for ticket %s: %s',
+                        ticket.pk, _e,
+                    )
 
         return ticket
 
@@ -280,12 +325,30 @@ class TicketService:
 
         for field, value in validated_data.items():
             setattr(instance, field, value)
-        instance.save()
+        # Only write the columns that were supplied + updated_at.
+        # A bare .save() re-writes every field and can silently clobber
+        # concurrent edits to columns not in the current request.
+        save_fields = list(validated_data.keys()) + ['updated_at']
+        instance.save(update_fields=save_fields)
 
         if team_members is not None:
             instance.team_members.set(team_members)
         if vehicles is not None:
             instance.vehicles.set(vehicles)
+
+        try:
+            from core.events import EventBus
+            EventBus.publish('ticket.updated', {
+                'id': instance.pk,
+                'tenant_id': self.tenant.pk,
+                'status': instance.status,
+                'priority': instance.priority,
+            }, tenant=self.tenant)
+        except Exception:
+            logger.error(
+                'EventBus.publish ticket.updated failed for ticket %s',
+                instance.pk, exc_info=True,
+            )
 
         return instance
 
@@ -358,7 +421,10 @@ class TicketService:
                     'assigned_to_id': assignee.pk,
                 }, tenant=ticket.tenant)
             except Exception:
-                pass
+                logger.error(
+                    'EventBus.publish ticket.assigned failed for ticket %s',
+                    ticket.pk, exc_info=True,
+                )
 
             # Email notification — async preferred, sync fallback
             try:
@@ -497,6 +563,12 @@ class TicketService:
                 'A closed ticket cannot be re-opened. The ticket is locked once closed.'
             )
 
+        if ticket.status == Ticket.STATUS_CANCELLED:
+            raise TicketStateError(
+                'A cancelled ticket cannot be re-opened. Stock reversals have already been '
+                'applied — create a new ticket instead.'
+            )
+
         # Also block if coins have already been issued for this ticket (pending or approved)
         from accounting.models import CoinTransaction
         if CoinTransaction.objects.filter(
@@ -554,10 +626,15 @@ class TicketService:
 
         try:
             from core.events import EventBus
-            event_name = (
-                'ticket.resolved' if new_status == Ticket.STATUS_RESOLVED
-                else 'ticket.status.changed'
-            )
+            _TERMINAL_STATUSES = (Ticket.STATUS_RESOLVED,)
+            if new_status == Ticket.STATUS_RESOLVED:
+                event_name = 'ticket.resolved'
+            elif new_status == Ticket.STATUS_CANCELLED:
+                event_name = 'ticket.cancelled'
+            elif old_status in _TERMINAL_STATUSES:
+                event_name = 'ticket.reopened'
+            else:
+                event_name = 'ticket.status.changed'
             EventBus.publish(event_name, {
                 'id': ticket.pk,
                 'tenant_id': ticket.tenant_id,
@@ -565,7 +642,10 @@ class TicketService:
                 'new_status': new_status,
             }, tenant=ticket.tenant)
         except Exception:
-            pass
+            logger.error(
+                'EventBus.publish %s failed for ticket %s',
+                event_name, ticket.pk, exc_info=True,
+            )
 
         return ticket
 
@@ -671,22 +751,6 @@ class TicketService:
                     status=CoinTransaction.STATUS_PENDING,
                     note=' '.join(note_parts).strip(),
                 )
-                TicketTimeline.objects.create(
-                    tenant=ticket.tenant,
-                    ticket=ticket,
-                    event_type=TicketTimeline.EVENT_STATUS_CHANGE,
-                    description=(
-                        f"{coin_amount} coin(s) queued for "
-                        f"{_user_display(ticket.assigned_to)}."
-                    ),
-                    actor=actor,
-                    created_by=actor,
-                    metadata={
-                        'coin_amount': str(coin_amount),
-                        'staff_id': ticket.assigned_to_id,
-                        'breakdown': breakdown,
-                    },
-                )
 
         logger.info(
             "Ticket %s closed by %s. coins=%s breakdown=%s",
@@ -702,6 +766,9 @@ class TicketService:
                 'coin_amount': str(coin_amount),
             }, tenant=ticket.tenant)
         except Exception:
-            pass
+            logger.error(
+                'EventBus.publish ticket.closed failed for ticket %s',
+                ticket.pk, exc_info=True,
+            )
 
         return ticket, coin_txn

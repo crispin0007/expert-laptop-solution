@@ -168,6 +168,10 @@ class Tenant(models.Model):
         max_digits=10, decimal_places=4, default=Decimal('1.0'),
         help_text='How many currency units one coin equals (e.g. 10 = 1 coin = Rs. 10)',
     )
+    task_coin_reward = models.PositiveSmallIntegerField(
+        default=1,
+        help_text='Coins awarded to staff when a project task is completed.',
+    )
 
     # Per-tenant JWT signing secret (Item #3 — per-tenant JWT keys).
     # Embedded as a `tenant_sig` HMAC claim in every token issued for this tenant.

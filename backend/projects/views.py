@@ -1,4 +1,5 @@
 from django.utils import timezone
+from django.db.models import Count, Q
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -11,7 +12,7 @@ from core.exceptions import ValidationError as AppValidationError
 from core.permissions import make_role_permission, STAFF_ROLES, MANAGER_ROLES, ALL_ROLES
 from .models import Project, ProjectMilestone, ProjectTask, ProjectProduct, ProjectAttachment, ProjectProductRequest, ProjectMemberSchedule
 from .serializers import (
-    ProjectSerializer, ProjectMilestoneSerializer,
+    ProjectSerializer, ProjectListSerializer, ProjectMilestoneSerializer,
     ProjectTaskSerializer, ProjectProductSerializer, ProjectAttachmentSerializer,
     ProjectProductRequestSerializer, ProjectMemberScheduleSerializer,
 )
@@ -29,6 +30,11 @@ class ProjectViewSet(NexusViewSet):
     queryset = Project.objects.filter(is_deleted=False).select_related('customer', 'manager')
     serializer_class = ProjectSerializer
     pagination_class = NexusPageNumberPagination
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return ProjectListSerializer
+        return ProjectSerializer
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
@@ -72,7 +78,14 @@ class ProjectViewSet(NexusViewSet):
         self.ensure_tenant()
         qs = Project.objects.filter(
             tenant=self.tenant, is_deleted=False
-        ).select_related('customer', 'manager')
+        ).select_related('customer', 'manager').prefetch_related('team_members', 'milestones').annotate(
+            tasks_count=Count('tasks', distinct=True),
+            done_tasks_count=Count(
+                'tasks',
+                filter=Q(tasks__status=ProjectTask.STATUS_DONE),
+                distinct=True,
+            ),
+        )
         if fy_raw := self.request.query_params.get('fiscal_year'):
             try:
                 from core.nepali_date import fiscal_year_date_range, FiscalYear
@@ -81,6 +94,11 @@ class ProjectViewSet(NexusViewSet):
                 qs = qs.filter(created_at__date__gte=start_ad, created_at__date__lte=end_ad)
             except (ValueError, KeyError):
                 pass
+        # ?assigned=me — projects where the current user is manager or team member
+        if self.request.query_params.get('assigned') == 'me':
+            qs = qs.filter(
+                Q(manager=self.request.user) | Q(team_members=self.request.user)
+            ).distinct()
         # Allow filtering to only the projects managed by a specific user
         if manager_id := self.request.query_params.get('manager'):
             try:
@@ -110,8 +128,9 @@ class ProjectMilestoneViewSet(NexusViewSet):
         return qs
 
     def create(self, request, *args, **kwargs):
+        from django.shortcuts import get_object_or_404
         project_pk = self.kwargs.get('project_pk')
-        project    = Project.objects.get(pk=project_pk, tenant=self.request.tenant)
+        project    = get_object_or_404(Project, pk=project_pk, tenant=self.tenant)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         instance = serializer.save(
@@ -125,7 +144,7 @@ class ProjectMilestoneViewSet(NexusViewSet):
         milestone = self.get_object()
         milestone.is_completed = not milestone.is_completed
         milestone.completed_at = timezone.now() if milestone.is_completed else None
-        milestone.save(update_fields=['is_completed', 'completed_at'])
+        milestone.save(update_fields=['is_completed', 'completed_at', 'updated_at'])
         return ApiResponse.success(data=ProjectMilestoneSerializer(milestone).data)
 
 
@@ -147,8 +166,9 @@ class ProjectTaskViewSet(NexusViewSet):
         return qs
 
     def create(self, request, *args, **kwargs):
+        from django.shortcuts import get_object_or_404
         project_pk = self.kwargs.get('project_pk')
-        project    = Project.objects.get(pk=project_pk, tenant=self.request.tenant)
+        project    = get_object_or_404(Project, pk=project_pk, tenant=self.tenant)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         from projects import services as project_service
@@ -266,21 +286,17 @@ class ProjectProductRequestViewSet(NexusViewSet):
         project_pk = self.kwargs.get('project_pk')
         if project_pk:
             qs = qs.filter(project_id=project_pk)
-        # Staff can only see their own requests unless manager+
+        # Staff see only their own requests; managers see all.
         user = self.request.user
         from core.permissions import MANAGER_ROLES as _MGR
-        from accounts.models import TenantMembership
-        try:
-            role = TenantMembership.objects.get(user=user, tenant=self.tenant, is_active=True).role
-        except Exception:
-            role = None
-        if role not in _MGR and not getattr(user, 'is_superadmin', False):
+        if self.user_role not in _MGR and not getattr(user, 'is_superadmin', False):
             qs = qs.filter(requested_by=user)
         return qs
 
     def create(self, request, *args, **kwargs):
+        from django.shortcuts import get_object_or_404
         project_pk = self.kwargs.get('project_pk')
-        project    = Project.objects.get(pk=project_pk, tenant=self.tenant)
+        project    = get_object_or_404(Project, pk=project_pk, tenant=self.tenant)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         instance = serializer.save(
@@ -358,9 +374,10 @@ class ProjectAttachmentViewSet(NexusViewSet):
         return qs
 
     def create(self, request, *args, **kwargs):
+        from django.shortcuts import get_object_or_404
         self.ensure_tenant()
         project_pk = self.kwargs.get('project_pk')
-        project    = Project.objects.get(pk=project_pk, tenant=self.tenant)
+        project    = get_object_or_404(Project, pk=project_pk, tenant=self.tenant)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         instance = serializer.save(
@@ -409,7 +426,8 @@ class ProjectMemberScheduleViewSet(NexusViewSet):
     def create(self, request, *args, **kwargs):
         self.ensure_tenant()
         project_pk = self.kwargs.get('project_pk')
-        project = Project.objects.get(pk=project_pk, tenant=self.tenant)
+        from django.shortcuts import get_object_or_404
+        project = get_object_or_404(Project, pk=project_pk, tenant=self.tenant)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         instance = serializer.save(
@@ -424,5 +442,5 @@ class ProjectMemberScheduleViewSet(NexusViewSet):
         """Toggle is_present for a schedule entry."""
         schedule = self.get_object()
         schedule.is_present = not schedule.is_present
-        schedule.save(update_fields=['is_present'])
+        schedule.save(update_fields=['is_present', 'updated_at'])
         return ApiResponse.success(data=ProjectMemberScheduleSerializer(schedule).data)

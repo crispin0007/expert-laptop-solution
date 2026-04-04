@@ -14,6 +14,10 @@ export default defineConfig({
     // Split into smaller chunks so Node doesn't need to hold the entire bundle
     // in memory at once during the render-chunks stage (prevents OOM on servers
     // with limited RAM).
+    // GrapeJS (CMS visual editor) is inherently ~1.1 MB minified — it is already
+    // correctly isolated to the /cms/pages/:id/edit route via React.lazy().
+    // Raise the warning threshold above its size to suppress the false positive.
+    chunkSizeWarningLimit: 1200,
     rollupOptions: {
       output: {
         manualChunks: {
@@ -28,6 +32,12 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,                          // listen on all interfaces (0.0.0.0)
+    watch: {
+      // Docker on macOS doesn't forward inotify events through volume mounts,
+      // so Vite HMR silently stops working. Polling ensures changes are detected.
+      usePolling: true,
+      interval: 300,
+    },
     allowedHosts: ['localhost', '192.168.100.100', '192.168.100.109', '.localhost'],  // root + Barrier PC + all *.localhost subdomains
     proxy: {
       '/api': {

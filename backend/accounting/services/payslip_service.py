@@ -76,13 +76,13 @@ class PayslipService:
 
         for field, value in validated_data.items():
             setattr(instance, field, value)
-        instance.save()
-
+        # Recompute net_pay with the updated values before writing to DB.
         instance.net_pay = (
             instance.base_salary + instance.bonus + instance.gross_amount
             - instance.tds_amount - instance.deductions
         )
-        instance.save(update_fields=['net_pay'])
+        update_fields = list(validated_data.keys()) + ['net_pay', 'updated_at']
+        instance.save(update_fields=update_fields)
         return instance
 
     def delete(self, instance):
@@ -198,7 +198,24 @@ class PayslipService:
             unpaid_leave_days = Decimal('0')
             leave_deduction   = Decimal('0')
 
-        net = base + bon + gross - tds_amount - other_ded - leave_deduction
+        # HRM: compute attendance (absent/late) deduction for this pay period
+        attendance_deduction = Decimal('0')
+        try:
+            from hrm.services.attendance_service import get_deduction as get_attendance_deduction
+            working_days = getattr(self.tenant, 'working_days_per_month', None) or Decimal('26')
+            attendance_deduction = get_attendance_deduction(
+                self.tenant,
+                staff,
+                period_start=ps,
+                period_end=pe,
+                base_salary=base,
+                working_days_per_month=int(working_days),
+            )
+        except Exception as exc:
+            logger.warning('HRM attendance deduction lookup failed for staff=%s: %s', staff_id, exc)
+            attendance_deduction = Decimal('0')
+
+        net = base + bon + gross - tds_amount - other_ded - leave_deduction - attendance_deduction
 
         payslip, created = Payslip.objects.get_or_create(
             tenant=self.tenant,
@@ -217,6 +234,7 @@ class PayslipService:
                 'created_by':         self.user,
                 'unpaid_leave_days':  unpaid_leave_days,
                 'leave_deduction':    leave_deduction,
+                'attendance_deduction': attendance_deduction,
             },
         )
         if not created:
@@ -236,6 +254,7 @@ class PayslipService:
             payslip.net_pay            = net
             payslip.unpaid_leave_days  = unpaid_leave_days
             payslip.leave_deduction    = leave_deduction
+            payslip.attendance_deduction = attendance_deduction
             payslip.save()
 
         # ── Auto-create / replace TDSEntry for this salary ────────────────────
@@ -295,7 +314,7 @@ class PayslipService:
             raise ConflictError('Only draft payslips can be issued.')
         payslip.status    = Payslip.STATUS_ISSUED
         payslip.issued_at = timezone.now()
-        payslip.save(update_fields=['status', 'issued_at'])
+        payslip.save(update_fields=['status', 'issued_at', 'updated_at'])
         return payslip
 
     @transaction.atomic
@@ -349,7 +368,7 @@ class PayslipService:
         payslip.paid_at        = timezone.now()
         payslip.payment_method = payment_method
         payslip.bank_account   = bank_account
-        payslip.save(update_fields=['status', 'paid_at', 'payment_method', 'bank_account'])
+        payslip.save(update_fields=['status', 'paid_at', 'payment_method', 'bank_account', 'updated_at'])
 
         logger.info("Payslip %s marked paid. payment=%s", payslip.pk, payment and payment.pk)
         try:

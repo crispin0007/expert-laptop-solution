@@ -213,6 +213,13 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'hrm.tasks.task_seed_yearly_leave_balances_all_tenants',
         'schedule': crontab(hour=1, minute=0, month_of_year='4', day_of_month='14,15,16'),
     },
+    # Mark absent: runs at 15:15 UTC (≈ 21:00 Nepal UTC+5:45) every day.
+    # Any staff with no attendance record for today are marked absent.
+    # Skips non-work days per AttendancePolicy.work_days.
+    'mark-absent-daily': {
+        'task': 'hrm.tasks.task_mark_absent_all_tenants',
+        'schedule': crontab(hour=15, minute=15),
+    },
 }
 
 AUTH_PASSWORD_VALIDATORS = [

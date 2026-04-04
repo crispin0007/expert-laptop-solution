@@ -1,7 +1,8 @@
 """
 hrm/models.py
 
-All HRM models — Leave Types, Leave Balances, Leave Requests, and Staff Profiles.
+All HRM models — Leave Types, Leave Balances, Leave Requests, Staff Profiles,
+Attendance Policy, and Attendance Records.
 
 Rules:
 - All models inherit TenantModel (never models.Model directly).
@@ -9,6 +10,7 @@ Rules:
 - Soft delete on LeaveRequest / StaffProfile via TenantModel.is_deleted.
 - Leave year = BS year integer (e.g., 2081).
 """
+from datetime import time as datetime_time
 from decimal import Decimal
 
 from django.conf import settings
@@ -241,3 +243,280 @@ class StaffProfile(TenantModel):
 
     def __str__(self):
         return f"StaffProfile({self.membership_id})"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Attendance Policy  (singleton per tenant)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AttendancePolicy(TenantModel):
+    """
+    Per-tenant attendance configuration.
+
+    There is exactly one policy per tenant (enforced by UniqueConstraint).
+    Use attendance_service.get_or_create_policy(tenant) to access it so
+    a sensible default is always returned.
+
+    work_days stores Python weekday() integers (Mon=0 … Sun=6).
+    Nepal default: [0, 1, 2, 3, 4, 6]  (Mon–Fri + Sun; Saturday off).
+    """
+    expected_start_time = models.TimeField(
+        default=datetime_time(9, 0),
+        help_text='Expected clock-in time (local timezone).',
+    )
+    expected_end_time = models.TimeField(
+        default=datetime_time(18, 0),
+        help_text='Expected clock-out time (local timezone).',
+    )
+    late_threshold_minutes = models.PositiveSmallIntegerField(
+        default=15,
+        help_text='Minutes after expected_start_time before staff is marked Late.',
+    )
+    grace_period_minutes = models.PositiveSmallIntegerField(
+        default=0,
+        help_text='Per-arrival grace window subtracted from measured lateness.',
+    )
+    half_day_threshold_hours = models.DecimalField(
+        max_digits=4, decimal_places=1, default=Decimal('4.0'),
+        help_text='Work hours below this → status downgraded to Half Day.',
+    )
+    work_days = models.JSONField(
+        default=list,
+        help_text=(
+            'List of Python weekday() integers that count as work days. '
+            'Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6. '
+            'Nepal default: [0,1,2,3,4,6].'
+        ),
+    )
+    deduct_absent = models.BooleanField(
+        default=True,
+        help_text='Deduct one daily-rate from payslip for each Absent day.',
+    )
+    deduct_late = models.BooleanField(
+        default=True,
+        help_text='Deduct proportional amount from payslip for late minutes.',
+    )
+    late_deduction_grace_minutes = models.PositiveSmallIntegerField(
+        default=60,
+        help_text=(
+            'Total late minutes per pay period allowed before deduction is applied. '
+            'Prevents penalising minor cumulative lateness.'
+        ),
+    )
+
+    class Meta(TenantModel.Meta):
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant'],
+                name='hrm_attendance_policy_one_per_tenant',
+            ),
+        ]
+
+    def __str__(self):
+        return f"AttendancePolicy(tenant={self.tenant_id})"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Attendance Record  (one per staff per calendar day)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AttendanceRecord(TenantModel):
+    """
+    One attendance entry per staff member per calendar day.
+
+    Clock-in / clock-out are full UTC datetimes; the service layer converts
+    them to local time before comparing against AttendancePolicy times.
+    GPS coordinates (lat/lng) are captured when source = 'web' or 'mobile'
+    and the device grants location permission.
+    """
+
+    STATUS_PRESENT  = 'present'
+    STATUS_ABSENT   = 'absent'
+    STATUS_LATE     = 'late'
+    STATUS_HALF_DAY = 'half_day'
+    STATUS_ON_LEAVE = 'on_leave'
+    STATUS_HOLIDAY  = 'holiday'
+    STATUS_WFH      = 'wfh'
+
+    STATUS_CHOICES = [
+        (STATUS_PRESENT,  'Present'),
+        (STATUS_ABSENT,   'Absent'),
+        (STATUS_LATE,     'Late'),
+        (STATUS_HALF_DAY, 'Half Day'),
+        (STATUS_ON_LEAVE, 'On Leave'),
+        (STATUS_HOLIDAY,  'Holiday'),
+        (STATUS_WFH,      'Work From Home'),
+    ]
+
+    SOURCE_MANUAL = 'manual'
+    SOURCE_WEB    = 'web'
+    SOURCE_MOBILE = 'mobile'
+
+    SOURCE_CHOICES = [
+        (SOURCE_MANUAL, 'Manual'),
+        (SOURCE_WEB,    'Web'),
+        (SOURCE_MOBILE, 'Mobile'),
+    ]
+
+    staff             = models.ForeignKey(
+                          settings.AUTH_USER_MODEL,
+                          on_delete=models.CASCADE,
+                          related_name='attendance_records',
+                        )
+    date              = models.DateField(db_index=True)
+    clock_in          = models.DateTimeField(null=True, blank=True)
+    clock_out         = models.DateTimeField(null=True, blank=True)
+    clock_in_lat      = models.DecimalField(
+                          max_digits=9, decimal_places=6, null=True, blank=True,
+                        )
+    clock_in_lng      = models.DecimalField(
+                          max_digits=9, decimal_places=6, null=True, blank=True,
+                        )
+    clock_out_lat     = models.DecimalField(
+                          max_digits=9, decimal_places=6, null=True, blank=True,
+                        )
+    clock_out_lng     = models.DecimalField(
+                          max_digits=9, decimal_places=6, null=True, blank=True,
+                        )
+    clock_in_source   = models.CharField(
+                          max_length=16, choices=SOURCE_CHOICES, default=SOURCE_WEB,
+                        )
+    clock_out_source  = models.CharField(
+                          max_length=16, choices=SOURCE_CHOICES, default=SOURCE_WEB,
+                        )
+    clocked_in_by     = models.ForeignKey(
+                          settings.AUTH_USER_MODEL,
+                          null=True, blank=True,
+                          on_delete=models.SET_NULL,
+                          related_name='manual_attendance_records',
+                          help_text='Set when a manager manually marks attendance.',
+                        )
+    status            = models.CharField(
+                          max_length=16,
+                          choices=STATUS_CHOICES,
+                          default=STATUS_ABSENT,
+                          db_index=True,
+                        )
+    late_minutes      = models.PositiveSmallIntegerField(default=0)
+    work_hours        = models.DecimalField(
+                          max_digits=5, decimal_places=2, default=Decimal('0'),
+                        )
+    note              = models.TextField(blank=True)
+
+    class Meta(TenantModel.Meta):
+        unique_together = (('tenant', 'staff', 'date'),)
+        indexes = [
+            models.Index(fields=['tenant', 'staff', 'date']),
+            models.Index(fields=['tenant', 'date']),
+        ]
+
+    # Enhanced tracking fields (added upgrade v2)
+    early_exit_minutes = models.PositiveSmallIntegerField(
+                           default=0,
+                           help_text='Minutes the staff left before expected_end_time / shift end.',
+                         )
+    overtime_minutes   = models.PositiveSmallIntegerField(
+                           default=0,
+                           help_text='Minutes worked beyond expected_end_time / shift end.',
+                         )
+    break_minutes      = models.PositiveSmallIntegerField(
+                           default=0,
+                           help_text='Minutes of break time (deducted from net work hours).',
+                         )
+    admin_remarks      = models.TextField(
+                           blank=True,
+                           help_text='Admin notes on manual overrides or corrections.',
+                         )
+    shift              = models.ForeignKey(
+                           'Shift',
+                           null=True, blank=True,
+                           on_delete=models.SET_NULL,
+                           related_name='attendance_records',
+                           help_text='Shift assigned at clock-in time (snapshot).',
+                         )
+
+    def __str__(self):
+        return f"AttendanceRecord({self.staff_id}, {self.date}, {self.status})"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shift  (named work schedule with overtime rules)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class Shift(TenantModel):
+    """A named work schedule.  Multiple shifts per tenant; one can be default."""
+
+    name                  = models.CharField(max_length=60)
+    start_time            = models.TimeField()
+    end_time              = models.TimeField()
+    grace_period_minutes  = models.PositiveSmallIntegerField(
+                              default=15,
+                              help_text='Minutes late before Staff is marked Late.',
+                            )
+    min_work_hours        = models.DecimalField(
+                              max_digits=4, decimal_places=1, default=Decimal('4.0'),
+                              help_text='Minimum hours to avoid Half Day status.',
+                            )
+    overtime_after_hours  = models.DecimalField(
+                              max_digits=4, decimal_places=1, default=Decimal('8.0'),
+                              help_text='Hours beyond which work is counted as overtime.',
+                            )
+    late_threshold_minutes = models.PositiveSmallIntegerField(
+                               default=15,
+                               help_text='Minutes after start_time + grace before marking Late.',
+                             )
+    work_days             = models.JSONField(
+                              default=list,
+                              help_text=(
+                                  'Python weekday() integers that count as working days for this shift. '
+                                  'Mon=0 … Sun=6. Empty list = inherit from AttendancePolicy.'
+                              ),
+                            )
+    is_default            = models.BooleanField(
+                              default=False,
+                              help_text='Auto-assigned when no ShiftAssignment exists for a staff.',
+                            )
+    is_active             = models.BooleanField(default=True)
+
+    class Meta(TenantModel.Meta):
+        unique_together = ('tenant', 'name')
+        ordering = ['name']
+
+    def __str__(self):
+        return f"Shift({self.name}, {self.start_time}–{self.end_time}, tenant={self.tenant_id})"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ShiftAssignment  (staff → shift mapping with effective dates)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ShiftAssignment(TenantModel):
+    """Maps a staff member to a Shift for a date range."""
+
+    staff         = models.ForeignKey(
+                      settings.AUTH_USER_MODEL,
+                      on_delete=models.CASCADE,
+                      related_name='shift_assignments',
+                    )
+    shift         = models.ForeignKey(
+                      Shift,
+                      on_delete=models.CASCADE,
+                      related_name='assignments',
+                    )
+    effective_from = models.DateField(help_text='First day this assignment is active.')
+    effective_to   = models.DateField(
+                       null=True, blank=True,
+                       help_text='Last day active. Null = still current.',
+                     )
+
+    class Meta(TenantModel.Meta):
+        ordering = ['-effective_from']
+        indexes = [
+            models.Index(fields=['tenant', 'staff', 'effective_from']),
+        ]
+
+    def __str__(self):
+        return (
+            f"ShiftAssignment({self.staff_id} → {self.shift_id}, "
+            f"from={self.effective_from}, to={self.effective_to or 'ongoing'})"
+        )

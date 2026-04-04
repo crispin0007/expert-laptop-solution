@@ -540,6 +540,7 @@ interface CoinSummary {
 
 export default function CoinsPage() {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const { can } = usePermissions()
   const managerView = can('can_approve_coins')
   const { fyYear } = useFyStore()

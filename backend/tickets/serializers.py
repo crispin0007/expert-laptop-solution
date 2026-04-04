@@ -1,4 +1,3 @@
-from django.utils import timezone
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from core.serializers import NepaliModelSerializer
@@ -151,17 +150,35 @@ class TicketSerializer(NepaliModelSerializer):
     def get_vehicle_names(self, obj):
         return [{'id': v.id, 'name': v.name, 'plate_number': v.plate_number} for v in obj.vehicles.all()]
 
+    def _is_detail_view(self) -> bool:
+        """Return True when serializing a single object (retrieve, not list).
+
+        Expensive per-row computations (coin_preview, coin_transaction_status)
+        are only worth computing for a single ticket detail, not 50 list rows.
+        """
+        view = self.context.get('view')
+        if view is None:
+            return True  # serializer used outside a view (tests) — compute
+        return getattr(view, 'action', 'list') in ('retrieve', 'create', 'update', 'partial_update',
+                                                    'close_ticket', 'change_status', 'assign')
+
     def get_coin_preview(self, obj):
         """
         Pre-computed coin breakdown for the close-ticket modal.
-        Included in every ticket response so the UI never needs a second request.
-        Returns None when ticket_type is not set.
+        Only computed on single-ticket detail responses to avoid N+1 in list views.
+        Returns None for list views and when ticket_type is not set.
         """
+        if not self._is_detail_view():
+            return None
         try:
             from tickets.services.ticket_service import calculate_ticket_coins_from_ticket
             _, breakdown = calculate_ticket_coins_from_ticket(obj)
             return breakdown
         except Exception:
+            import logging
+            logging.getLogger(__name__).error(
+                'coin_preview calculation failed for ticket %s', obj.pk, exc_info=True,
+            )
             return None
 
     def get_coin_transaction_status(self, obj):
@@ -169,7 +186,10 @@ class TicketSerializer(NepaliModelSerializer):
         Returns the status of the CoinTransaction linked to this ticket,
         or None if no coin transaction has been created yet.
         Values: 'pending' | 'approved' | 'rejected' | None
+        Only computed on single-ticket detail responses to avoid N+1 in list views.
         """
+        if not self._is_detail_view():
+            return None
         try:
             from accounting.models import CoinTransaction
             txn = (
@@ -184,6 +204,10 @@ class TicketSerializer(NepaliModelSerializer):
             )
             return txn['status'] if txn else None
         except Exception:
+            import logging
+            logging.getLogger(__name__).error(
+                'coin_transaction_status lookup failed for ticket %s', obj.pk, exc_info=True,
+            )
             return None
 
 
@@ -193,16 +217,31 @@ class TicketCreateSerializer(NepaliModelSerializer):
     """Write serializer — computes SLA deadline on creation."""
     team_members = serializers.PrimaryKeyRelatedField(
         many=True,
-        queryset=User.objects.all(),
+        queryset=User.objects.none(),  # overridden in __init__ scoped to tenant
         required=False,
     )
     vehicles = serializers.PrimaryKeyRelatedField(
         many=True,
-        queryset=Vehicle.objects.all(),
+        queryset=Vehicle.objects.none(),  # overridden in __init__ scoped to tenant
         required=False,
     )
     # Title is optional — auto-generated from category+subcategory if omitted
     title = serializers.CharField(required=False, allow_blank=True, max_length=255)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        tenant = self.context.get('tenant')
+        if tenant:
+            # Scope FK querysets to the current tenant — prevents cross-tenant IDOR
+            self.fields['team_members'].child_relation.queryset = (
+                User.objects.filter(
+                    tenant_memberships__tenant=tenant,
+                    tenant_memberships__is_active=True,
+                ).distinct()
+            )
+            self.fields['vehicles'].child_relation.queryset = (
+                Vehicle.objects.filter(tenant=tenant, is_active=True)
+            )
 
     class Meta:
         model = Ticket
@@ -211,7 +250,7 @@ class TicketCreateSerializer(NepaliModelSerializer):
             'category', 'subcategory',
             'title', 'description', 'contact_phone',
             'device_brand', 'device_model',
-            'priority',
+            'priority', 'service_charge',
             'assigned_to', 'parent_ticket', 'team_members', 'vehicles',
         )
 
@@ -243,70 +282,25 @@ class TicketCreateSerializer(NepaliModelSerializer):
             )
         return users
 
-    def _build_auto_title(self, validated_data):
-        """Build a title from category + subcategory if not supplied."""
-        category    = validated_data.get('category')
-        subcategory = validated_data.get('subcategory')
-        if category and subcategory:
-            return f"{category.name} — {subcategory.name}"
-        if category:
-            return f"{category.name} Request"
-        ticket_type = validated_data.get('ticket_type')
-        if ticket_type:
-            return f"{ticket_type.name} Ticket"
-        return "Support Request"
+    def validate(self, data):
+        """Cross-field validations on ticket creation/update."""
+        category    = data.get('category')
+        subcategory = data.get('subcategory')
+        if subcategory and category and subcategory.category_id != category.pk:
+            raise serializers.ValidationError(
+                {'subcategory': 'This subcategory does not belong to the selected category.'}
+            )
+        service_charge = data.get('service_charge')
+        if service_charge is not None and service_charge < 0:
+            raise serializers.ValidationError(
+                {'service_charge': 'Service charge cannot be negative.'}
+            )
+        return data
 
-    def create(self, validated_data):
-        tenant = self.context['tenant']
-        user   = self.context['request'].user
-        team_members = validated_data.pop('team_members', [])
-        vehicles     = validated_data.pop('vehicles', [])
-
-        # Auto-generate title when not provided or left blank
-        if not validated_data.get('title', '').strip():
-            validated_data['title'] = self._build_auto_title(validated_data)
-
-        ticket_type = validated_data.get('ticket_type')
-        sla_hours   = ticket_type.default_sla_hours if ticket_type else 24
-        sla_deadline = timezone.now() + timezone.timedelta(hours=sla_hours)
-
-        ticket = Ticket.objects.create(
-            tenant=tenant,
-            created_by=user,
-            sla_deadline=sla_deadline,
-            **validated_data,
-        )
-
-        # Auto-create SLA record
-        TicketSLA.objects.create(
-            tenant=tenant,
-            ticket=ticket,
-            sla_hours=sla_hours,
-            breach_at=sla_deadline,
-            created_by=user,
-        )
-
-        # Timeline — created event
-        TicketTimeline.objects.create(
-            tenant=tenant,
-            ticket=ticket,
-            event_type=TicketTimeline.EVENT_CREATED,
-            description=f"Ticket created by {_user_display_name(user)}",
-            actor=user,
-            created_by=user,
-        )
-        if team_members:
-            ticket.team_members.set(team_members)
-        if vehicles:
-            ticket.vehicles.set(vehicles)
-        return ticket
-
-    def update(self, instance, validated_data):
-        team_members = validated_data.pop('team_members', None)
-        instance = super().update(instance, validated_data)
-        if team_members is not None:
-            instance.team_members.set(team_members)
-        return instance
+    # NOTE: create() and update() are intentionally absent.
+    # TicketViewSet sets service_class = TicketService, so NexusViewSet.create()
+    # calls TicketService.create(validated_data) directly — serializer.save() is
+    # never invoked on this path.  All creation/update logic lives in the service.
 
 
 # ── SLA ───────────────────────────────────────────────────────────────────────
@@ -331,6 +325,7 @@ class TicketCommentSerializer(serializers.ModelSerializer):
     author_name   = serializers.SerializerMethodField()
     author_email  = serializers.CharField(source='author.email',     read_only=True, default='')
     attachments   = serializers.JSONField(source='attachment_files', default=list)
+    body          = serializers.CharField(min_length=1)
     # Write-only override accepted on create; ignored on display (get_author_name handles it)
     author_override = serializers.CharField(required=False, allow_blank=True, max_length=128, write_only=False)
 
@@ -388,7 +383,7 @@ class TicketProductSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('ticket', 'created_at', 'serial_number_display')
         extra_kwargs = {
-            'unit_price': {'required': False},
+            'unit_price': {'required': True},
             'discount': {'required': False},
         }
 
@@ -415,7 +410,7 @@ class TicketProductSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         """Auto-snapshot unit_price from the product if not supplied."""
-        if not attrs.get('unit_price') and attrs.get('product'):
+        if attrs.get('unit_price') is None and attrs.get('product'):
             attrs['unit_price'] = attrs['product'].unit_price
         return attrs
 
@@ -470,6 +465,33 @@ class TicketAttachmentSerializer(serializers.ModelSerializer):
             return obj.file.url
         return obj.file_url or None
 
+    _ALLOWED_CONTENT_TYPES = frozenset([
+        'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/plain', 'text/csv',
+        'video/mp4', 'video/quicktime',
+    ])
+    _MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
+
+    def validate_file(self, value):
+        if value is None:
+            return value
+        content_type = getattr(value, 'content_type', None)
+        if content_type and content_type not in self._ALLOWED_CONTENT_TYPES:
+            raise serializers.ValidationError(
+                f'Unsupported file type: {content_type}. '
+                'Allowed types: PDF, images, Word, Excel, CSV, plain text, MP4.'
+            )
+        if value.size > self._MAX_FILE_SIZE:
+            raise serializers.ValidationError(
+                f'File size {value.size / (1024 * 1024):.1f}\u00a0MB exceeds the 20\u00a0MB limit.'
+            )
+        return value
+
     def validate(self, attrs):
         if 'file' in attrs and attrs['file']:
             f = attrs['file']
@@ -522,3 +544,12 @@ class VehicleLogSerializer(serializers.ModelSerializer):
 
     def get_billing_amount(self, obj):
         return obj.billing_amount
+
+    def validate(self, attrs):
+        start = attrs.get('odometer_start')
+        end   = attrs.get('odometer_end')
+        if start is not None and end is not None and end < start:
+            raise serializers.ValidationError(
+                {'odometer_end': 'Odometer end reading must be greater than or equal to start reading.'}
+            )
+        return attrs

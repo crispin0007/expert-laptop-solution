@@ -596,6 +596,10 @@ class Payslip(TenantModel):
                           max_digits=14, decimal_places=2, default=0,
                           help_text='Amount deducted for unpaid leave (unpaid_days × daily_rate).',
                         )
+    attendance_deduction = models.DecimalField(
+                             max_digits=14, decimal_places=2, default=0,
+                             help_text='Amount deducted for absent/late days per AttendancePolicy.',
+                           )
     status       = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_DRAFT)
     approved_by  = models.ForeignKey(
                      settings.AUTH_USER_MODEL,
@@ -1322,6 +1326,7 @@ class Expense(TenantModel):
     CATEGORY_MARKETING    = 'marketing'
     CATEGORY_TRAINING     = 'training'
     CATEGORY_OTHER        = 'other'
+    CATEGORY_CUSTOM       = 'custom'
 
     CATEGORY_CHOICES = [
         (CATEGORY_TRAVEL,      'Travel'),
@@ -1332,9 +1337,19 @@ class Expense(TenantModel):
         (CATEGORY_MARKETING,   'Marketing & Advertising'),
         (CATEGORY_TRAINING,    'Training & Development'),
         (CATEGORY_OTHER,       'Other'),
+        (CATEGORY_CUSTOM,      'Custom'),
     ]
 
     category        = models.CharField(max_length=32, choices=CATEGORY_CHOICES, default=CATEGORY_OTHER, db_index=True)
+    custom_category = models.CharField(max_length=100, blank=True, help_text='Free-text label used when category=custom')
+    service         = models.ForeignKey(
+                        'inventory.Product',
+                        null=True, blank=True,
+                        on_delete=models.SET_NULL,
+                        related_name='expenses',
+                        limit_choices_to={'is_service': True, 'is_deleted': False},
+                        help_text='Optional link to a service from the service catalog',
+                      )
     description     = models.CharField(max_length=500)
     amount          = models.DecimalField(max_digits=14, decimal_places=2)
     date            = models.DateField()

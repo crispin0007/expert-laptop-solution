@@ -39,6 +39,9 @@ from .serializers import (
     TicketCategorySerializer, TicketCategoryWriteSerializer, TicketSubCategorySerializer,
 )
 
+_VALID_TICKET_STATUSES = {s for s, _ in Ticket.STATUS_CHOICES}
+_VALID_TICKET_PRIORITIES = {p for p, _ in Ticket.PRIORITY_CHOICES}
+
 User = get_user_model()
 
 
@@ -142,7 +145,13 @@ class TicketSubCategoryViewSet(NexusViewSet):
         self.ensure_tenant()
         qs = TicketSubCategory.objects.filter(tenant=self.tenant)
         category_id = self.request.query_params.get('category')
-        if category_id:
+        if category_id is not None:
+            try:
+                category_id = int(category_id)
+            except (ValueError, TypeError):
+                raise AppValidationError(
+                    f'Invalid category value {category_id!r}. Expected an integer ID.'
+                )
             qs = qs.filter(category_id=category_id)
         return qs
 
@@ -202,7 +211,15 @@ class TicketViewSet(NexusViewSet):
                 fy = FiscalYear(bs_year=int(fy_raw))
                 fy_start, fy_end = fiscal_year_date_range(fy)
             except (ValueError, KeyError):
-                pass
+                raise AppValidationError(f'Invalid fiscal_year value: {fy_raw!r}. Expected a BS year integer.')
+        # Validate known enum params early so filter layer doesn't silently ignore them
+        if (status_param := params.get('status')) and status_param not in _VALID_TICKET_STATUSES:
+            # Allow comma-separated multi-status
+            bad = [s for s in status_param.split(',') if s.strip() and s.strip() not in _VALID_TICKET_STATUSES]
+            if bad:
+                raise AppValidationError(f'Invalid status value(s): {bad}. Valid choices: {sorted(_VALID_TICKET_STATUSES)}')
+        if (priority_param := params.get('priority')) and priority_param not in _VALID_TICKET_PRIORITIES:
+            raise AppValidationError(f'Invalid priority value: {priority_param!r}. Valid choices: {sorted(_VALID_TICKET_PRIORITIES)}')
         return self.get_service().list(
             status=params.get('status'),
             priority=params.get('priority'),
@@ -366,24 +383,33 @@ class TicketViewSet(NexusViewSet):
 
     @action(detail=True, methods=['get'], url_path='timeline')
     def timeline(self, request, pk=None):
-        """GET /tickets/{id}/timeline/ — full chronological event log."""
+        """GET /tickets/{id}/timeline/ — full chronological event log (paginated)."""
         ticket = self.get_object()
-        events = self.get_service().get_timeline(ticket)
+        events_qs = self.get_service().get_timeline(ticket)
+        page = self.paginate_queryset(events_qs)
+        if page is not None:
+            return self.get_paginated_response(TicketTimelineSerializer(page, many=True).data)
         return ApiResponse.success(
-            data=TicketTimelineSerializer(events, many=True).data
+            data=TicketTimelineSerializer(events_qs, many=True).data
         )
 
     @action(detail=False, methods=['get'], url_path='sla-breached')
     def sla_breached(self, request):
-        """GET /tickets/sla-breached/ — all currently breached SLA records."""
-        breached = self.get_service().sla_breached()
-        return ApiResponse.success(data=TicketSLASerializer(breached, many=True).data)
+        """GET /tickets/sla-breached/ — paginated list of all currently breached SLA records."""
+        qs = self.get_service().sla_breached()
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            return self.get_paginated_response(TicketSLASerializer(page, many=True).data)
+        return ApiResponse.success(data=TicketSLASerializer(qs, many=True).data)
 
     @action(detail=False, methods=['get'], url_path='sla-warning')
     def sla_warning(self, request):
-        """GET /tickets/sla-warning/ — tickets within 6 h of SLA breach."""
-        warning_slas = self.get_service().sla_warning()
-        return ApiResponse.success(data=TicketSLASerializer(warning_slas, many=True).data)
+        """GET /tickets/sla-warning/ — paginated tickets within 6 h of SLA breach."""
+        qs = self.get_service().sla_warning()
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            return self.get_paginated_response(TicketSLASerializer(page, many=True).data)
+        return ApiResponse.success(data=TicketSLASerializer(qs, many=True).data)
 
 
 # ── Comment ───────────────────────────────────────────────────────────────────
@@ -410,31 +436,84 @@ class TicketCommentViewSet(NexusViewSet):
         qs = TicketComment.objects.filter(
             tenant=self.tenant,
             ticket_id=ticket_pk,
+            is_deleted=False,
         ).select_related('author')
-        # Use TenantMembership role — Django's is_staff flag is always False for
-        # tenant users and would hide internal comments from everyone including admins.
-        from accounts.models import TenantMembership
+        # self.user_role is cached on the mixin — no extra DB hit per request.
         from core.permissions import STAFF_ROLES
-        try:
-            role = TenantMembership.objects.get(
-                user=self.request.user, tenant=self.tenant, is_active=True
-            ).role
-        except TenantMembership.DoesNotExist:
-            role = None
         is_staff_member = (
-            role in STAFF_ROLES
+            self.user_role in STAFF_ROLES
             or getattr(self.request.user, 'is_superadmin', False)
         )
         if not is_staff_member:
             qs = qs.filter(is_internal=False)
         return qs
 
+    def update(self, request, *args, **kwargs):
+        """PATCH/PUT a comment — records an edit in the ticket timeline."""
+        partial  = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save()
+
+        actor_name = request.user.get_full_name() or request.user.email
+        try:
+            TicketTimeline.objects.create(
+                tenant=self.tenant,
+                ticket=instance.ticket,
+                event_type=TicketTimeline.EVENT_COMMENTED,
+                description=f"Comment edited by {actor_name}",
+                actor=request.user,
+                created_by=request.user,
+                metadata={'comment_id': instance.pk},
+            )
+        except Exception:
+            logger.warning('Timeline entry failed for comment edit pk=%s', instance.pk, exc_info=True)
+
+        try:
+            from core.events import EventBus
+            EventBus.publish('ticket.comment.added', {
+                'id': instance.pk,
+                'ticket_id': instance.ticket_id,
+                'tenant_id': self.tenant.pk,
+                'author_id': request.user.pk,
+                'is_internal': instance.is_internal,
+                'edited': True,
+            }, tenant=self.tenant)
+        except Exception:
+            logger.warning('EventBus failed for comment edit pk=%s', instance.pk, exc_info=True)
+
+        return ApiResponse.success(data=self.get_serializer(instance).data)
+
+    def destroy(self, request, *args, **kwargs):
+        """Soft-delete a comment — leaves audit trail in the ticket timeline."""
+        instance = self.get_object()
+        instance.is_deleted = True
+        instance.deleted_at = timezone.now()
+        instance.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
+
+        actor_name = request.user.get_full_name() or request.user.email
+        try:
+            TicketTimeline.objects.create(
+                tenant=self.tenant,
+                ticket=instance.ticket,
+                event_type=TicketTimeline.EVENT_COMMENTED,
+                description=f"Comment deleted by {actor_name}",
+                actor=request.user,
+                created_by=request.user,
+                metadata={'comment_id': instance.pk, 'deleted': True},
+            )
+        except Exception:
+            logger.warning('Timeline entry failed for comment delete pk=%s', instance.pk, exc_info=True)
+
+        return ApiResponse.no_content()
+
     def create(self, request, *args, **kwargs):
         ticket_pk = self.kwargs.get('ticket_pk')
         if not ticket_pk:
             raise AppValidationError('Comments must be created via /tickets/{id}/comments/.')
         try:
-            ticket = Ticket.objects.get(pk=ticket_pk, tenant=self.tenant)
+            ticket = Ticket.objects.get(pk=ticket_pk, tenant=self.tenant, is_deleted=False)
         except Ticket.DoesNotExist:
             raise NotFoundError('Ticket not found.')
 
@@ -520,6 +599,10 @@ class TicketProductViewSet(NexusViewSet):
         self.ensure_tenant()
         ticket_pk = self.kwargs.get('ticket_pk')
 
+        # Products must always be created via the nested route so ticket context is known.
+        if not ticket_pk:
+            raise AppValidationError('Products must be created via /tickets/{id}/products/.')
+
         # Object-level check: viewer/custom users may only add products to tickets assigned to them.
         if self.user_role not in STAFF_ROLES and ticket_pk:
             ticket_obj = get_object_or_404(Ticket, pk=ticket_pk, tenant=self.tenant)
@@ -541,6 +624,7 @@ class TicketProductViewSet(NexusViewSet):
                 TicketProduct.objects
                 .filter(tenant=self.tenant, ticket_id=ticket_pk, product=product)
                 .select_related('product')
+                .select_for_update()
                 .first()
             )
 
@@ -695,7 +779,10 @@ class TicketAttachmentViewSet(NexusViewSet):
         serializer.is_valid(raise_exception=True)
         ticket_pk = self.kwargs.get('ticket_pk')
         if ticket_pk:
-            ticket = Ticket.objects.get(pk=ticket_pk, tenant=self.tenant)
+            try:
+                ticket = Ticket.objects.get(pk=ticket_pk, tenant=self.tenant, is_deleted=False)
+            except Ticket.DoesNotExist:
+                raise NotFoundError('Ticket not found.')
             instance = serializer.save(tenant=self.tenant, uploaded_by=self.request.user, created_by=self.request.user, ticket=ticket)
         else:
             instance = serializer.save(tenant=self.tenant, uploaded_by=self.request.user, created_by=self.request.user)

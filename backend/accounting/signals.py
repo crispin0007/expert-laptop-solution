@@ -24,10 +24,9 @@ def handle_ticket_cancelled(sender, instance, created, **kwargs):
     if created:
         return
 
-    from tickets.models import Ticket
     from accounting.models import CoinTransaction
 
-    if instance.status == Ticket.STATUS_CANCELLED:
+    if instance.status == 'cancelled':  # Ticket.STATUS_CANCELLED — no cross-module import
         CoinTransaction.objects.filter(
             tenant=instance.tenant,
             source_type=CoinTransaction.SOURCE_TICKET,

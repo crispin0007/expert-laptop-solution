@@ -7,6 +7,7 @@ from .views import (
     TenantTokenObtainPairView, TenantTokenRefreshView,
     TwoFASetupView, TwoFAConfirmSetupView, TwoFAVerifyView,
     TwoFADisableView, TwoFABackupCodesView, TwoFARegenerateBackupCodesView,
+    PasswordResetRequestView, PasswordResetConfirmView,
 )
 
 router = DefaultRouter()
@@ -30,6 +31,10 @@ urlpatterns = [
     path('2fa/disable/',                       TwoFADisableView.as_view(),              name='2fa_disable'),
     path('2fa/backup-codes/',                  TwoFABackupCodesView.as_view(),          name='2fa_backup_codes'),
     path('2fa/backup-codes/regenerate/',       TwoFARegenerateBackupCodesView.as_view(),name='2fa_backup_codes_regenerate'),
+
+    # Self-service password reset (unauthenticated)
+    path('password-reset/request/',  PasswordResetRequestView.as_view(),  name='password_reset_request'),
+    path('password-reset/confirm/',  PasswordResetConfirmView.as_view(),  name='password_reset_confirm'),
 
     path('', include(router.urls)),
 ]

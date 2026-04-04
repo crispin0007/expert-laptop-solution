@@ -269,6 +269,95 @@ class ProductViewSet(NexusViewSet):
         })
 
 
+class ServiceViewSet(NexusViewSet):
+    """
+    Service catalog — a curated view of Product records where is_service=True.
+    Services have no stock tracking; they represent billable/purchasable services.
+
+    GET    /inventory/services/          list (add ?all=true for lightweight dropdown)
+    POST   /inventory/services/          create
+    GET    /inventory/services/{id}/     retrieve
+    PUT    /inventory/services/{id}/     update
+    DELETE /inventory/services/{id}/     deactivate (sets is_active=False)
+    """
+    required_module = 'inventory'
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(),
+                    make_role_permission(*ALL_ROLES, permission_key='inventory.view')()]
+        return [permissions.IsAuthenticated(),
+                make_role_permission(*ADMIN_ROLES, permission_key='inventory.manage')()]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = Product.objects.filter(
+            tenant=self.tenant, is_service=True, is_deleted=False,
+        ).select_related('uom', 'category')
+        search = self.request.query_params.get('search', '')
+        if search:
+            qs = qs.filter(name__icontains=search)
+        return qs.order_by('name')
+
+    def get_object(self):
+        self.ensure_tenant()
+        pk = self.kwargs.get('pk')
+        try:
+            return Product.objects.filter(tenant=self.tenant).get(
+                pk=pk, is_service=True, is_deleted=False,
+            )
+        except Product.DoesNotExist:
+            from rest_framework.exceptions import NotFound as DRFNotFound
+            raise DRFNotFound('Service not found.')
+
+    def list(self, request, *args, **kwargs):
+        qs = self.get_queryset()
+        # Lightweight ?all=true for dropdowns
+        if request.query_params.get('all') == 'true':
+            data = list(
+                qs.filter(is_active=True)
+                .values('id', 'name', 'description', 'unit_price', 'uom')
+                [:500]
+            )
+            return ApiResponse.success(data=data)
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            return self.get_paginated_response(ProductSerializer(page, many=True).data)
+        return ApiResponse.success(data=ProductSerializer(qs, many=True).data)
+
+    def retrieve(self, request, *args, **kwargs):
+        return ApiResponse.success(data=ProductSerializer(self.get_object()).data)
+
+    def create(self, request, *args, **kwargs):
+        self.ensure_tenant()
+        serializer = ProductSerializer(
+            data={**request.data, 'is_service': True, 'track_stock': False},
+            context=self.get_serializer_context(),
+        )
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save(tenant=self.tenant, is_service=True, track_stock=False)
+        return ApiResponse.created(data=ProductSerializer(instance).data)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = ProductSerializer(
+            instance,
+            data={**request.data, 'is_service': True, 'track_stock': False},
+            partial=partial,
+            context=self.get_serializer_context(),
+        )
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save(is_service=True, track_stock=False)
+        return ApiResponse.success(data=ProductSerializer(instance).data)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        instance.is_active = False
+        instance.save(update_fields=['is_active'])
+        return ApiResponse.success(message='Service deactivated.')
+
+
 class StockLevelViewSet(NexusViewSet):
     """Stock levels are read-only; they are managed by signals."""
     required_module = 'inventory'

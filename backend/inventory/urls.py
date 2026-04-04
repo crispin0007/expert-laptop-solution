@@ -8,6 +8,7 @@ from .views import (
     ReturnOrderViewSet, ReportViewSet,
     SupplierProductViewSet, StockCountViewSet,
     ProductBundleViewSet, SupplierPaymentViewSet,
+    ServiceViewSet,
 )
 
 router = DefaultRouter()
@@ -27,5 +28,6 @@ router.register(r'supplier-products', SupplierProductViewSet, basename='supplier
 router.register(r'stock-counts',      StockCountViewSet,      basename='stockcount')
 router.register(r'product-bundles',   ProductBundleViewSet,   basename='productbundle')
 router.register(r'supplier-payments', SupplierPaymentViewSet, basename='supplierpayment')
+router.register(r'services',          ServiceViewSet,         basename='service')
 
 urlpatterns = [path('', include(router.urls))]

@@ -5,49 +5,18 @@ Responsibilities:
 1. Task → STATUS_DONE: create pending CoinTransaction for assignee.
 2. Project created / manager changed: send project_assigned notification.
 
+Pre-save state (manager_id, status, assigned_to_id) is captured via
+Project.from_db() and ProjectTask.from_db() — no extra DB query needed here.
+
 EventBus.publish() is NOT called here — services handle event publication.
 Notifications for task.assigned and task.completed are handled by
 notifications/listeners.py reacting to EventBus events published by services.
 """
-from django.db.models.signals import post_save, pre_save
+from django.db.models.signals import post_save
 from django.dispatch import receiver
 import logging
 
 logger = logging.getLogger(__name__)
-
-
-# ── Cache pre-save state for change detection ─────────────────────────────────
-
-@receiver(pre_save, sender='projects.ProjectTask')
-def _cache_task_state(sender, instance, **kwargs):
-    """Store previous assigned_to_id and status before save."""
-    if instance.pk:
-        try:
-            prev = sender.objects.values('assigned_to_id', 'status').get(pk=instance.pk)
-            instance._pre_assigned_to_id = prev['assigned_to_id']
-            instance._pre_status = prev['status']
-        except sender.DoesNotExist:
-            instance._pre_assigned_to_id = None
-            instance._pre_status = None
-    else:
-        instance._pre_assigned_to_id = None
-        instance._pre_status = None
-
-
-@receiver(pre_save, sender='projects.Project')
-def _cache_project_manager(sender, instance, **kwargs):
-    """Store previous manager_id and status before save."""
-    if instance.pk:
-        try:
-            prev = sender.objects.values('manager_id', 'status').get(pk=instance.pk)
-            instance._pre_manager_id = prev['manager_id']
-            instance._pre_status    = prev['status']
-        except sender.DoesNotExist:
-            instance._pre_manager_id = None
-            instance._pre_status    = None
-    else:
-        instance._pre_manager_id = None
-        instance._pre_status    = None
 
 
 # ── Task signals ──────────────────────────────────────────────────────────────
@@ -79,11 +48,12 @@ def handle_task_completed(sender, instance, created, **kwargs):
     ).exists()
     if not already_exists:
         try:
+            coin_reward = getattr(instance.tenant, 'task_coin_reward', 1)
             CoinTransaction.objects.create(
                 tenant=instance.tenant,
                 created_by=instance.assigned_to,
                 staff=instance.assigned_to,
-                amount=1,
+                amount=coin_reward,
                 source_type='task',
                 source_id=instance.pk,
                 status=CoinTransaction.STATUS_PENDING,

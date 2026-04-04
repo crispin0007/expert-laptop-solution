@@ -28,10 +28,18 @@ def create_project(*, tenant, created_by, validated_data: dict):
     """
     from .models import Project
 
+    # Pop M2M before passing to the model constructor — Django raises
+    # TypeError if team_members (ManyToManyField) is in **kwargs.
+    team_members = validated_data.pop('team_members', [])
+
     project = Project(**validated_data)
     project.tenant = tenant
     project.created_by = created_by
     project.save()
+
+    if team_members:
+        project.team_members.set(team_members)
+
     EventBus.publish('project.created', {
         'id': project.id,
         'tenant_id': tenant.id,
@@ -56,8 +64,11 @@ def update_project(*, instance, tenant, validated_data: dict):
     """
     old_status = instance.status
     team_members = validated_data.pop('team_members', None)
+
+    update_fields = []
     for attr, value in validated_data.items():
         setattr(instance, attr, value)
+        update_fields.append(attr)
 
     new_status = instance.status
     transitioning_to_complete = (
@@ -71,7 +82,11 @@ def update_project(*, instance, tenant, validated_data: dict):
     elif new_status != 'completed':
         instance.completed_at = None
 
-    instance.save()
+    for extra in ('completed_at', 'updated_at'):
+        if extra not in update_fields:
+            update_fields.append(extra)
+
+    instance.save(update_fields=update_fields)
 
     if team_members is not None:
         instance.team_members.set(team_members)
@@ -162,7 +177,7 @@ def update_task_status(*, task, new_status: str, actual_hours=None):
     elif new_status != ProjectTask.STATUS_DONE:
         task.completed_at = None
 
-    update_fields = ['status', 'completed_at']
+    update_fields = ['status', 'completed_at', 'updated_at']
     if actual_hours is not None:
         update_fields.append('actual_hours')
     task.save(update_fields=update_fields)
@@ -189,7 +204,7 @@ def update_task_assignee(*, task, new_assignee_id):
         The updated ProjectTask instance.
     """
     task.assigned_to_id = new_assignee_id
-    task.save(update_fields=['assigned_to_id'])
+    task.save(update_fields=['assigned_to_id', 'updated_at'])
     if new_assignee_id:
         EventBus.publish('task.assigned', {
             'id': task.id,

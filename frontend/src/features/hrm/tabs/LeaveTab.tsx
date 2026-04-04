@@ -4,17 +4,20 @@
  * Sub-tabs:
  *   My Leaves   — own requests + "Apply" button → modal
  *   Team Leaves — (managers only) pending requests + approve / reject
+ *   Settings    — (admin/manager only) leave types CRUD + balance seeding
  */
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import {
   Plus, Loader2, AlertCircle, CheckCircle2, X, Clock,
-  CalendarDays, Users,
+  CalendarDays, Users, Settings,
 } from 'lucide-react'
 import apiClient from '../../../api/client'
 import { HRM } from '../../../api/endpoints'
 import { usePermissions } from '../../../hooks/usePermissions'
+import { adStringToBsDisplay } from '../../../utils/nepaliDate'
+import LeaveSettingsPane from './LeaveSettingsPane'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -81,7 +84,10 @@ function apiError(err: unknown): string {
 
 function currentBsYear(): number {
   const now = new Date()
-  return now.getFullYear() + (now.getMonth() < 3 ? 56 : 57)
+  // Nepali New Year falls ~April 13-14. Before day 14 of April we are still
+  // in the previous BS year (month 3 = April, 0-indexed).
+  const inAprilBeforeNewYear = now.getMonth() === 3 && now.getDate() < 14
+  return now.getFullYear() + (now.getMonth() < 3 || inAprilBeforeNewYear ? 56 : 57)
 }
 
 // ── Apply Leave Modal ─────────────────────────────────────────────────────────
@@ -120,7 +126,7 @@ function ApplyLeaveModal({
   const { data: balances } = useQuery({
     queryKey: ['hrm-my-balances', bsYear],
     queryFn: () =>
-      apiClient.get(HRM.LEAVE_BALANCES, { params: { year: bsYear } })
+      apiClient.get(HRM.LEAVE_BALANCES, { params: { year: bsYear, mine: 'true' } })
         .then(r => r.data.data ?? r.data.results ?? r.data ?? []),
     staleTime: 30_000,
   })
@@ -338,7 +344,11 @@ function LeaveRow({
           </div>
           <div className="flex items-center gap-1.5 mt-1 text-xs text-gray-500">
             <CalendarDays size={11} />
-            <span>{req.start_date} → {req.end_date}</span>
+            <span>
+              {adStringToBsDisplay(req.start_date)?.bs_en ?? req.start_date}
+              {' → '}
+              {adStringToBsDisplay(req.end_date)?.bs_en ?? req.end_date}
+            </span>
             <span className="text-gray-400">·</span>
             <span className="font-medium text-gray-700">{req.days} {Number(req.days) === 1 ? 'day' : 'days'}</span>
           </div>
@@ -398,7 +408,7 @@ function MyLeavesPane({ onApply }: { onApply: () => void }) {
     queryKey: ['hrm-my-requests', statusFilter],
     queryFn: () =>
       apiClient.get(HRM.LEAVE_REQUESTS, {
-        params: statusFilter !== 'all' ? { status: statusFilter } : {},
+        params: { mine: 'true', ...(statusFilter !== 'all' && { status: statusFilter }) },
       }).then(r => r.data.data ?? r.data.results ?? r.data ?? []),
     staleTime: 15_000,
   })
@@ -416,7 +426,7 @@ function MyLeavesPane({ onApply }: { onApply: () => void }) {
   const { data: balances } = useQuery({
     queryKey: ['hrm-my-balances', bsYear],
     queryFn: () =>
-      apiClient.get(HRM.LEAVE_BALANCES, { params: { year: bsYear } })
+      apiClient.get(HRM.LEAVE_BALANCES, { params: { year: bsYear, mine: 'true' } })
         .then(r => r.data.data ?? r.data.results ?? r.data ?? []),
     staleTime: 60_000,
   })
@@ -593,7 +603,7 @@ function TeamLeavesPane() {
 export default function LeaveTab() {
   const perms = usePermissions()
   const qc = useQueryClient()
-  const [subTab, setSubTab] = useState<'mine' | 'team'>('mine')
+  const [subTab, setSubTab] = useState<'mine' | 'team' | 'settings'>('mine')
   const [applyOpen, setApplyOpen] = useState(false)
 
   function handleApplySuccess() {
@@ -630,6 +640,19 @@ export default function LeaveTab() {
             Team Leaves
           </button>
         )}
+        {perms.isManager && (
+          <button
+            onClick={() => setSubTab('settings')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition -mb-px ${
+              subTab === 'settings'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Settings size={15} />
+            Settings
+          </button>
+        )}
       </div>
 
       {subTab === 'mine' && (
@@ -637,6 +660,9 @@ export default function LeaveTab() {
       )}
       {subTab === 'team' && perms.isManager && (
         <TeamLeavesPane />
+      )}
+      {subTab === 'settings' && perms.isManager && (
+        <LeaveSettingsPane />
       )}
 
       {applyOpen && (

@@ -391,7 +391,9 @@ class CoinTransactionDetailSerializer(CoinTransactionSerializer):
 
         if obj.source_type == CoinTransaction.SOURCE_TICKET and obj.source_id:
             try:
-                from tickets.models import Ticket, TicketProduct
+                from django.apps import apps
+                Ticket = apps.get_model('tickets', 'Ticket')
+                TicketProduct = apps.get_model('tickets', 'TicketProduct')
                 ticket = (
                     Ticket.objects
                     .select_related('customer', 'assigned_to', 'ticket_type', 'department')
@@ -436,12 +438,18 @@ class CoinTransactionDetailSerializer(CoinTransactionSerializer):
                     'closed_at': ticket.closed_at.isoformat() if ticket.closed_at else None,
                     'assigned_to_name': ticket.assigned_to.full_name if ticket.assigned_to else None,
                 }
-            except Exception:
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    'CoinTransactionDetailSerializer.get_source_context ticket %s failed: %s',
+                    obj.source_id, exc, exc_info=True,
+                )
                 return None
 
         if obj.source_type == CoinTransaction.SOURCE_TASK and obj.source_id:
             try:
-                from projects.models import Task
+                from django.apps import apps
+                Task = apps.get_model('projects', 'Task')
                 task = (
                     Task.objects
                     .select_related('project')
@@ -454,7 +462,12 @@ class CoinTransactionDetailSerializer(CoinTransactionSerializer):
                     'project_name': task.project.name if task.project else None,
                     'status': task.status,
                 }
-            except Exception:
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    'CoinTransactionDetailSerializer.get_source_context task %s failed: %s',
+                    obj.source_id, exc, exc_info=True,
+                )
                 return None
 
         return None
@@ -753,13 +766,20 @@ class ExpenseSerializer(serializers.ModelSerializer):
     account_name           = serializers.CharField(source='account.name',               default='', read_only=True)
     payment_account_name   = serializers.CharField(source='payment_account.name',       default='', read_only=True)
     payment_account_code   = serializers.CharField(source='payment_account.code',       default='', read_only=True)
-    category_display       = serializers.CharField(source='get_category_display',        read_only=True)
+    category_display       = serializers.SerializerMethodField()
     status_display         = serializers.CharField(source='get_status_display',          read_only=True)
+    service_name           = serializers.CharField(source='service.name',               default='', read_only=True)
+
+    def get_category_display(self, obj):
+        if obj.category == 'custom' and obj.custom_category:
+            return obj.custom_category
+        return obj.get_category_display()
 
     class Meta:
         model  = Expense
         fields = (
-            'id', 'category', 'category_display', 'description',
+            'id', 'category', 'category_display', 'custom_category',
+            'service', 'service_name', 'description',
             'amount', 'date', 'account', 'account_name',
             'payment_account', 'payment_account_name', 'payment_account_code',
             'receipt_url', 'notes', 'status', 'status_display',
@@ -778,13 +798,20 @@ class ExpenseSerializer(serializers.ModelSerializer):
 
 class ExpenseListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for list views and mobile."""
-    category_display = serializers.CharField(source='get_category_display', read_only=True)
-    status_display   = serializers.CharField(source='get_status_display',   read_only=True)
+    category_display = serializers.SerializerMethodField()
+    status_display   = serializers.CharField(source='get_status_display', read_only=True)
+    service_name     = serializers.CharField(source='service.name', default='', read_only=True)
+
+    def get_category_display(self, obj):
+        if obj.category == 'custom' and obj.custom_category:
+            return obj.custom_category
+        return obj.get_category_display()
 
     class Meta:
         model  = Expense
         fields = (
-            'id', 'category', 'category_display', 'description',
+            'id', 'category', 'category_display', 'custom_category',
+            'service', 'service_name', 'description',
             'amount', 'date', 'status', 'status_display', 'receipt_url',
             'created_at',
         )
@@ -795,7 +822,7 @@ class ExpenseWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Expense
         fields = (
-            'category', 'description', 'amount', 'date',
+            'category', 'custom_category', 'service', 'description', 'amount', 'date',
             'account', 'receipt_url', 'notes',
             'is_recurring', 'recur_interval', 'next_recur_date',
         )
@@ -806,6 +833,10 @@ class ExpenseWriteSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
+        if attrs.get('category') == 'custom' and not attrs.get('custom_category', '').strip():
+            raise serializers.ValidationError(
+                {'custom_category': 'A name is required when category is Custom.'}
+            )
         if attrs.get('is_recurring') and not attrs.get('recur_interval'):
             raise serializers.ValidationError(
                 {'recur_interval': 'recur_interval is required when is_recurring is True.'}

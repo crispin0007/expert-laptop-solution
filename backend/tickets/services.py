@@ -1,4 +1,4 @@
-"""Tickets service layer.
+if it is """Tickets service layer.
 
 All business logic that involves multiple model writes or cross-module
 communication lives here.  Views remain thin: validate → call service → respond.
@@ -21,7 +21,7 @@ def add_comment(ticket, *, author, body: str, is_internal: bool = False, tenant)
         author:      User instance adding the comment.
         body:        Comment text.
         is_internal: True → visible to staff only.
-        tenant:      Tenant instance (from request.tenant).
+        tenant:      Tenant instance (from request.tenant)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  .
 
     Returns:
         The saved TicketComment instance.
@@ -58,10 +58,10 @@ def add_comment(ticket, *, author, body: str, is_internal: bool = False, tenant)
             'author_id': author.pk,
             'is_internal': is_internal,
         }, tenant=tenant)
-    except Exception as exc:
-        logger.warning(
-            'EventBus.publish ticket.comment.added failed for comment %s: %s',
-            comment.pk, exc, exc_info=True,
+    except Exception:
+        logger.error(
+            'EventBus.publish ticket.comment.added failed for comment %s',
+            comment.pk, exc_info=True,
         )
 
     return comment

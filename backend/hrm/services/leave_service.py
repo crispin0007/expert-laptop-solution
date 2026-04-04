@@ -209,9 +209,16 @@ def request_leave(tenant, staff, leave_type_id: int, start_date: date,
     ).first()
 
     if balance is None:
-        raise ValidationError(
-            f'No leave balance found for {leave_type.name} in BS year {year}. '
-            'Please contact your administrator.'
+        # Auto-seed a balance record using the leave type's default allocation.
+        # This prevents a hard block when HR hasn't run the annual seed yet.
+        balance = LeaveBalance.objects.create(
+            tenant=tenant,
+            staff=staff,
+            leave_type=leave_type,
+            year=year,
+            allocated=leave_type.days_allowed,
+            carried_forward=Decimal('0'),
+            used=Decimal('0'),
         )
 
     if balance.available < days:
@@ -388,6 +395,17 @@ def cancel_leave(tenant, leave_request, cancelled_by) -> object:
             balance.save(update_fields=['used'])
 
     leave_request.status = LeaveRequest.STATUS_CANCELLED
-    leave_request.save(update_fields=['status'])
+    leave_request.save(update_fields=['status', 'updated_at'])
+
+    try:
+        EventBus.publish('staff.leave.cancelled', {
+            'id':            leave_request.pk,
+            'tenant_id':     tenant.id,
+            'staff_id':      leave_request.staff_id,
+            'leave_type_id': leave_request.leave_type_id,
+            'days':          str(leave_request.days),
+        }, tenant=tenant)
+    except Exception as exc:
+        logger.warning('EventBus staff.leave.cancelled failed id=%s: %s', leave_request.pk, exc)
 
     return leave_request

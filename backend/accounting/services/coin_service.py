@@ -133,7 +133,7 @@ class CoinService:
             raise CoinApprovalError('Only pending transactions can be approved.')
         coin_txn.status      = CoinTransaction.STATUS_APPROVED
         coin_txn.approved_by = self.user
-        coin_txn.save(update_fields=['status', 'approved_by'])
+        coin_txn.save(update_fields=['status', 'approved_by', 'updated_at'])
         logger.info("CoinTransaction %s approved by %s", coin_txn.pk, self.user)
         return coin_txn
 
@@ -147,7 +147,7 @@ class CoinService:
         coin_txn.approved_by = self.user
         if note:
             coin_txn.note = note
-        coin_txn.save(update_fields=['status', 'approved_by', 'note'])
+        coin_txn.save(update_fields=['status', 'approved_by', 'note', 'updated_at'])
         logger.info("CoinTransaction %s rejected by %s", coin_txn.pk, self.user)
         return coin_txn
 

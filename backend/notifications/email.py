@@ -195,6 +195,41 @@ def send_staff_reactivated(user, tenant) -> None:
     )
 
 
+def send_password_reset(user, token: str, reset_url_base: str = '') -> None:
+    """Send a self-service password-reset link to the user.
+
+    reset_url_base should be the frontend URL, e.g. https://app.mybms.com/reset-password
+    If blank, a generic message is sent with just the token.
+    """
+    if not user.email:
+        return
+    if reset_url_base:
+        reset_link = f"{reset_url_base.rstrip('/')}?token={token}"
+        body = (
+            f"Hi {user.full_name or user.email},\n\n"
+            f"We received a request to reset your TechYatra password.\n\n"
+            f"Click the link below to set a new password (valid for 60 minutes):\n"
+            f"  {reset_link}\n\n"
+            f"If you did not request this, you can safely ignore this email.\n\n"
+            f"Regards,\nThe TechYatra Team"
+        )
+    else:
+        body = (
+            f"Hi {user.full_name or user.email},\n\n"
+            f"We received a request to reset your TechYatra password.\n\n"
+            f"Use this token in the app to set a new password (valid for 60 minutes):\n"
+            f"  {token}\n\n"
+            f"If you did not request this, you can safely ignore this email.\n\n"
+            f"Regards,\nThe TechYatra Team"
+        )
+    _send(
+        subject='[TechYatra] Reset your password',
+        message=body,
+        recipient_list=[user.email],
+        tenant=None,
+    )
+
+
 # ── Inventory notifications ───────────────────────────────────────────────────
 
 def send_low_stock_alert(product, quantity: int, recipient_email: str) -> None:

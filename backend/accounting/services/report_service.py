@@ -3101,3 +3101,144 @@ def cost_centre_pl(tenant, cost_centre_id, date_from, date_to):
         # Bottom line
         'net_profit':          net_profit,
     }
+
+
+# ── Service Ledger ────────────────────────────────────────────────────────────
+
+def service_ledger(tenant, service_id, date_from, date_to):
+    """Per-service transaction ledger — invoices + expenses for one service."""
+    from inventory.models import Product
+    from accounting.models import Invoice, Expense
+
+    try:
+        service = Product.objects.filter(
+            tenant=tenant, pk=service_id, is_service=True, is_deleted=False
+        ).get()
+    except Product.DoesNotExist:
+        return None
+
+    rows = []
+    revenue_total = _zero()
+    cost_total = _zero()
+
+    # Revenue from invoice lines that reference this service
+    for inv in Invoice.objects.filter(
+        tenant=tenant,
+        status__in=['issued', 'paid'],
+        created_at__date__gte=date_from,
+        created_at__date__lte=date_to,
+    ).select_related('customer'):
+        for line in (inv.line_items or []):
+            if (line.get('line_type') == 'service'
+                    and str(line.get('service_id', '')) == str(service_id)):
+                amt = Decimal(str(line.get('amount') or 0))
+                rows.append({
+                    'date':        inv.created_at.date().isoformat(),
+                    'doc_type':    'Invoice',
+                    'doc_number':  inv.invoice_number,
+                    'party':       inv.customer.name if inv.customer else '—',
+                    'description': line.get('description') or service.name,
+                    'revenue':     amt,
+                    'cost':        _zero(),
+                })
+                revenue_total += amt
+
+    # Cost from expenses directly linked to this service
+    for exp in Expense.objects.filter(
+        tenant=tenant,
+        service_id=service_id,
+        date__range=(date_from, date_to),
+    ).select_related('submitted_by'):
+        amt = Decimal(str(exp.amount or 0))
+        rows.append({
+            'date':        exp.date.isoformat() if exp.date else '',
+            'doc_type':    'Expense',
+            'doc_number':  f'EXP-{exp.id}',
+            'party':       (exp.submitted_by.get_full_name() or exp.submitted_by.email) if exp.submitted_by else '—',
+            'description': exp.description,
+            'revenue':     _zero(),
+            'cost':        amt,
+        })
+        cost_total += amt
+
+    rows.sort(key=lambda r: r['date'])
+
+    return {
+        'service':       {'id': service.pk, 'name': service.name},
+        'date_from':     str(date_from),
+        'date_to':       str(date_to),
+        'period':        _period_meta(date_from, date_to),
+        'rows':          rows,
+        'revenue_total': revenue_total,
+        'cost_total':    cost_total,
+        'net':           revenue_total - cost_total,
+    }
+
+
+# ── Service Report ────────────────────────────────────────────────────────────
+
+def service_report(tenant, date_from, date_to):
+    """Summary of all services — revenue vs cost for the period."""
+    from collections import defaultdict
+    from inventory.models import Product
+    from accounting.models import Invoice, Expense
+
+    services = list(
+        Product.objects.filter(
+            tenant=tenant, is_service=True, is_deleted=False
+        ).order_by('name')
+    )
+    service_map = {
+        s.pk: {
+            'id':            s.pk,
+            'name':          s.name,
+            'invoice_count': 0,
+            'revenue':       _zero(),
+            'expense_count': 0,
+            'cost':          _zero(),
+        }
+        for s in services
+    }
+
+    # Revenue from invoice lines
+    for inv in Invoice.objects.filter(
+        tenant=tenant,
+        status__in=['issued', 'paid'],
+        created_at__date__gte=date_from,
+        created_at__date__lte=date_to,
+    ):
+        for line in (inv.line_items or []):
+            if line.get('line_type') == 'service':
+                sid = line.get('service_id')
+                if sid and int(sid) in service_map:
+                    amt = Decimal(str(line.get('amount') or 0))
+                    service_map[int(sid)]['revenue']       += amt
+                    service_map[int(sid)]['invoice_count'] += 1
+
+    # Cost from expenses
+    for exp in Expense.objects.filter(
+        tenant=tenant,
+        service__isnull=False,
+        date__range=(date_from, date_to),
+    ):
+        sid = exp.service_id
+        if sid and sid in service_map:
+            amt = Decimal(str(exp.amount or 0))
+            service_map[sid]['cost']          += amt
+            service_map[sid]['expense_count'] += 1
+
+    rows = [
+        {**row, 'net': row['revenue'] - row['cost']}
+        for row in service_map.values()
+    ]
+    rows.sort(key=lambda r: r['revenue'], reverse=True)
+
+    return {
+        'date_from':     str(date_from),
+        'date_to':       str(date_to),
+        'period':        _period_meta(date_from, date_to),
+        'rows':          rows,
+        'total_revenue': sum(r['revenue'] for r in rows),
+        'total_cost':    sum(r['cost']    for r in rows),
+        'total_net':     sum(r['net']     for r in rows),
+    }

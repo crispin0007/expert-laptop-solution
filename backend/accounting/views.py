@@ -125,10 +125,10 @@ class AccountViewSet(NexusViewSet):
             raise ConflictError('This account has sub-accounts. Delete or re-parent them first.')
         if account.journal_lines.filter(entry__is_posted=True).exists():
             raise ConflictError('This account has posted journal entries and cannot be deleted.')
-        # If this CoA account is linked to a bank account, soft-delete the bank too.
+        # If this CoA account is linked to a bank account, deactivate the bank too.
         if hasattr(account, 'bank_account') and account.bank_account is not None:
-            account.bank_account.is_deleted = True
-            account.bank_account.save(update_fields=['is_deleted'])
+            account.bank_account.is_active = False
+            account.bank_account.save(update_fields=['is_active'])
         account.delete()
         return ApiResponse.no_content()
 
@@ -145,6 +145,57 @@ class AccountViewSet(NexusViewSet):
             raise AppValidationError(str(exc))
         self.ensure_tenant()
         return ApiResponse.success(data=tb(self.tenant, df, dt))
+
+    @action(detail=False, methods=['post'], url_path='reset-to-default')
+    def reset_to_default(self, request):
+        """
+        POST /accounts/reset-to-default/
+
+        Re-seeds the default Chart of Accounts for this tenant.
+
+        Behaviour:
+          1. Deletes custom (non-system) accounts that have NO posted journal
+             lines and NO unposted journal lines — safe to remove without
+             affecting financial data.
+          2. Re-runs seed_chart_of_accounts() (idempotent get_or_create) which
+             restores any missing default accounts.
+
+        Accounts with ANY journal activity (posted or draft) are NEVER deleted
+        — they are left in place so historical entries remain intact.
+
+        Returns counts: deleted, restored, skipped.
+        """
+        from accounting.models import Account
+        from accounting.services.journal_service import seed_chart_of_accounts
+        from django.db import transaction
+
+        self.ensure_tenant()
+
+        with transaction.atomic():
+            # --- 1. Find custom accounts with no journal activity ---
+            removable = Account.objects.filter(
+                tenant=self.tenant,
+                is_system=False,
+            ).exclude(
+                journal_lines__isnull=False,
+            )
+            deleted_count = removable.count()
+            removable.delete()
+
+            # --- 2. Re-seed missing defaults ---
+            created_map = seed_chart_of_accounts(
+                self.tenant,
+                created_by=request.user,
+            )
+            restored_count = len(created_map)
+
+        return ApiResponse.success(
+            data={
+                'deleted':  deleted_count,
+                'restored': restored_count,
+            },
+            message=f'Reset complete. {deleted_count} custom account(s) removed, defaults restored.',
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -165,7 +216,7 @@ class BankAccountViewSet(NexusViewSet):
 
     def get_queryset(self):
         self.ensure_tenant()
-        return BankAccount.objects.filter(tenant=self.tenant, is_deleted=False).select_related('linked_account')
+        return BankAccount.objects.filter(tenant=self.tenant, is_active=True).select_related('linked_account')
 
     # ── helpers ────────────────────────────────────────────────────────────
 
@@ -244,8 +295,8 @@ class BankAccountViewSet(NexusViewSet):
         bank = self.get_object()
         # Also delete the linked CoA account so it disappears from Chart of Accounts.
         linked = bank.linked_account
-        bank.is_deleted = True
-        bank.save(update_fields=['is_deleted'])
+        bank.is_active = False
+        bank.save(update_fields=['is_active'])
         if linked is not None and not linked.is_system:
             linked.delete()
         return ApiResponse.no_content()
@@ -1491,6 +1542,36 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
             raise AppValidationError(str(exc))
         return ApiResponse.success(data=data)
 
+    # ── Services ─────────────────────────────────────────────────────────────
+
+    @action(detail=False, methods=['get'], url_path='service-ledger')
+    def service_ledger(self, request):
+        """GET /reports/service-ledger/?service_id=&date_from=&date_to="""
+        from .services.report_service import service_ledger
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        sid_raw = request.query_params.get('service_id')
+        if not sid_raw or not sid_raw.isdigit():
+            raise AppValidationError('service_id is required')
+        data = service_ledger(self.tenant, int(sid_raw), df, dt)
+        if data is None:
+            raise AppValidationError('Service not found')
+        return ApiResponse.success(data=data)
+
+    @action(detail=False, methods=['get'], url_path='service-report')
+    def service_report_view(self, request):
+        """GET /reports/service-report/?date_from=&date_to="""
+        from .services.report_service import service_report
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+        return ApiResponse.success(data=service_report(self.tenant, df, dt))
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Coins
@@ -1829,7 +1910,8 @@ class InvoiceViewSet(NexusViewSet):
                     'Viewer accounts must supply ?ticket=<id> to view invoices. '
                     'Only manager and staff roles can list all invoices.'
                 )
-            from tickets.models import Ticket
+            from django.apps import apps
+            Ticket = apps.get_model('tickets', 'Ticket')
             try:
                 ticket_obj = Ticket.objects.for_tenant(self.tenant).get(pk=ticket_id)
             except Ticket.DoesNotExist:

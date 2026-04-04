@@ -13,10 +13,12 @@ Rules:
 EVENT_CATALOGUE: dict[str, str] = {
     # ── TICKETS ───────────────────────────────────────────────────────────────
     'ticket.created':            'New ticket created',
+    'ticket.updated':            'Ticket details updated',
     'ticket.assigned':           'Ticket assigned to staff',
     'ticket.status.changed':     'Ticket status changed',
     'ticket.resolved':           'Ticket resolved',
     'ticket.closed':             'Ticket closed',
+    'ticket.cancelled':          'Ticket cancelled',
     'ticket.reopened':           'Ticket reopened',
     'ticket.overdue':            'Ticket past SLA deadline',
     'ticket.escalated':          'Ticket escalated',
@@ -63,6 +65,9 @@ EVENT_CATALOGUE: dict[str, str] = {
     'staff.leave.requested':     'Leave requested',
     'staff.leave.approved':      'Leave approved',
     'staff.leave.rejected':      'Leave rejected',
+    'staff.leave.cancelled':     'Leave request cancelled',
+    'attendance.clocked_in':     'Staff clocked in',
+    'attendance.clocked_out':    'Staff clocked out',
 
     # ── CMS (Phase 3) ─────────────────────────────────────────────────────────
     'cms.site.generated':        'AI generated website designs',

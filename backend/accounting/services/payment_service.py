@@ -67,7 +67,7 @@ def record_payment(
     if invoice and invoice.amount_due <= Decimal('0'):
         invoice.status = 'paid'
         invoice.paid_at = timezone.now()
-        invoice.save(update_fields=['status', 'paid_at'])
+        invoice.save(update_fields=['status', 'paid_at', 'updated_at'])
         try:
             from core.events import EventBus
             EventBus.publish('invoice.paid', {
@@ -83,7 +83,7 @@ def record_payment(
     if bill and bill.amount_due <= Decimal('0'):
         bill.status = 'paid'
         bill.paid_at = timezone.now()
-        bill.save(update_fields=['status', 'paid_at'])
+        bill.save(update_fields=['status', 'paid_at', 'updated_at'])
 
     return payment
 
@@ -118,11 +118,11 @@ def allocate_payment(payment, *, tenant, invoice=None, bill=None):
         if payment.invoice_id is not None:
             raise ConflictError('Payment is already linked to an invoice.')
         payment.invoice = invoice
-        payment.save(update_fields=['invoice'])
+        payment.save(update_fields=['invoice', 'updated_at'])
         if invoice.amount_due <= Decimal('0'):
             invoice.status = Invoice.STATUS_PAID
             invoice.paid_at = tz.now()
-            invoice.save(update_fields=['status', 'paid_at'])
+            invoice.save(update_fields=['status', 'paid_at', 'updated_at'])
             try:
                 from core.events import EventBus
                 EventBus.publish('invoice.paid', {
@@ -141,11 +141,11 @@ def allocate_payment(payment, *, tenant, invoice=None, bill=None):
         if payment.bill_id is not None:
             raise ConflictError('Payment is already linked to a bill.')
         payment.bill = bill
-        payment.save(update_fields=['bill'])
+        payment.save(update_fields=['bill', 'updated_at'])
         if bill.amount_due <= Decimal('0'):
             bill.status = Bill.STATUS_PAID
             bill.paid_at = tz.now()
-            bill.save(update_fields=['status', 'paid_at'])
+            bill.save(update_fields=['status', 'paid_at', 'updated_at'])
 
     else:
         raise AppValidationError({'detail': 'Provide invoice or bill to allocate.'})
@@ -187,14 +187,14 @@ def bounce_cheque(payment, *, reason='', bank_charge_amount=None, bank_charge_ac
         inv = payment.invoice
         inv.status = 'issued'
         inv.paid_at = None
-        inv.save(update_fields=['status', 'paid_at'])
+        inv.save(update_fields=['status', 'paid_at', 'updated_at'])
         log.info('Cheque bounce: reopened invoice %s', inv.pk)
 
     if payment.bill_id:
         bill = payment.bill
         bill.status = 'approved'
         bill.paid_at = None
-        bill.save(update_fields=['status', 'paid_at'])
+        bill.save(update_fields=['status', 'paid_at', 'updated_at'])
         log.info('Cheque bounce: reopened bill %s', bill.pk)
 
     # 3. Bank charge (optional)
@@ -209,7 +209,7 @@ def bounce_cheque(payment, *, reason='', bank_charge_amount=None, bank_charge_ac
 
     # 4. Mark bounced
     payment.cheque_status = Payment.CHEQUE_STATUS_BOUNCED
-    payment.save(update_fields=['cheque_status'])
+    payment.save(update_fields=['cheque_status', 'updated_at'])
     log.info('Cheque bounce complete: payment=%s', payment.payment_number)
 
     return payment

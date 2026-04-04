@@ -80,6 +80,9 @@ class AuditEvent(models.TextChoices):
     STAFF_REACTIVATED      = 'staff_reactivated',        'Staff Reactivated'
     ROLE_CHANGED           = 'role_changed',             'Member Role Changed'
 
+    # Self-service account actions
+    USER_PASSWORD_CHANGED  = 'user_password_changed',    'User Password Changed'
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Model

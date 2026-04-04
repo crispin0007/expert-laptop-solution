@@ -4034,9 +4034,154 @@ function WarrantyTab({ products, canManage }: { products: Product[]; canManage: 
   )
 }
 
+// ── Services Tab ─────────────────────────────────────────────────────────────
+
+function ServicesTab({ canManage }: { canManage: boolean }) {
+  const qc = useQueryClient()
+  interface ServiceItem { id: number; name: string; description: string; unit_price: string; is_active: boolean }
+
+  const [showCreate, setShowCreate] = useState(false)
+  const [editItem, setEditItem] = useState<ServiceItem | null>(null)
+  const [search, setSearch] = useState('')
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['services'],
+    queryFn: () => apiClient.get(INVENTORY.SERVICES + '?page_size=200').then(r => r.data?.data ?? r.data?.results ?? r.data ?? []),
+  })
+  const services: ServiceItem[] = Array.isArray(data) ? data : (data as { results?: ServiceItem[] })?.results ?? []
+
+  const filtered = services.filter(s => !search || s.name.toLowerCase().includes(search.toLowerCase()))
+
+  const deleteMut = useMutation({
+    mutationFn: (id: number) => apiClient.delete(INVENTORY.SERVICE_DETAIL(id)),
+    onSuccess: () => { toast.success('Service deactivated'); qc.invalidateQueries({ queryKey: ['services'] }); qc.invalidateQueries({ queryKey: ['services-all'] }) },
+    onError: () => toast.error('Failed to deactivate service'),
+  })
+
+  function ServiceModal({ item, onClose }: { item?: ServiceItem | null; onClose: () => void }) {
+    const isEdit = !!item
+    const [form, setForm] = useState({ name: item?.name ?? '', description: item?.description ?? '', unit_price: item?.unit_price ?? '', is_active: item?.is_active ?? true })
+    const mut = useMutation({
+      mutationFn: (payload: unknown) => isEdit
+        ? apiClient.put(INVENTORY.SERVICE_DETAIL(item!.id), payload)
+        : apiClient.post(INVENTORY.SERVICES, payload),
+      onSuccess: () => {
+        toast.success(isEdit ? 'Service updated' : 'Service created')
+        qc.invalidateQueries({ queryKey: ['services'] })
+        qc.invalidateQueries({ queryKey: ['services-all'] })
+        onClose()
+      },
+      onError: (e: { response?: { data?: { detail?: string } } }) => toast.error(e?.response?.data?.detail ?? 'Save failed'),
+    })
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+          <div className="px-6 pt-6 pb-4 border-b border-gray-100 flex items-center justify-between">
+            <h2 className="text-base font-bold text-gray-900">{isEdit ? 'Edit Service' : 'New Service'}</h2>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><XCircle size={18} /></button>
+          </div>
+          <form onSubmit={e => { e.preventDefault(); mut.mutate(form) }} className="px-6 py-5 space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Service Name *</label>
+              <input type="text" required value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="e.g. Annual Maintenance Contract" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Description</label>
+              <textarea rows={2} value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="Brief description of the service" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Default Rate (NPR) *</label>
+              <input type="number" required min="0" step="0.01" value={form.unit_price} onChange={e => setForm(p => ({ ...p, unit_price: e.target.value }))} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="0.00" />
+            </div>
+            {isEdit && (
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={form.is_active} onChange={e => setForm(p => ({ ...p, is_active: e.target.checked }))} /> Active
+              </label>
+            )}
+            <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
+              <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-500">Cancel</button>
+              <button type="submit" disabled={mut.isPending} className="px-5 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2">
+                {mut.isPending && <Loader2 size={14} className="animate-spin" />} {isEdit ? 'Save' : 'Create'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+        <div className="bg-indigo-50 rounded-xl p-3">
+          <p className="text-xs text-indigo-500 font-semibold uppercase">Total Services</p>
+          <p className="text-2xl font-bold text-indigo-700 mt-1">{services.length}</p>
+        </div>
+        <div className="bg-green-50 rounded-xl p-3">
+          <p className="text-xs text-green-500 font-semibold uppercase">Active</p>
+          <p className="text-2xl font-bold text-green-700 mt-1">{services.filter(s => s.is_active).length}</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-3">
+        <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search services..." className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-64" />
+        {canManage && (
+          <button onClick={() => setShowCreate(true)} className="ml-auto flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 py-2 rounded-lg">
+            <Plus size={15} /> New Service
+          </button>
+        )}
+      </div>
+      {isLoading
+        ? <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-indigo-400" /></div>
+        : (
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-xs text-gray-500 font-semibold uppercase">
+                <tr>
+                  <th className="px-4 py-3 text-left">Name</th>
+                  <th className="px-4 py-3 text-left">Description</th>
+                  <th className="px-4 py-3 text-right">Default Rate</th>
+                  <th className="px-4 py-3 text-center">Status</th>
+                  {canManage && <th className="px-4 py-3 text-right">Actions</th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filtered.map(s => (
+                  <tr key={s.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 font-medium text-gray-900">{s.name}</td>
+                    <td className="px-4 py-3 text-gray-500 text-xs max-w-xs truncate">{s.description || '—'}</td>
+                    <td className="px-4 py-3 text-right font-medium">NPR {Number(s.unit_price).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-center">
+                      {s.is_active
+                        ? <span className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-50 rounded-full px-2 py-0.5"><CheckCircle2 size={11} /> Active</span>
+                        : <span className="inline-flex items-center gap-1 text-xs text-gray-500 bg-gray-100 rounded-full px-2 py-0.5"><XCircle size={11} /> Inactive</span>}
+                    </td>
+                    {canManage && (
+                      <td className="px-4 py-3 text-right">
+                        <button onClick={() => setEditItem(s)} className="text-indigo-500 hover:text-indigo-700 mr-3"><Pencil size={14} /></button>
+                        <button onClick={() => deleteMut.mutate(s.id)} className="text-red-400 hover:text-red-600"><Trash2 size={14} /></button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr><td colSpan={5} className="text-center py-12 text-gray-400">
+                    <ReceiptText size={32} className="mx-auto mb-2 opacity-30" />
+                    <p>No services yet. Create your first service to use it in invoices and quotations.</p>
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      {showCreate && <ServiceModal onClose={() => setShowCreate(false)} />}
+      {editItem && <ServiceModal item={editItem} onClose={() => setEditItem(null)} />}
+    </div>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-type Tab = 'products' | 'movements' | 'low-stock' | 'categories' | 'uom' | 'variants' | 'suppliers' | 'purchase-orders' | 'returns' | 'supplier-catalog' | 'stock-counts' | 'bundles' | 'supplier-payments' | 'warranty'
+type Tab = 'products' | 'movements' | 'low-stock' | 'categories' | 'uom' | 'variants' | 'suppliers' | 'purchase-orders' | 'returns' | 'supplier-catalog' | 'stock-counts' | 'bundles' | 'supplier-payments' | 'warranty' | 'services'
 
 export default function InventoryPage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -4080,6 +4225,7 @@ export default function InventoryPage() {
     { id: 'bundles',            label: 'Bundles',            icon: <Package       size={15} /> },
     { id: 'supplier-payments',  label: 'Supplier Payments',  icon: <DollarSign    size={15} /> },
     { id: 'warranty',           label: 'Warranty',           icon: <ShieldCheck   size={15} /> },
+    { id: 'services',           label: 'Services',           icon: <ReceiptText   size={15} /> },
   ]
 
   return (
@@ -4123,6 +4269,7 @@ export default function InventoryPage() {
       {activeTab === 'bundles'            && <BundlesTab          products={products}     canManage={canManage} />}
       {activeTab === 'supplier-payments'  && <SupplierPaymentsTab                         canManage={canManage} />}
       {activeTab === 'warranty'          && <WarrantyTab         products={products}     canManage={canManage} />}
+      {activeTab === 'services'           && <ServicesTab          canManage={canManage} />}
     </div>
   )
 }

@@ -53,3 +53,15 @@ def on_leave_approved_invalidate_availability(payload: dict, tenant) -> None:
         logger.debug('Invalidated availability cache for tenant=%s', tenant.slug)
     except Exception as exc:
         logger.warning('on_leave_approved_invalidate_availability failed: %s', exc)
+
+
+@listens_to('staff.leave.cancelled', module_id='hrm')
+def on_leave_cancelled_invalidate_availability(payload: dict, tenant) -> None:
+    """Invalidate StaffAvailabilityView cache after a leave is cancelled."""
+    try:
+        from django.core.cache import cache
+        cache_key = f'staff_availability_{tenant.pk}'
+        cache.delete(cache_key)
+        logger.debug('Invalidated availability cache for tenant=%s', tenant.slug)
+    except Exception as exc:
+        logger.warning('on_leave_cancelled_invalidate_availability failed: %s', exc)

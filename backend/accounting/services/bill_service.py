@@ -102,7 +102,8 @@ class BillService:
             setattr(instance, field, value)
         for field, value in totals.items():
             setattr(instance, field, value)
-        instance.save()
+        update_fields = list(validated_data.keys()) + list(totals.keys()) + ['updated_at']
+        instance.save(update_fields=update_fields)
         return instance
 
     def delete(self, instance):
@@ -119,7 +120,7 @@ class BillService:
             raise ConflictError('Only draft bills can be approved.')
         bill.status      = Bill.STATUS_APPROVED
         bill.approved_at = timezone.now()
-        bill.save(update_fields=['status', 'approved_at'])
+        bill.save(update_fields=['status', 'approved_at', 'updated_at'])
         try:
             from core.events import EventBus
             EventBus.publish('invoice.sent', {
@@ -145,7 +146,7 @@ class BillService:
                 'Create a debit note or reverse the payment instead.'
             )
         bill.status = Bill.STATUS_VOID
-        bill.save(update_fields=['status'])
+        bill.save(update_fields=['status', 'updated_at'])
         return bill
 
     @transaction.atomic
@@ -193,7 +194,7 @@ class BillService:
         else:
             bill.status  = Bill.STATUS_PAID
             bill.paid_at = timezone.now()
-            bill.save(update_fields=['status', 'paid_at'])
+            bill.save(update_fields=['status', 'paid_at', 'updated_at'])
 
         bill.refresh_from_db()
         logger.info("Bill %s marked paid. payment=%s", bill.pk, payment and payment.pk)

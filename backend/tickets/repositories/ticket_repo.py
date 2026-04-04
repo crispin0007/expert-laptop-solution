@@ -99,8 +99,12 @@ class TicketRepository(BaseRepository):
         )
 
     def sla_warning(self, warning_hours: int = 6):
-        """TicketSLA records that will breach within ``warning_hours``."""
-        from tickets.models import TicketSLA
+        """TicketSLA records that will breach within ``warning_hours``.
+
+        Only returns records for tickets still in an active state — no point
+        warning on already-resolved, closed, or cancelled tickets.
+        """
+        from tickets.models import Ticket, TicketSLA
         now = timezone.now()
         return (
             TicketSLA.objects
@@ -110,6 +114,11 @@ class TicketRepository(BaseRepository):
                 breach_at__isnull=False,
                 breach_at__lte=now + timezone.timedelta(hours=warning_hours),
                 breach_at__gt=now,
+                ticket__status__in=[
+                    Ticket.STATUS_OPEN,
+                    Ticket.STATUS_IN_PROGRESS,
+                    Ticket.STATUS_PENDING_CUSTOMER,
+                ],
             )
             .select_related('ticket')
         )

@@ -27,6 +27,9 @@ import {
   RotateCcw,
   BarChart2,
   ArrowLeftRight,
+  Clock,
+  BriefcaseBusiness,
+  BarChart3,
   CheckSquare,
   FileText,
   CreditCard,
@@ -392,6 +395,17 @@ function SidebarContent({
                 {/* Managers/admins/owners see all projects; staff only see their own */}
                 {perms.isManager && <SubNavItem to="/projects" label="All Projects" icon={<FolderKanban size={13} />} />}
                 <SubNavItem to="/projects?assigned=me" label="My Projects" icon={<CheckSquare size={13} />} />
+              </NavSection>
+            )}
+            {modules.has('hrm') && perms.can('can_view_hrm') && (
+              <NavSection label="HR Management" icon={Users} basePath="/hrm" collapsed={collapsed}>
+                <SubNavItem to="/hrm?tab=dashboard"  label="Dashboard"  icon={<LayoutDashboard size={13} />} />
+                <SubNavItem to="/hrm?tab=staff"      label="Staff"      icon={<UserCircle      size={13} />} />
+                <SubNavItem to="/hrm?tab=attendance" label="Attendance" icon={<Clock           size={13} />} />
+                <SubNavItem to="/hrm?tab=leaves"     label="Time Off"   icon={<CalendarDays    size={13} />} />
+                {perms.isManager && <SubNavItem to="/hrm?tab=shifts"   label="Shifts"   icon={<BriefcaseBusiness size={13} />} />}
+                {perms.isManager && <SubNavItem to="/hrm?tab=reports"  label="Reports"  icon={<BarChart3         size={13} />} />}
+                {perms.isManager && <SubNavItem to="/hrm?tab=settings" label="Settings" icon={<Settings          size={13} />} />}
               </NavSection>
             )}
             {modules.has('accounting') && perms.can('can_view_accounting') && (

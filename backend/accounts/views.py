@@ -872,3 +872,117 @@ class TwoFARegenerateBackupCodesView(APIView):
             'backup_codes': plain_codes,
             'detail': '8 new backup codes generated. Store them safely — they will not be shown again.',
         })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Self-service password reset  (unauthenticated)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PasswordResetRequestView(APIView):
+    """
+    POST /api/v1/accounts/password-reset/request/
+    Body: { "email": "user@example.com" }
+
+    Sends a password-reset link to the user's email if the address is found.
+    Always returns 200 regardless of whether the email exists — prevents
+    email enumeration.
+    """
+    permission_classes = [permissions.AllowAny]
+    throttle_classes   = [LoginRateThrottle]
+
+    def post(self, request):
+        import secrets
+        from datetime import timedelta
+        from django.utils import timezone
+        from accounts.models import PasswordResetToken
+        from accounts.tasks import task_send_password_reset_email, PASSWORD_RESET_EXPIRY_MINUTES
+
+        email = (request.data.get('email') or '').strip().lower()
+        if not email:
+            return Response(
+                {'detail': 'Email is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            user = User.objects.get(email__iexact=email, is_active=True)
+        except User.DoesNotExist:
+            # Return 200 to prevent email enumeration
+            return Response({'detail': 'If that email is registered, a reset link has been sent.'})
+
+        # Invalidate any existing unexpired tokens for this user
+        PasswordResetToken.objects.filter(
+            user=user,
+            used_at__isnull=True,
+            expires_at__gt=timezone.now(),
+        ).update(expires_at=timezone.now())
+
+        # Create a new token
+        token_obj = PasswordResetToken.objects.create(
+            user=user,
+            token=secrets.token_urlsafe(48),
+            expires_at=timezone.now() + timedelta(minutes=PASSWORD_RESET_EXPIRY_MINUTES),
+        )
+
+        # Dispatch email asynchronously
+        task_send_password_reset_email.delay(user.pk, token_obj.pk)
+
+        return Response({'detail': 'If that email is registered, a reset link has been sent.'})
+
+
+class PasswordResetConfirmView(APIView):
+    """
+    POST /api/v1/accounts/password-reset/confirm/
+    Body: { "token": "<token>", "new_password": "<password>" }
+
+    Validates the token and sets the new password.
+    Token is single-use and must not be expired.
+    """
+    permission_classes = [permissions.AllowAny]
+    throttle_classes   = [LoginRateThrottle]
+
+    def post(self, request):
+        from django.utils import timezone
+        from django.contrib.auth.password_validation import validate_password
+        from django.core.exceptions import ValidationError as DjValidationError
+        from accounts.models import PasswordResetToken
+
+        token_val    = (request.data.get('token') or '').strip()
+        new_password = (request.data.get('new_password') or '').strip()
+
+        if not token_val or not new_password:
+            return Response(
+                {'detail': 'Both token and new_password are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            token_obj = PasswordResetToken.objects.select_related('user').get(token=token_val)
+        except PasswordResetToken.DoesNotExist:
+            return Response({'detail': 'Invalid or expired token.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if token_obj.is_used or token_obj.is_expired:
+            return Response({'detail': 'Invalid or expired token.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate the new password against Django's AUTH_PASSWORD_VALIDATORS
+        try:
+            validate_password(new_password, token_obj.user)
+        except DjValidationError as exc:
+            return Response({'detail': exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = token_obj.user
+        user.set_password(new_password)
+        user.save(update_fields=['password'])
+
+        # Mark the token as used
+        token_obj.used_at = timezone.now()
+        token_obj.save(update_fields=['used_at'])
+
+        log_event(
+            actor=user,
+            action=AuditEvent.USER_PASSWORD_CHANGED,
+            target=user,
+            description='Self-service password reset completed.',
+        )
+
+        return Response({'detail': 'Password has been reset. You may now log in with your new password.'})
