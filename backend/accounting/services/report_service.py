@@ -1160,6 +1160,18 @@ def report_drill_node(tenant, node_type, node_id, date_from=None, date_to=None):
     """
     from accounting.models import Account, JournalEntry, Invoice, Bill, Payment, CreditNote, DebitNote
 
+    def _missing_document_payload(kind: str, pk: int):
+        label = f"{kind.replace('_', ' ').title()} #{pk}"
+        return {
+            'node_type': kind,
+            'node_id': pk,
+            'node_label': label,
+            'status': 'missing',
+            'missing': True,
+            'message': f'{kind.replace("_", " ").title()} record is not available for this tenant.',
+            'next_refs': [],
+        }
+
     if node_type == 'account':
         try:
             account = Account.objects.get(tenant=tenant, pk=node_id, is_active=True)
@@ -1244,7 +1256,8 @@ def report_drill_node(tenant, node_type, node_id, date_from=None, date_to=None):
         try:
             inv = Invoice.objects.select_related('customer').get(tenant=tenant, pk=node_id)
         except Invoice.DoesNotExist:
-            raise ValueError('Invoice not found for drill-down.')
+            return _missing_document_payload('invoice', node_id)
+        customer_name = inv.customer.name if inv.customer else ''
         return {
             'node_type': 'invoice',
             'node_id': inv.id,
@@ -1253,14 +1266,29 @@ def report_drill_node(tenant, node_type, node_id, date_from=None, date_to=None):
             'date': str(inv.date or inv.created_at.date()),
             'status': inv.status,
             'customer_id': inv.customer_id,
-            'customer_name': inv.customer_name,
+            'customer_name': customer_name,
+            'ticket_id': inv.ticket_id,
+            'project_id': inv.project_id,
+            'subtotal': inv.subtotal,
+            'discount': inv.discount,
+            'vat_rate': inv.vat_rate,
+            'vat_amount': inv.vat_amount,
             'total': inv.total,
+            'amount_paid': inv.amount_paid,
             'amount_due': inv.amount_due,
+            'due_date': str(inv.due_date) if inv.due_date else None,
+            'paid_at': inv.paid_at.isoformat() if inv.paid_at else None,
+            'reference': inv.reference,
+            'payment_terms': inv.payment_terms,
+            'finance_status': inv.finance_status,
+            'payment_method': inv.payment_method,
+            'line_items_count': len(inv.line_items or []),
+            'notes': inv.notes,
             'next_refs': [
                 {
                     'node_type': 'customer',
                     'node_id': inv.customer_id,
-                    'label': inv.customer_name,
+                    'label': customer_name or f'Customer #{inv.customer_id}',
                 }
             ] if inv.customer_id else [],
         }
@@ -1269,7 +1297,7 @@ def report_drill_node(tenant, node_type, node_id, date_from=None, date_to=None):
         try:
             bill = Bill.objects.select_related('supplier').get(tenant=tenant, pk=node_id)
         except Bill.DoesNotExist:
-            raise ValueError('Bill not found for drill-down.')
+            return _missing_document_payload('bill', node_id)
         supplier_name = bill.supplier.name if bill.supplier else (bill.supplier_name or '')
         return {
             'node_type': 'bill',
@@ -1280,8 +1308,21 @@ def report_drill_node(tenant, node_type, node_id, date_from=None, date_to=None):
             'status': bill.status,
             'supplier_id': bill.supplier_id,
             'supplier_name': supplier_name,
+            'subtotal': bill.subtotal,
+            'discount': bill.discount,
+            'vat_rate': bill.vat_rate,
+            'vat_amount': bill.vat_amount,
             'total': bill.total,
+            'amount_paid': bill.amount_paid,
             'amount_due': bill.amount_due,
+            'due_date': str(bill.due_date) if bill.due_date else None,
+            'approved_at': bill.approved_at.isoformat() if bill.approved_at else None,
+            'paid_at': bill.paid_at.isoformat() if bill.paid_at else None,
+            'reference': bill.reference,
+            'purchase_order_id': bill.purchase_order_id,
+            'tds_rate': bill.tds_rate,
+            'line_items_count': len(bill.line_items or []),
+            'notes': bill.notes,
             'next_refs': [
                 {
                     'node_type': 'supplier',
@@ -1293,14 +1334,16 @@ def report_drill_node(tenant, node_type, node_id, date_from=None, date_to=None):
 
     if node_type == 'payment':
         try:
-            pay = Payment.objects.select_related('invoice', 'bill').get(tenant=tenant, pk=node_id)
+            pay = Payment.objects.select_related('invoice', 'bill', 'bank_account', 'account').get(tenant=tenant, pk=node_id)
         except Payment.DoesNotExist:
-            raise ValueError('Payment not found for drill-down.')
+            return _missing_document_payload('payment', node_id)
         refs = []
         if pay.invoice_id:
-            refs.append({'node_type': 'invoice', 'node_id': pay.invoice_id, 'label': pay.invoice_number})
+            invoice_label = pay.invoice.invoice_number if pay.invoice else f'Invoice #{pay.invoice_id}'
+            refs.append({'node_type': 'invoice', 'node_id': pay.invoice_id, 'label': invoice_label})
         if pay.bill_id:
-            refs.append({'node_type': 'bill', 'node_id': pay.bill_id, 'label': pay.bill_number})
+            bill_label = pay.bill.bill_number if pay.bill else f'Bill #{pay.bill_id}'
+            refs.append({'node_type': 'bill', 'node_id': pay.bill_id, 'label': bill_label})
         return {
             'node_type': 'payment',
             'node_id': pay.id,
@@ -1311,6 +1354,15 @@ def report_drill_node(tenant, node_type, node_id, date_from=None, date_to=None):
             'amount': pay.amount,
             'type': pay.type,
             'method': pay.method,
+            'invoice_id': pay.invoice_id,
+            'bill_id': pay.bill_id,
+            'party_name': pay.party_name,
+            'reference': pay.reference,
+            'bank_account_id': pay.bank_account_id,
+            'bank_account_name': pay.bank_account.name if pay.bank_account else '',
+            'account_id': pay.account_id,
+            'account_name': pay.account.name if pay.account else '',
+            'notes': pay.notes,
             'next_refs': refs,
         }
 
@@ -1318,7 +1370,8 @@ def report_drill_node(tenant, node_type, node_id, date_from=None, date_to=None):
         try:
             cn = CreditNote.objects.select_related('invoice').get(tenant=tenant, pk=node_id)
         except CreditNote.DoesNotExist:
-            raise ValueError('Credit note not found for drill-down.')
+            return _missing_document_payload('credit_note', node_id)
+        invoice_label = cn.invoice.invoice_number if cn.invoice_id and cn.invoice else f'Invoice #{cn.invoice_id}'
         return {
             'node_type': 'credit_note',
             'node_id': cn.id,
@@ -1326,12 +1379,18 @@ def report_drill_node(tenant, node_type, node_id, date_from=None, date_to=None):
             'credit_note_number': cn.credit_note_number,
             'date': str(cn.created_at.date()),
             'status': cn.status,
+            'invoice_id': cn.invoice_id,
+            'subtotal': cn.subtotal,
+            'vat_amount': cn.vat_amount,
             'total': cn.total,
+            'reason': cn.reason,
+            'issued_at': cn.issued_at.isoformat() if cn.issued_at else None,
+            'line_items_count': len(cn.line_items or []),
             'next_refs': [
                 {
                     'node_type': 'invoice',
                     'node_id': cn.invoice_id,
-                    'label': cn.invoice_number,
+                    'label': invoice_label,
                 }
             ] if cn.invoice_id else [],
         }
@@ -1340,7 +1399,7 @@ def report_drill_node(tenant, node_type, node_id, date_from=None, date_to=None):
         try:
             dn = DebitNote.objects.select_related('bill').get(tenant=tenant, pk=node_id)
         except DebitNote.DoesNotExist:
-            raise ValueError('Debit note not found for drill-down.')
+            return _missing_document_payload('debit_note', node_id)
         bill_label = dn.bill.bill_number if dn.bill_id and dn.bill else f'Bill #{dn.bill_id}'
         return {
             'node_type': 'debit_note',
@@ -1349,7 +1408,13 @@ def report_drill_node(tenant, node_type, node_id, date_from=None, date_to=None):
             'debit_note_number': dn.debit_note_number,
             'date': str(dn.created_at.date()),
             'status': dn.status,
+            'bill_id': dn.bill_id,
+            'subtotal': dn.subtotal,
+            'vat_amount': dn.vat_amount,
             'total': dn.total,
+            'reason': dn.reason,
+            'issued_at': dn.issued_at.isoformat() if dn.issued_at else None,
+            'line_items_count': len(dn.line_items or []),
             'next_refs': [
                 {
                     'node_type': 'bill',

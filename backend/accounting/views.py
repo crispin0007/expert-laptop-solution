@@ -316,6 +316,47 @@ class BankAccountViewSet(NexusViewSet):
         bank.linked_account = account
         bank.save(update_fields=['linked_account'])
 
+    def _sync_linked_coa_account(self, bank):
+        """Keep linked CoA bank ledger aligned with the BankAccount record."""
+        if not bank.linked_account_id:
+            return
+
+        from accounting.models import AccountGroup
+        from accounting.services.journal_service import ensure_bank_control_account, seed_chart_of_accounts
+
+        tenant = bank.tenant
+        linked = bank.linked_account
+
+        seed_chart_of_accounts(tenant, created_by=getattr(self.request, 'user', None))
+        group = AccountGroup.objects.filter(tenant=tenant, slug='bank_accounts').first()
+        bank_control = ensure_bank_control_account(tenant, created_by=getattr(self.request, 'user', None))
+
+        target_name = (bank.bank_name or bank.name or '').strip() or linked.name
+        target_desc = f'Bank account: {target_name}' if target_name else (linked.description or '')
+
+        update_fields = []
+        if linked.type != linked.TYPE_ASSET:
+            linked.type = linked.TYPE_ASSET
+            update_fields.append('type')
+        if group is not None and linked.group_id != group.id:
+            linked.group = group
+            update_fields.append('group')
+        if linked.parent_id != bank_control.id:
+            linked.parent = bank_control
+            update_fields.append('parent')
+        if target_name and linked.name != target_name:
+            linked.name = target_name
+            update_fields.append('name')
+        if target_desc and linked.description != target_desc:
+            linked.description = target_desc
+            update_fields.append('description')
+        if bank.is_active and not linked.is_active:
+            linked.is_active = True
+            update_fields.append('is_active')
+
+        if update_fields:
+            linked.save(update_fields=update_fields)
+
     # ── create / update overrides ──────────────────────────────────────────
 
     def create(self, request, *args, **kwargs):
@@ -327,6 +368,7 @@ class BankAccountViewSet(NexusViewSet):
         serializer.is_valid(raise_exception=True)
         bank = serializer.save(tenant=self.tenant, created_by=request.user)
         self._auto_link_coa_account(bank)
+        self._sync_linked_coa_account(bank)
         return ApiResponse.created(data=BankAccountSerializer(bank).data)
 
     def update(self, request, *args, **kwargs):
@@ -339,6 +381,7 @@ class BankAccountViewSet(NexusViewSet):
         serializer.is_valid(raise_exception=True)
         bank = serializer.save()
         self._auto_link_coa_account(bank)
+        self._sync_linked_coa_account(bank)
         return ApiResponse.success(data=BankAccountSerializer(bank).data)
 
     def destroy(self, request, *args, **kwargs):

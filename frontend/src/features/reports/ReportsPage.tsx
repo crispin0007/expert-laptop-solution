@@ -54,6 +54,89 @@ function npr(v: string | number) {
   return `NPR ${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+const DRILL_DETAIL_EXCLUDED_KEYS = new Set([
+  'node_type',
+  'node_id',
+  'node_label',
+  'rows',
+  'lines',
+  'next_refs',
+  'source_ref',
+])
+
+const DRILL_DETAIL_CURRENCY_KEYS = new Set([
+  'opening_balance',
+  'closing_balance',
+  'debit',
+  'credit',
+  'balance',
+  'subtotal',
+  'discount',
+  'vat_amount',
+  'total',
+  'amount',
+  'amount_paid',
+  'amount_due',
+])
+
+const DRILL_DETAIL_DATE_KEYS = new Set([
+  'date',
+  'due_date',
+  'paid_at',
+  'approved_at',
+  'issued_at',
+  'payment_received_at',
+  'finance_reviewed_at',
+])
+
+const DRILL_DETAIL_LABELS: Record<string, string> = {
+  invoice_number: 'Invoice Number',
+  bill_number: 'Bill Number',
+  payment_number: 'Payment Number',
+  credit_note_number: 'Credit Note Number',
+  debit_note_number: 'Debit Note Number',
+  vat_rate: 'VAT Rate',
+  vat_amount: 'VAT Amount',
+  line_items_count: 'Line Items',
+  due_date: 'Due Date',
+  paid_at: 'Paid At',
+  approved_at: 'Approved At',
+  issued_at: 'Issued At',
+  finance_status: 'Finance Status',
+  payment_method: 'Payment Method',
+  payment_terms: 'Payment Terms (Days)',
+  payment_received_at: 'Payment Received At',
+  finance_reviewed_at: 'Finance Reviewed At',
+  customer_name: 'Customer',
+  supplier_name: 'Supplier',
+  bank_account_name: 'Bank Account',
+  party_name: 'Party Name',
+  account_name: 'Ledger Account',
+}
+
+function labelizeDrillKey(key: string): string {
+  if (DRILL_DETAIL_LABELS[key]) return DRILL_DETAIL_LABELS[key]
+  return key
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, s => s.toUpperCase())
+}
+
+function formatDrillDetailValue(key: string, value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—'
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (typeof value === 'number' || DRILL_DETAIL_CURRENCY_KEYS.has(key)) {
+    if (DRILL_DETAIL_CURRENCY_KEYS.has(key)) return npr(value as string | number)
+    return Number(value).toLocaleString('en-IN')
+  }
+  if (DRILL_DETAIL_DATE_KEYS.has(key) && typeof value === 'string') {
+    return fmt(value)
+  }
+  if (key === 'vat_rate') {
+    return `${(Number(value) * 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}%`
+  }
+  return String(value)
+}
+
 function Spinner() {
   return <div className="flex justify-center py-16"><Loader2 className="animate-spin text-indigo-500" size={28} /></div>
 }
@@ -323,6 +406,14 @@ function ReportDrillModal({ seed, onClose }: { seed: DrillSeed; onClose: () => v
   const nextRefs = (data?.next_refs as Array<Record<string, unknown>>) ?? []
   const sourceRef = data?.source_ref as Record<string, unknown> | undefined
   const sourceRefNodeType = asSupportedDrillNodeType(sourceRef?.node_type)
+  const isDocumentNode = ['invoice', 'bill', 'payment', 'credit_note', 'debit_note'].includes(String(data?.node_type ?? ''))
+  const documentDetails = Object.entries(data ?? {})
+    .filter(([key, value]) => {
+      if (DRILL_DETAIL_EXCLUDED_KEYS.has(key)) return false
+      if (Array.isArray(value)) return false
+      if (typeof value === 'object' && value !== null) return false
+      return !(value === null || value === undefined || value === '')
+    })
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
@@ -359,7 +450,7 @@ function ReportDrillModal({ seed, onClose }: { seed: DrillSeed; onClose: () => v
             <>
               <div className="flex items-center justify-between px-5 py-2 bg-gray-50 border-b border-gray-100 text-xs text-gray-500">
                 <span>Opening Balance</span>
-                <span className="tabular-nums font-medium text-gray-700">{npr(data.opening_balance as string | number)}</span>
+                <span className="tabular-nums font-medium text-gray-700">{npr((data?.opening_balance as string | number) ?? 0)}</span>
               </div>
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
@@ -448,34 +539,42 @@ function ReportDrillModal({ seed, onClose }: { seed: DrillSeed; onClose: () => v
             </div>
           )}
 
-          {['invoice', 'bill', 'payment', 'credit_note', 'debit_note'].includes(String(data?.node_type ?? '')) && (
+          {isDocumentNode && (
             <div className="p-4 space-y-3 text-sm">
-              <div className="border border-gray-200 rounded-lg p-3 bg-white space-y-1 text-gray-700">
-                {'invoice_number' in (data ?? {}) && <p>Invoice: <span className="font-semibold">{String(data.invoice_number)}</span></p>}
-                {'bill_number' in (data ?? {}) && <p>Bill: <span className="font-semibold">{String(data.bill_number)}</span></p>}
-                {'payment_number' in (data ?? {}) && <p>Payment: <span className="font-semibold">{String(data.payment_number)}</span></p>}
-                {'credit_note_number' in (data ?? {}) && <p>Credit Note: <span className="font-semibold">{String(data.credit_note_number)}</span></p>}
-                {'debit_note_number' in (data ?? {}) && <p>Debit Note: <span className="font-semibold">{String(data.debit_note_number)}</span></p>}
-                {'status' in (data ?? {}) && <p>Status: <span className="font-semibold capitalize">{String(data.status ?? '—')}</span></p>}
-                {'total' in (data ?? {}) && <p>Total: <span className="font-semibold">{npr(data.total as string | number)}</span></p>}
-                {'amount' in (data ?? {}) && <p>Amount: <span className="font-semibold">{npr(data.amount as string | number)}</span></p>}
+              <div className="border border-gray-200 rounded-lg p-3 bg-white">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-gray-700">
+                  {documentDetails.map(([key, value]) => (
+                    <div key={key} className="flex items-center justify-between gap-3 border-b border-gray-100 pb-1 last:border-b-0">
+                      <span className="text-gray-500">{labelizeDrillKey(key)}</span>
+                      <span className={`font-semibold text-right ${key === 'status' || key.endsWith('_status') ? 'capitalize' : ''}`}>
+                        {formatDrillDetailValue(key, value)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
               {nextRefs.length > 0 && (
                 <div className="flex items-center gap-2 flex-wrap">
                   {nextRefs.map((ref, i) => (
-                    <button
-                      key={`${String(ref.node_type)}-${String(ref.node_id)}-${i}`}
-                      onClick={() => openNext({
-                        nodeType: String(ref.node_type) as DrillNodeType,
-                        nodeId: Number(ref.node_id),
-                        nodeLabel: String(ref.label ?? `${String(ref.node_type)} #${String(ref.node_id)}`),
-                        dateFrom: seed.dateFrom,
-                        dateTo: seed.dateTo,
-                      })}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition-colors"
-                    >
-                      Open {String(ref.node_type).replace('_', ' ')} <ChevronRight size={12} />
-                    </button>
+                    (() => {
+                      const nextNodeType = asSupportedDrillNodeType(ref.node_type)
+                      if (!nextNodeType) return null
+                      return (
+                        <button
+                          key={`${String(ref.node_type)}-${String(ref.node_id)}-${i}`}
+                          onClick={() => openNext({
+                            nodeType: nextNodeType,
+                            nodeId: Number(ref.node_id),
+                            nodeLabel: String(ref.label ?? `${String(ref.node_type)} #${String(ref.node_id)}`),
+                            dateFrom: seed.dateFrom,
+                            dateTo: seed.dateTo,
+                          })}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition-colors"
+                        >
+                          Open {String(ref.node_type).replace('_', ' ')} <ChevronRight size={12} />
+                        </button>
+                      )
+                    })()
                   ))}
                 </div>
               )}
@@ -486,7 +585,7 @@ function ReportDrillModal({ seed, onClose }: { seed: DrillSeed; onClose: () => v
             <>
               <div className="flex items-center justify-between px-5 py-2 bg-gray-50 border-b border-gray-100 text-xs text-gray-500">
                 <span>Opening Balance</span>
-                <span className="tabular-nums font-medium text-gray-700">{npr(data.opening_balance as string | number)}</span>
+                <span className="tabular-nums font-medium text-gray-700">{npr((data?.opening_balance as string | number) ?? 0)}</span>
               </div>
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import apiClient from '../../api/client'
-import { SETTINGS, AUTH, NOTIFICATIONS } from '../../api/endpoints'
+import { SETTINGS, AUTH, NOTIFICATIONS, ACCOUNTING } from '../../api/endpoints'
 import toast from 'react-hot-toast'
 import { QRCodeSVG } from 'qrcode.react'
 import {
@@ -54,6 +54,28 @@ interface SmtpConfig {
   has_password: boolean
   created_at?: string
   updated_at?: string
+}
+
+interface FiscalYearStatus {
+  fiscal_years: Array<{
+    fy_year: number
+    label: string
+    is_closed: boolean
+  }>
+}
+
+interface FiscalYearClosePreview {
+  fy_year: number
+  label: string
+  date_from: string
+  date_to: string
+  gross_revenue: string | number
+  total_direct_cost: string | number
+  total_indirect_exp: string | number
+  total_indirect_inc: string | number
+  net_profit: string | number
+  income_accounts: number
+  expense_accounts: number
 }
 
 // ── Human-readable notification type labels ───────────────────────────────────
@@ -457,6 +479,9 @@ export default function SettingsPage() {
   const [vatEnabled, setVatEnabled] = useState(false)
   const [vatRate, setVatRate] = useState('')
   const [coinRate, setCoinRate] = useState('')
+  const [selectedFyYear, setSelectedFyYear] = useState<number | null>(null)
+  const [fyCloseNotes, setFyCloseNotes] = useState('')
+  const [showFyCloseModal, setShowFyCloseModal] = useState(false)
 
   useEffect(() => {
     if (settings) {
@@ -499,6 +524,78 @@ export default function SettingsPage() {
     },
     onError: () => toast.error('Failed to save settings'),
   })
+
+  const { data: fiscalYearStatus, isLoading: fiscalYearLoading } = useQuery<FiscalYearStatus>({
+    queryKey: ['accounting-fiscal-year-status'],
+    queryFn: () => apiClient.get(ACCOUNTING.REPORT_FISCAL_YEAR_STATUS).then(r => r.data.data ?? r.data),
+    enabled: activeTab === 'tax',
+  })
+
+  const closeFiscalYearMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedFyYear) throw new Error('Please select a fiscal year to close.')
+      return apiClient.post(ACCOUNTING.REPORT_CLOSE_FISCAL_YEAR, {
+        fy_year: selectedFyYear,
+        notes: fyCloseNotes.trim(),
+      }).then(r => r.data.data ?? r.data)
+    },
+    onSuccess: () => {
+      toast.success('Fiscal year closed successfully.')
+      setFyCloseNotes('')
+      setShowFyCloseModal(false)
+      queryClient.invalidateQueries({ queryKey: ['accounting-fiscal-year-status'] })
+      queryClient.invalidateQueries({ queryKey: ['report-data'] })
+    },
+    onError: (err: unknown) => {
+      const detail = (err as { response?: { data?: { errors?: string[]; detail?: string; message?: string } } })?.response?.data
+      const message = detail?.errors?.[0] ?? detail?.detail ?? detail?.message ?? 'Failed to close fiscal year.'
+      toast.error(message)
+    },
+  })
+
+  useEffect(() => {
+    if (!fiscalYearStatus?.fiscal_years?.length) return
+    const firstOpen = fiscalYearStatus.fiscal_years.find(y => !y.is_closed)
+    setSelectedFyYear(prev => prev ?? firstOpen?.fy_year ?? null)
+  }, [fiscalYearStatus])
+
+  const { data: fyClosePreview, isLoading: fyClosePreviewLoading } = useQuery<FiscalYearClosePreview>({
+    queryKey: ['fy-close-preview', selectedFyYear],
+    queryFn: async () => {
+      if (!selectedFyYear) throw new Error('Fiscal year is required')
+      const fy = {
+        bsYear: selectedFyYear,
+        label: `${selectedFyYear}/${String(selectedFyYear + 1).slice(-3)}`,
+        labelFull: `${selectedFyYear}/${selectedFyYear + 1}`,
+      }
+      const params = fiscalYearAdParams(fy)
+      const plRes = await apiClient.get(ACCOUNTING.REPORT_PL, { params })
+      const pl = plRes.data?.data ?? plRes.data
+      return {
+        fy_year: selectedFyYear,
+        label: fy.label,
+        date_from: params.date_from,
+        date_to: params.date_to,
+        gross_revenue: pl?.gross_revenue ?? 0,
+        total_direct_cost: pl?.total_direct_cost ?? 0,
+        total_indirect_exp: pl?.total_indirect_exp ?? 0,
+        total_indirect_inc: pl?.total_indirect_inc ?? 0,
+        net_profit: pl?.net_profit ?? 0,
+        income_accounts:
+          (Array.isArray(pl?.sales) ? pl.sales.length : 0) +
+          (Array.isArray(pl?.direct_income) ? pl.direct_income.length : 0) +
+          (Array.isArray(pl?.indirect_income) ? pl.indirect_income.length : 0),
+        expense_accounts:
+          (Array.isArray(pl?.purchases) ? pl.purchases.length : 0) +
+          (Array.isArray(pl?.direct_expenses) ? pl.direct_expenses.length : 0) +
+          (Array.isArray(pl?.indirect_expenses) ? pl.indirect_expenses.length : 0),
+      }
+    },
+    enabled: showFyCloseModal && !!selectedFyYear,
+  })
+
+  const fyNetProfitValue = Number(fyClosePreview?.net_profit ?? 0)
+  const canConfirmClose = !fyClosePreviewLoading && !closeFiscalYearMutation.isPending && !!selectedFyYear && fyNetProfitValue !== 0
 
   // ── 2FA state ─────────────────────────────────────────────────────────────
   const [twoFASetup, setTwoFASetup] = useState<{ secret: string; provisioning_uri: string } | null>(null)
@@ -934,6 +1031,82 @@ export default function SettingsPage() {
                   <span className="text-sm text-gray-500 shrink-0">{currency || 'currency units'}</span>
                 </div>
               </FieldRow>
+            </SectionCard>
+
+            <SectionCard icon={Calendar} title="Fiscal Year Closing" subtitle="Close fiscal periods by transferring net P&L to retained earnings and locking posting">
+              {fiscalYearLoading ? (
+                <div className="flex items-center justify-center py-6 text-gray-400">
+                  <Loader2 size={18} className="animate-spin" />
+                </div>
+              ) : (
+                <>
+                  <FieldRow label="Fiscal Year" hint="Only open fiscal years can be closed">
+                    <select
+                      value={selectedFyYear ?? ''}
+                      onChange={e => setSelectedFyYear(e.target.value ? Number(e.target.value) : null)}
+                      disabled={!managerView || closeFiscalYearMutation.isPending}
+                      className={inputCls(!managerView || closeFiscalYearMutation.isPending)}
+                    >
+                      <option value="">— Select fiscal year —</option>
+                      {(fiscalYearStatus?.fiscal_years ?? []).map((fy) => (
+                        <option key={fy.fy_year} value={fy.fy_year} disabled={fy.is_closed}>
+                          {fy.label} {fy.is_closed ? '(Closed)' : '(Open)'}
+                        </option>
+                      ))}
+                    </select>
+                  </FieldRow>
+
+                  <FieldRow label="Close Notes" hint="Optional close memo for audit trail">
+                    <textarea
+                      value={fyCloseNotes}
+                      onChange={e => setFyCloseNotes(e.target.value)}
+                      disabled={!managerView || closeFiscalYearMutation.isPending}
+                      rows={3}
+                      className={inputCls(!managerView || closeFiscalYearMutation.isPending)}
+                      placeholder="Year-end closure notes (optional)"
+                    />
+                  </FieldRow>
+
+                  <FieldRow label="Action" hint="This will lock journal posting inside the selected fiscal year">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!selectedFyYear) {
+                          toast.error('Select a fiscal year first.')
+                          return
+                        }
+                        const target = (fiscalYearStatus?.fiscal_years ?? []).find(f => f.fy_year === selectedFyYear)
+                        if (target?.is_closed) {
+                          toast.error('Selected fiscal year is already closed.')
+                          return
+                        }
+                        setShowFyCloseModal(true)
+                      }}
+                      disabled={!managerView || !selectedFyYear || closeFiscalYearMutation.isPending}
+                      className="px-4 py-2 bg-amber-600 text-white text-sm font-semibold rounded-lg hover:bg-amber-700 disabled:opacity-60 transition"
+                    >
+                      {closeFiscalYearMutation.isPending ? 'Closing…' : 'Close Fiscal Year'}
+                    </button>
+                  </FieldRow>
+
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-2">Fiscal Year Status</p>
+                    <div className="space-y-2">
+                      {(fiscalYearStatus?.fiscal_years ?? []).map((fy) => (
+                        <div key={fy.fy_year} className="flex items-center justify-between text-sm">
+                          <span className="font-medium text-gray-700">{fy.label}</span>
+                          <span className={`text-xs font-semibold px-2 py-1 rounded-full ${fy.is_closed ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                            {fy.is_closed ? 'Closed' : 'Open'}
+                          </span>
+                        </div>
+                      ))}
+                      {!(fiscalYearStatus?.fiscal_years ?? []).length && (
+                        <p className="text-xs text-gray-400">No fiscal year records available.</p>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
             </SectionCard>
 
             {managerView && <SaveBar onSave={() => saveMutation.mutate()} isPending={saveMutation.isPending} />}
@@ -1623,6 +1796,99 @@ export default function SettingsPage() {
         )}
 
       </div>
+
+      {showFyCloseModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
+          <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-gray-900">Verify Fiscal Year Close</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Review this summary before locking the fiscal period.</p>
+              </div>
+              <button
+                type="button"
+                className="text-gray-400 hover:text-gray-700 text-xl leading-none"
+                onClick={() => setShowFyCloseModal(false)}
+                disabled={closeFiscalYearMutation.isPending}
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {fyClosePreviewLoading ? (
+                <div className="flex items-center justify-center py-8 text-gray-400">
+                  <Loader2 size={18} className="animate-spin" />
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                      <p className="text-xs text-gray-500 mb-1">Fiscal Year</p>
+                      <p className="font-semibold text-gray-900">{fyClosePreview?.label ?? '—'}</p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                      <p className="text-xs text-gray-500 mb-1">AD Date Range</p>
+                      <p className="font-semibold text-gray-900">{fyClosePreview?.date_from ?? '—'} to {fyClosePreview?.date_to ?? '—'}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                    <div className="rounded-xl border border-gray-200 p-3">
+                      <p className="text-xs text-gray-500 mb-1">Gross Revenue</p>
+                      <p className="font-semibold text-gray-900">{Number(fyClosePreview?.gross_revenue ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 p-3">
+                      <p className="text-xs text-gray-500 mb-1">Direct Cost</p>
+                      <p className="font-semibold text-gray-900">{Number(fyClosePreview?.total_direct_cost ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 p-3">
+                      <p className="text-xs text-gray-500 mb-1">Net Profit / Loss</p>
+                      <p className={`font-semibold ${Number(fyClosePreview?.net_profit ?? 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                        {Number(fyClosePreview?.net_profit ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                    <p className="font-semibold mb-1">Close Impact</p>
+                    <p>
+                      This action posts a fiscal-year closing journal (P&L to retained earnings) and locks posting inside this FY.
+                      Income accounts considered: {fyClosePreview?.income_accounts ?? 0}, expense accounts considered: {fyClosePreview?.expense_accounts ?? 0}.
+                    </p>
+                  </div>
+
+                  {fyNetProfitValue === 0 && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                      This fiscal year currently has zero net P&L, so close is blocked by backend rules.
+                      Choose a fiscal year with activity (for your seeded demo, use 2081/082) or post entries first.
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="px-5 py-4 border-t border-gray-200 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="px-3 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+                onClick={() => setShowFyCloseModal(false)}
+                disabled={closeFiscalYearMutation.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="px-3 py-2 text-sm font-semibold bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-60"
+                onClick={() => closeFiscalYearMutation.mutate()}
+                disabled={!canConfirmClose}
+              >
+                {closeFiscalYearMutation.isPending ? 'Closing…' : 'Confirm Close Fiscal Year'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -103,7 +103,7 @@ class Command(BaseCommand):
             ('2200', 'VAT Payable (13%)',              'liability'),
             ('2300', 'TDS Payable',                   'liability'),
             ('2400', 'Salary Payable',                'liability'),
-            ('3100', 'Owner Capital',                 'equity'),
+            ('3100', 'Capital Account',               'equity'),
             ('3200', 'Retained Earnings',             'equity'),
             ('4100', 'Service Revenue',               'revenue'),
             ('4110', 'Product Sales',                 'revenue'),

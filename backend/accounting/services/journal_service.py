@@ -966,7 +966,8 @@ DEFAULT_ACCOUNTS = [
     ('2200', 'VAT Payable',          'liability', '2000', True),
     ('2300', 'TDS Payable',          'liability', '2000', True),   # ← salary + supplier TDS owed to IRD
     ('3000', 'Equity',               'equity',    None,   True),
-    ('3100', 'Retained Earnings',    'equity',    '3000', True),
+    ('3100', 'Capital Account',      'equity',    '3000', True),
+    ('3200', 'Retained Earnings',    'equity',    '3000', True),
     ('4000', 'Revenue',              'revenue',   None,   True),
     ('4100', 'Service Revenue',      'revenue',   '4000', True),
     ('4200', 'Product Revenue',      'revenue',   '4000', True),
@@ -1077,6 +1078,13 @@ def ensure_bank_control_account(tenant, created_by=None):
     if control.name != 'Bank Accounts':
         control.name = 'Bank Accounts'
         update_fields.append('name')
+    # 1150 is a control ledger, not a specific bank account.
+    if control.description:
+        control.description = ''
+        update_fields.append('description')
+    if not control.is_active:
+        control.is_active = True
+        update_fields.append('is_active')
     if not control.is_system:
         control.is_system = True
         update_fields.append('is_system')

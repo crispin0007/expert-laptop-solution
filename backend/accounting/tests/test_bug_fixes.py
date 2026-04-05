@@ -2754,3 +2754,114 @@ class TestN8ReportDrillSourceRefValidation:
         assert next_refs[0].get('label') == bill.bill_number, (
             'N8 FAIL: debit-note drill did not use related bill_number label.'
         )
+
+    @pytest.mark.django_db
+    def test_payment_drill_uses_related_document_numbers(self, tenant, admin_user):
+        from accounting.models import Invoice, Payment
+        from accounting.services.report_service import report_drill_node
+
+        invoice = Invoice.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            date=datetime.date(2026, 4, 5),
+            line_items=[{'description': 'Service', 'qty': 1, 'unit_price': '120.00'}],
+            subtotal=Decimal('120.00'),
+            discount=Decimal('0.00'),
+            vat_rate=Decimal('0.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('120.00'),
+            status=Invoice.STATUS_ISSUED,
+        )
+        pay = Payment.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            date=datetime.date(2026, 4, 5),
+            type=Payment.TYPE_INCOMING,
+            method=Payment.METHOD_CASH,
+            amount=Decimal('120.00'),
+            invoice=invoice,
+        )
+
+        payload = report_drill_node(tenant, node_type='payment', node_id=pay.pk)
+        refs = payload.get('next_refs', [])
+        assert refs, 'N8 FAIL: expected payment drill to include related invoice next_ref.'
+        assert refs[0].get('label') == invoice.invoice_number, (
+            'N8 FAIL: payment drill did not use related invoice_number label.'
+        )
+
+    @pytest.mark.django_db
+    def test_invoice_drill_returns_extended_document_fields(self, tenant, admin_user):
+        from accounting.models import Invoice
+        from accounting.services.report_service import report_drill_node
+
+        invoice = Invoice.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            date=datetime.date(2026, 4, 5),
+            line_items=[{'description': 'Support', 'qty': 2, 'unit_price': '150.00'}],
+            subtotal=Decimal('300.00'),
+            discount=Decimal('25.00'),
+            vat_rate=Decimal('0.13'),
+            vat_amount=Decimal('35.75'),
+            total=Decimal('310.75'),
+            payment_terms=15,
+            reference='PO-7788',
+            notes='Priority customer',
+            status=Invoice.STATUS_ISSUED,
+        )
+
+        payload = report_drill_node(tenant, node_type='invoice', node_id=invoice.pk)
+        assert payload.get('customer_name') == '', 'N8 FAIL: invoice drill should tolerate null customer safely.'
+        assert payload.get('subtotal') == Decimal('300.00')
+        assert payload.get('discount') == Decimal('25.00')
+        assert payload.get('vat_rate') == Decimal('0.13')
+        assert payload.get('amount_paid') == Decimal('0.00')
+        assert payload.get('line_items_count') == 1
+        assert payload.get('payment_terms') == 15
+        assert payload.get('reference') == 'PO-7788'
+
+    @pytest.mark.django_db
+    def test_credit_note_drill_uses_related_invoice_number_label(self, tenant, admin_user):
+        from accounting.models import CreditNote, Invoice
+        from accounting.services.report_service import report_drill_node
+
+        invoice = Invoice.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            date=datetime.date(2026, 4, 5),
+            line_items=[{'description': 'Service', 'qty': 1, 'unit_price': '200.00'}],
+            subtotal=Decimal('200.00'),
+            discount=Decimal('0.00'),
+            vat_rate=Decimal('0.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('200.00'),
+            status=Invoice.STATUS_ISSUED,
+        )
+        credit_note = CreditNote.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            invoice=invoice,
+            line_items=[{'description': 'Partial reversal', 'qty': 1, 'unit_price': '50.00'}],
+            subtotal=Decimal('50.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('50.00'),
+            status=CreditNote.STATUS_DRAFT,
+        )
+
+        payload = report_drill_node(tenant, node_type='credit_note', node_id=credit_note.pk)
+        next_refs = payload.get('next_refs', [])
+        assert next_refs, 'N8 FAIL: expected credit-note drill to include related invoice next_ref.'
+        assert next_refs[0].get('label') == invoice.invoice_number, (
+            'N8 FAIL: credit-note drill did not use related invoice_number label.'
+        )
+
+    @pytest.mark.django_db
+    def test_missing_invoice_drill_returns_safe_payload(self, tenant):
+        from accounting.services.report_service import report_drill_node
+
+        payload = report_drill_node(tenant, node_type='invoice', node_id=999999)
+        assert payload.get('node_type') == 'invoice'
+        assert payload.get('node_id') == 999999
+        assert payload.get('missing') is True
+        assert payload.get('status') == 'missing'
+        assert isinstance(payload.get('message'), str) and payload.get('message')

@@ -54,7 +54,11 @@ def close_fiscal_year(tenant, fy_year: int, closed_by, notes: str = ''):
 
     # ── Retained Earnings account ─────────────────────────────────────────────
     try:
-        retained_earnings = _get_account_by_group(tenant, 'reserves_surplus')
+        retained_earnings = _get_account_by_group(
+            tenant,
+            'reserves_surplus',
+            fallback_code='3200',
+        )
     except ValueError:
         # Fall back: try to find by name
         retained_earnings = (

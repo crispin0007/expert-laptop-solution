@@ -161,6 +161,8 @@ export const ACCOUNTING = {
   REPORT_RATIO_ANALYSIS: '/accounting/reports/ratio-analysis/',
   REPORT_COST_CENTRE_PL: '/accounting/reports/cost-centre-pl/',
   REPORT_CASH_BOOK: '/accounting/reports/cash-book/',
+  REPORT_FISCAL_YEAR_STATUS: '/accounting/reports/fiscal-year-status/',
+  REPORT_CLOSE_FISCAL_YEAR: '/accounting/reports/close-fiscal-year/',
   // Cost Centres (for dropdown)
   COST_CENTRES: '/accounting/cost-centres/',
   // GL

@@ -3526,6 +3526,7 @@ function AccountGroupCreateModal({
 
 function AccountsTab() {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const confirm = useConfirm()
   const { data, isLoading } = useQuery<Account[]>({
     queryKey: ['accounts'],
@@ -3539,21 +3540,32 @@ function AccountsTab() {
   const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('active')
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
   const [expandedAccounts, setExpandedAccounts] = useState<Set<number>>(new Set())
-  const [treeInitDone, setTreeInitDone] = useState(false)
   const [newGroupType, setNewGroupType] = useState<string | null>(null)
 
   const allAccounts = data ?? []
 
-  useEffect(() => {
-    if (treeInitDone || !allAccounts.length) return
-    setExpandedAccounts(new Set(allAccounts.map(a => a.id)))
-    setTreeInitDone(true)
-  }, [allAccounts, treeInitDone])
+  const defaultParentIdByType = useMemo(() => {
+    const byCode = new Map(allAccounts.map(a => [a.code, a.id]))
+    return {
+      asset: byCode.get('1000') ?? null,
+      liability: byCode.get('2000') ?? null,
+      equity: byCode.get('3000') ?? null,
+      revenue: byCode.get('4000') ?? null,
+      expense: byCode.get('5000') ?? null,
+    } as const
+  }, [allAccounts])
 
-  const accountById = useMemo(
-    () => new Map(allAccounts.map(a => [a.id, a])),
-    [allAccounts],
-  )
+  const expandableAccountIds = useMemo(() => {
+    const parentIds = new Set<number>()
+    for (const a of allAccounts) {
+      if (a.parent !== null) parentIds.add(a.parent)
+    }
+    return Array.from(parentIds)
+  }, [allAccounts])
+
+  const allExpanded =
+    expandableAccountIds.length > 0 &&
+    expandableAccountIds.every(id => expandedAccounts.has(id))
 
   // ── Client-side search + filter ──────────────────────────────────────
   const visibleAccounts = allAccounts.filter(a => {
@@ -3604,11 +3616,15 @@ function AccountsTab() {
   }
 
   function openRoot(type: string) {
+    const parentId = defaultParentIdByType[type as keyof typeof defaultParentIdByType] ?? null
+    const parentCode = parentId ? (allAccounts.find(a => a.id === parentId)?.code ?? '') : ''
     setInlineAdd({
-      parentId: null,
+      parentId,
       type,
       depth: 0,
-      suggestedCode: nextRootCode(type, allAccounts),
+      suggestedCode: parentId && parentCode
+        ? nextChildCode(parentId, parentCode, allAccounts)
+        : nextRootCode(type, allAccounts),
     })
   }
 
@@ -3659,15 +3675,13 @@ function AccountsTab() {
     const sectionVisible = visibleAccounts.filter(a => a.type === type)
     const childParentIds = new Set(sectionAll.filter(a => a.parent !== null).map(a => a.parent as number))
 
-    const isHiddenByAncestor = (acct: Account) => {
-      let parentId = acct.parent
-      while (parentId) {
-        const parent = accountById.get(parentId)
-        if (!parent) break
-        if (!expandedAccounts.has(parentId)) return true
-        parentId = parent.parent ?? null
-      }
-      return false
+    const isHiddenByAncestor = (acct: Account, depth: number) => {
+      // Keep level-0/1 visible. For deeper nodes, visibility depends on
+      // the direct parent toggle so one-by-one expansion works predictably.
+      if (depth < 2) return false
+      const parentId = acct.parent
+      if (!parentId) return false
+      return !expandedAccounts.has(parentId)
     }
 
     const treeItems      = search
@@ -3730,7 +3744,7 @@ function AccountsTab() {
             )}
 
             {treeItems.map(({ account: a, depth }) => {
-              if (!search && isHiddenByAncestor(a)) return null
+              if (!search && depth >= 2 && isHiddenByAncestor(a, depth)) return null
               const isChildInline = inlineAdd?.parentId === a.id
               const isEditing     = editingId === a.id
               const canAddChild   = depth < 5
@@ -3828,6 +3842,21 @@ function AccountsTab() {
                             </button>
                           )}
                           <button
+                            title="Open ledger drill"
+                            onClick={() => {
+                              const fy = fiscalYearAdParams(currentFiscalYear())
+                              navigate(buildAccountingTabUrl('ledger', {
+                                account_code: a.code,
+                                date_from: fy.date_from,
+                                date_to: new Date().toISOString().slice(0, 10),
+                                auto_run: 1,
+                              }))
+                            }}
+                            className="text-gray-400 hover:text-indigo-700 hover:bg-indigo-50 rounded p-1"
+                          >
+                            <BookOpen size={12} />
+                          </button>
+                          <button
                             title={isProtectedCore ? 'Core system account is locked' : 'Edit account'}
                             onClick={() => {
                               if (isProtectedCore) {
@@ -3913,18 +3942,12 @@ function AccountsTab() {
         </button>
 
         <button
-          onClick={() => setExpandedAccounts(new Set(allAccounts.map(a => a.id)))}
+          onClick={() => setExpandedAccounts(allExpanded ? new Set() : new Set(expandableAccountIds))}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-colors"
-          title="Expand all account rows"
+          title={allExpanded ? 'Collapse all account rows' : 'Expand all account rows'}
         >
-          <ChevronsUpDown size={13} /> Expand All
-        </button>
-        <button
-          onClick={() => setExpandedAccounts(new Set())}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-colors"
-          title="Collapse all account rows"
-        >
-          <ChevronsDownUp size={13} /> Collapse All
+          {allExpanded ? <ChevronsDownUp size={13} /> : <ChevronsUpDown size={13} />}
+          {allExpanded ? 'Collapse All' : 'Expand All'}
         </button>
 
         {/* New Group / Heading */}
@@ -3962,7 +3985,7 @@ function AccountsTab() {
         })}
         <div className="ml-auto flex items-center gap-1 text-xs text-gray-400">
           <Info size={12} />
-          <span>Click <Eye size={11} className="inline" /> to deactivate · <Pencil size={11} className="inline" /> to edit · <Plus size={11} className="inline" /> to add sub-account</span>
+          <span>Click <BookOpen size={11} className="inline" /> to drill ledger · <Eye size={11} className="inline" /> to deactivate · <Pencil size={11} className="inline" /> to edit · <Plus size={11} className="inline" /> to add sub-account</span>
         </div>
       </div>
 
@@ -8399,6 +8422,11 @@ function RecurringJournalsTab() {
 
 function LedgerTab() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const initialAccountCode = (searchParams.get('account_code') || '').trim()
+  const initialDateFrom = searchParams.get('date_from') || fiscalYearAdParams(currentFiscalYear()).date_from
+  const initialDateTo = searchParams.get('date_to') || new Date().toISOString().slice(0, 10)
+  const initialAutoRun = searchParams.get('auto_run') === '1'
   const { data: accounts } = useQuery<ApiPage<Account>>({
     queryKey: ['accounts-ledger-select'],
     queryFn: () => apiClient.get(ACCOUNTING.ACCOUNTS + '?no_page=1').then(r =>
@@ -8408,13 +8436,13 @@ function LedgerTab() {
     ),
   })
 
-  const [accountCode, setAccountCode] = useState('')
+  const [accountCode, setAccountCode] = useState(initialAccountCode)
   const [accountInput, setAccountInput] = useState('')
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false)
-  const [dateFrom, setDateFrom] = useState(() => fiscalYearAdParams(currentFiscalYear()).date_from)
-  const [dateTo, setDateTo]     = useState(() => new Date().toISOString().slice(0, 10))
+  const [dateFrom, setDateFrom] = useState(initialDateFrom)
+  const [dateTo, setDateTo]     = useState(initialDateTo)
   const [txSearch, setTxSearch] = useState('')
-  const [submitted, setSubmitted] = useState(false)
+  const [submitted, setSubmitted] = useState(() => initialAutoRun && !!initialAccountCode)
   const [selectedTxn, setSelectedTxn] = useState<LedgerRow | null>(null)
 
   const { data: ledger, isLoading, isFetching } = useQuery<LedgerReport>({
@@ -8428,6 +8456,12 @@ function LedgerTab() {
     const found = accList.find(a => a.code === accountCode)
     return found ? `${found.code} — ${found.name}` : ''
   }, [accList, accountCode])
+
+  useEffect(() => {
+    if (!accountCode || accountInput) return
+    if (!selectedAccountLabel) return
+    setAccountInput(selectedAccountLabel)
+  }, [accountCode, accountInput, selectedAccountLabel])
 
   const resolveAccountCode = (inputValue: string) => {
     const v = inputValue.trim()
