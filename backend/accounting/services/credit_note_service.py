@@ -36,14 +36,18 @@ class CreditNoteService:
 
     def list(self, fiscal_year_start=None, fiscal_year_end=None):
         from accounting.models import CreditNote
+        from django.db.models import Q
         qs = (
             CreditNote.objects.filter(tenant=self.tenant)
             .select_related('invoice', 'applied_to')
         )
         if fiscal_year_start and fiscal_year_end:
+            # Prefer issued_at for fiscal placement; fall back to created_at for legacy drafts.
             qs = qs.filter(
-                created_at__date__gte=fiscal_year_start,
-                created_at__date__lte=fiscal_year_end,
+                Q(issued_at__date__gte=fiscal_year_start, issued_at__date__lte=fiscal_year_end)
+                | Q(issued_at__isnull=True,
+                    created_at__date__gte=fiscal_year_start,
+                    created_at__date__lte=fiscal_year_end)
             )
         return qs.order_by('-created_at')
 

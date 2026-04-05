@@ -245,10 +245,15 @@ class InvoiceService:
         """Create a draft invoice with computed totals."""
         from accounting.models import Invoice
         from customers.models import Customer
+        from django.utils import timezone
         line_items = validated_data.get('line_items', [])
         discount = validated_data.get('discount', Decimal('0'))
         apply_vat = validated_data.pop('apply_vat', True)
         totals = self._compute_totals_kwargs(line_items, discount, apply_vat=apply_vat)
+
+        # Voucher date is the accounting source-of-truth; default to today when omitted.
+        if validated_data.get('date') is None:
+            validated_data['date'] = timezone.localdate()
 
         if validated_data.get('party_id') is None and validated_data.get('party') is None:
             customer_obj = validated_data.get('customer')
@@ -333,9 +338,14 @@ class InvoiceService:
         """Create an invoice and immediately issue it (skip draft step)."""
         from accounting.models import Invoice
         from customers.models import Customer
+        from django.utils import timezone
         line_items = validated_data.get('line_items', [])
         discount = validated_data.get('discount', Decimal('0'))
         totals = self._compute_totals_kwargs(line_items, discount)
+
+        # Voucher date is the accounting source-of-truth; default to today when omitted.
+        if validated_data.get('date') is None:
+            validated_data['date'] = timezone.localdate()
 
         if validated_data.get('party_id') is None and validated_data.get('party') is None:
             customer_obj = validated_data.get('customer')

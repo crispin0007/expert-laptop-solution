@@ -2207,6 +2207,7 @@ class QuotationViewSet(NexusViewSet):
 
     def get_queryset(self):
         self.ensure_tenant()
+        from django.db.models import Q
         qs = Quotation.objects.filter(tenant=self.tenant).select_related('customer')
         if s := self.request.query_params.get('status'):
             qs = qs.filter(status=s)
@@ -2217,7 +2218,17 @@ class QuotationViewSet(NexusViewSet):
                 from core.nepali_date import fiscal_year_date_range, FiscalYear
                 fy = FiscalYear(bs_year=int(fy_raw))
                 start_ad, end_ad = fiscal_year_date_range(fy)
-                qs = qs.filter(created_at__date__gte=start_ad, created_at__date__lte=end_ad)
+                # Prefer accepted_at/sent_at milestones; fall back to created_at for legacy drafts.
+                qs = qs.filter(
+                    Q(accepted_at__date__gte=start_ad, accepted_at__date__lte=end_ad)
+                    | Q(accepted_at__isnull=True,
+                        sent_at__date__gte=start_ad,
+                        sent_at__date__lte=end_ad)
+                    | Q(accepted_at__isnull=True,
+                        sent_at__isnull=True,
+                        created_at__date__gte=start_ad,
+                        created_at__date__lte=end_ad)
+                )
             except (ValueError, KeyError):
                 pass
         return qs.order_by('-created_at')
@@ -2299,6 +2310,7 @@ class QuotationViewSet(NexusViewSet):
         invoice = Invoice.objects.create(
             tenant=t, created_by=request.user,
             customer=quo.customer, ticket=quo.ticket, project=quo.project,
+            date=timezone.localdate(),
             line_items=quo.line_items,
             subtotal=subtotal, discount=quo.discount,
             vat_rate=vat_rate, vat_amount=vat_amount, total=total,
@@ -2334,6 +2346,7 @@ class DebitNoteViewSet(NexusViewSet):
 
     def get_queryset(self):
         self.ensure_tenant()
+        from django.db.models import Q
         qs = DebitNote.objects.filter(tenant=self.tenant).select_related('bill')
         if s := self.request.query_params.get('status'):
             qs = qs.filter(status=s)
@@ -2342,7 +2355,13 @@ class DebitNoteViewSet(NexusViewSet):
                 from core.nepali_date import fiscal_year_date_range, FiscalYear
                 fy = FiscalYear(bs_year=int(fy_raw))
                 start_ad, end_ad = fiscal_year_date_range(fy)
-                qs = qs.filter(created_at__date__gte=start_ad, created_at__date__lte=end_ad)
+                # Prefer issued_at for fiscal placement; fall back to created_at for legacy drafts.
+                qs = qs.filter(
+                    Q(issued_at__date__gte=start_ad, issued_at__date__lte=end_ad)
+                    | Q(issued_at__isnull=True,
+                        created_at__date__gte=start_ad,
+                        created_at__date__lte=end_ad)
+                )
             except (ValueError, KeyError):
                 pass
         return qs.order_by('-created_at')

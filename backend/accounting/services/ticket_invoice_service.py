@@ -110,6 +110,7 @@ def generate_ticket_invoice(ticket, tenant, due_date=None, notes='', created_by=
         customer=ticket.customer,
         party=getattr(ticket.customer, 'party', None) if ticket.customer_id else None,
         ticket=ticket,
+        date=timezone.localdate(),
         line_items=line_items,
         subtotal=subtotal,
         discount=Decimal('0'),
