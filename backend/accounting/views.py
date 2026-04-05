@@ -34,7 +34,7 @@ from .models import (
     CostCentre, FiscalYearClose, PaymentAllocation,
 )
 from .serializers import (
-    AccountGroupSerializer,
+    AccountGroupSerializer, AccountGroupWriteSerializer,
     CoinTransactionSerializer, PayslipSerializer, InvoiceSerializer,
     AccountSerializer, JournalEntrySerializer, JournalEntryWriteSerializer,
     BankAccountSerializer, BillSerializer, PaymentSerializer, CreditNoteSerializer,
@@ -53,17 +53,25 @@ from .serializers import (
 
 class AccountGroupViewSet(NexusViewSet):
     """
-    Read-only list + detail of AccountGroups for the current tenant.
-    Used by the frontend Account creation form to populate the group dropdown.
+    AccountGroup management for the current tenant.
+    - list/retrieve: manager+
+    - create/update/delete: admin+
     """
 
     queryset         = AccountGroup.objects.all()
     serializer_class = AccountGroupSerializer
     required_module  = 'accounting'
-    http_method_names = ['get', 'head', 'options']
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
 
     def get_permissions(self):
-        return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
+        if self.action in ('list', 'retrieve'):
+            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
+        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
+
+    def get_serializer_class(self):
+        if self.action in ('create', 'update', 'partial_update'):
+            return AccountGroupWriteSerializer
+        return AccountGroupSerializer
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -72,6 +80,40 @@ class AccountGroupViewSet(NexusViewSet):
             types = [t.strip() for t in acct_type.split(',') if t.strip()]
             qs = qs.filter(type__in=types) if len(types) > 1 else qs.filter(type=types[0])
         return qs
+
+    def create(self, request, *args, **kwargs):
+        self.ensure_tenant()
+        serializer = self.get_serializer(data=request.data, context=self.get_serializer_context())
+        serializer.is_valid(raise_exception=True)
+        group = serializer.save(tenant=self.tenant, created_by=request.user, is_system=False)
+        return ApiResponse.created(data=AccountGroupSerializer(group).data)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        if instance.is_system:
+            raise ConflictError('System groups cannot be edited.')
+        serializer = self.get_serializer(
+            instance,
+            data=request.data,
+            partial=partial,
+            context=self.get_serializer_context(),
+        )
+        serializer.is_valid(raise_exception=True)
+        group = serializer.save()
+        return ApiResponse.success(data=AccountGroupSerializer(group).data)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.is_system:
+            raise ConflictError('System groups cannot be deleted.')
+        if instance.accounts.filter(is_active=True).exists():
+            raise ConflictError('Cannot delete group with active accounts. Move accounts first.')
+        if instance.sub_groups.filter(is_active=True).exists():
+            raise ConflictError('Cannot delete group with active child groups.')
+        instance.is_active = False
+        instance.save(update_fields=['is_active'])
+        return ApiResponse.no_content()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -120,7 +162,10 @@ class AccountViewSet(NexusViewSet):
     def destroy(self, request, *args, **kwargs):
         account = self.get_object()
         if account.is_system:
-            raise ConflictError('System accounts cannot be deleted.')
+            from accounting.services.journal_service import DEFAULT_ACCOUNTS
+            protected_codes = {code for code, _name, _type, _parent, _is_system in DEFAULT_ACCOUNTS}
+            if account.code in protected_codes:
+                raise ConflictError('Core system accounts cannot be deleted.')
         if account.children.exists():
             raise ConflictError('This account has sub-accounts. Delete or re-parent them first.')
         if account.journal_lines.filter(entry__is_posted=True).exists():
@@ -166,7 +211,7 @@ class AccountViewSet(NexusViewSet):
         Returns counts: deleted, restored, skipped.
         """
         from accounting.models import Account
-        from accounting.services.journal_service import seed_chart_of_accounts
+        from accounting.services.journal_service import ensure_bank_control_account, seed_chart_of_accounts
         from django.db import transaction
 
         self.ensure_tenant()
@@ -233,12 +278,16 @@ class BankAccountViewSet(NexusViewSet):
             return
 
         from accounting.models import Account, AccountGroup
+        from accounting.services.journal_service import ensure_bank_control_account, seed_chart_of_accounts
 
         tenant = bank.tenant
+        seed_chart_of_accounts(tenant, created_by=getattr(self.request, 'user', None))
         try:
             group = AccountGroup.objects.get(tenant=tenant, slug='bank_accounts')
         except AccountGroup.DoesNotExist:
-            group = None
+            return
+
+        bank_control = ensure_bank_control_account(tenant, created_by=getattr(self.request, 'user', None))
 
         # Find the first unused code in the bank accounts range (1150–1199)
         existing = set(
@@ -256,9 +305,10 @@ class BankAccountViewSet(NexusViewSet):
         account = Account.objects.create(
             tenant=tenant,
             code=code,
-            name=bank.name,
+            name=(bank.bank_name or bank.name),
             type=Account.TYPE_ASSET,
             group=group,
+            parent=bank_control,
             description=f'Bank account: {bank.bank_name or bank.name}',
             opening_balance=bank.opening_balance,
             is_system=False,
@@ -295,9 +345,18 @@ class BankAccountViewSet(NexusViewSet):
         bank = self.get_object()
         # Also delete the linked CoA account so it disappears from Chart of Accounts.
         linked = bank.linked_account
+        protected_codes = set()
+        if linked is not None and linked.is_system:
+            from accounting.services.journal_service import DEFAULT_ACCOUNTS
+            protected_codes = {code for code, _name, _type, _parent, _is_system in DEFAULT_ACCOUNTS}
+            if linked.code in protected_codes:
+                raise ConflictError('Core system-linked bank account cannot be deleted.')
         bank.is_active = False
         bank.save(update_fields=['is_active'])
         if linked is not None and not linked.is_system:
+            linked.delete()
+        elif linked is not None and linked.code not in protected_codes:
+            # Legacy/demo rows can still be removed even if historically flagged as system.
             linked.delete()
         return ApiResponse.no_content()
 
@@ -1033,6 +1092,51 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
         except ValueError as exc:
             raise AppValidationError(str(exc))
         return ApiResponse.success(data=ledger_report(self.tenant, acct.code, df, dt))
+
+    @action(detail=False, methods=['get'], url_path='drill')
+    def drill(self, request):
+        """
+        Generic drill endpoint for accounting reports.
+
+        GET /reports/drill/?node_type=account&node_id=42&date_from=YYYY-MM-DD&date_to=YYYY-MM-DD
+        GET /reports/drill/?node_type=journal_entry&node_id=123
+        GET /reports/drill/?node_type=invoice&node_id=55
+        """
+        from .services.report_service import report_drill_node
+
+        self.ensure_tenant()
+
+        node_type = (request.query_params.get('node_type') or '').strip()
+        node_id_raw = request.query_params.get('node_id')
+        if not node_type:
+            raise AppValidationError('node_type is required.')
+        if not node_id_raw:
+            raise AppValidationError('node_id is required.')
+
+        try:
+            node_id = int(node_id_raw)
+        except (TypeError, ValueError):
+            raise AppValidationError('node_id must be an integer.')
+
+        date_from = date_to = None
+        if request.query_params.get('date_from') and request.query_params.get('date_to'):
+            try:
+                date_from, date_to = self._parse_dates(request, 'date_from', 'date_to')
+            except ValueError as exc:
+                raise AppValidationError(str(exc))
+
+        try:
+            payload = report_drill_node(
+                self.tenant,
+                node_type=node_type,
+                node_id=node_id,
+                date_from=date_from,
+                date_to=date_to,
+            )
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+
+        return ApiResponse.success(data=payload)
 
     @action(detail=False, methods=['get'], url_path='day-book')
     def day_book(self, request):
@@ -2286,6 +2390,15 @@ class TDSEntryViewSet(NexusViewSet):
             # Allow admins to correct TDS entries (supplier name, PAN, rate, period)
             return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
+
+    def get_queryset(self):
+        self.ensure_tenant()
+        qs = TDSEntry.objects.filter(tenant=self.tenant).select_related('bill')
+        if status := self.request.query_params.get('status'):
+            qs = qs.filter(status=status)
+        if year := self.request.query_params.get('year'):
+            qs = qs.filter(period_year=year)
+        return qs.order_by('-created_at')
 
     def update(self, request, *args, **kwargs):
         instance = self.get_object()

@@ -4,6 +4,8 @@ from django.db import models
 from core.models import TenantModel
 from django.conf import settings
 
+PARTY_MODEL = 'parties.Party'
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Account Groups  (Tally-style primary groups)
@@ -686,6 +688,13 @@ class Invoice(TenantModel):
         on_delete=models.SET_NULL,
         related_name='invoices',
     )
+    party = models.ForeignKey(
+        PARTY_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='invoices',
+        help_text='Canonical counterparty for this invoice. Temporary optional during migration.',
+    )
     ticket = models.ForeignKey(
         'tickets.Ticket',
         null=True, blank=True,
@@ -817,6 +826,13 @@ class Bill(TenantModel):
         on_delete=models.SET_NULL,
         related_name='bills',
     )
+    party = models.ForeignKey(
+        PARTY_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='bills',
+        help_text='Canonical counterparty for this bill. Temporary optional during migration.',
+    )
     supplier_name = models.CharField(max_length=200, blank=True)
     line_items    = models.JSONField(default=list)
     subtotal      = models.DecimalField(max_digits=14, decimal_places=2, default=0)
@@ -939,6 +955,13 @@ class Payment(TenantModel):
         'Bill', null=True, blank=True,
         on_delete=models.SET_NULL,
         related_name='payments',
+    )
+    party = models.ForeignKey(
+        PARTY_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='payments',
+        help_text='Canonical counterparty for this payment when applicable.',
     )
     reference = models.CharField(max_length=64, blank=True)
     notes     = models.TextField(blank=True)
@@ -1074,6 +1097,11 @@ class Quotation(TenantModel):
     customer = models.ForeignKey(
         'customers.Customer', null=True, blank=True,
         on_delete=models.SET_NULL, related_name='quotations',
+    )
+    party = models.ForeignKey(
+        PARTY_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='quotations',
+        help_text='Canonical counterparty for this quotation. Temporary optional during migration.',
     )
     ticket = models.ForeignKey(
         'tickets.Ticket', null=True, blank=True,

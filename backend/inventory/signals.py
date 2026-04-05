@@ -12,6 +12,7 @@ from django.db import models
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 import logging
+from parties.services import resolve_or_create_supplier_party
 
 logger = logging.getLogger(__name__)
 
@@ -205,4 +206,20 @@ def reverse_stock_movements_on_cancel(sender, instance, created, **kwargs):
                 reference_id=tp.pk,
                 notes=f"Auto-reversal: Ticket #{instance.pk} cancelled",
             )
+
+
+@receiver(post_save, sender='inventory.Supplier')
+def ensure_supplier_party_on_save(sender, instance, created, **kwargs):
+    """Ensure every supplier has a linked Party and sub-ledger account."""
+    if getattr(instance, 'is_deleted', False):
+        return
+
+    if instance.party_id:
+        return
+
+    # Best-effort sync; never block supplier persistence if linkage fails.
+    try:
+        resolve_or_create_supplier_party(instance, dry_run=False)
+    except Exception:
+        return
 

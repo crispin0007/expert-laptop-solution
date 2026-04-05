@@ -100,14 +100,53 @@ def _validate_line_items(line_items):
 class AccountGroupSerializer(serializers.ModelSerializer):
     """Read-only serializer for AccountGroup (list + detail)."""
 
+    parent_name = serializers.CharField(source='parent.name', read_only=True, default='')
+
     class Meta:
         model  = AccountGroup
         fields = (
             'id', 'slug', 'name', 'description', 'type',
             'report_section', 'affects_gross_profit', 'normal_balance',
+            'parent', 'parent_name',
             'order', 'is_system', 'is_active',
         )
         read_only_fields = fields
+
+
+class AccountGroupWriteSerializer(serializers.ModelSerializer):
+    """Write serializer for custom AccountGroup CRUD."""
+
+    class Meta:
+        model = AccountGroup
+        fields = (
+            'id', 'slug', 'name', 'description', 'type',
+            'report_section', 'affects_gross_profit', 'normal_balance',
+            'parent', 'order', 'is_active',
+        )
+        read_only_fields = ('id',)
+
+    def validate_parent(self, parent):
+        if parent is None:
+            return parent
+        tenant = _tenant_from_context(self)
+        _ensure_same_tenant(parent, tenant, 'parent')
+        return parent
+
+    def validate_slug(self, slug):
+        if not slug:
+            return slug
+        return slug.strip().lower().replace(' ', '_')
+
+    def validate(self, attrs):
+        parent = attrs.get('parent', self.instance.parent if self.instance else None)
+        group_type = attrs.get('type', self.instance.type if self.instance else None)
+        if parent is not None and group_type is not None and parent.type != group_type:
+            raise serializers.ValidationError({'parent': 'Parent group type must match group type.'})
+
+        if self.instance is not None and self.instance.is_system:
+            raise serializers.ValidationError('System groups cannot be modified.')
+
+        return attrs
 
 
 # ─── Chart of Accounts ───────────────────────────────────────────────────────
@@ -136,6 +175,39 @@ class AccountSerializer(serializers.ModelSerializer):
         return group
 
     def validate(self, attrs):
+        # Only core default control accounts are immutable.
+        # Legacy/demo rows may be marked is_system historically and should remain manageable.
+        if self.instance is not None and self.instance.is_system:
+            from accounting.services.journal_service import DEFAULT_ACCOUNTS
+            protected_codes = {code for code, _name, _type, _parent, _is_system in DEFAULT_ACCOUNTS}
+            if self.instance.code not in protected_codes:
+                return attrs
+
+            immutable_field_errors = {}
+
+            def _changed(key):
+                if key not in attrs:
+                    return False
+                current = getattr(self.instance, key)
+                incoming = attrs.get(key)
+                if key in ('group', 'parent'):
+                    return getattr(current, 'id', None) != getattr(incoming, 'id', None)
+                return incoming != current
+
+            for field, msg in (
+                ('code', 'System account code is locked.'),
+                ('name', 'System account name is locked.'),
+                ('type', 'System account type is locked.'),
+                ('group', 'System account group is locked.'),
+                ('parent', 'System account parent is locked.'),
+                ('is_active', 'System account status is locked.'),
+            ):
+                if _changed(field):
+                    immutable_field_errors[field] = msg
+
+            if immutable_field_errors:
+                raise serializers.ValidationError(immutable_field_errors)
+
         # Enforce that group type matches account type when both are provided
         group = attrs.get('group') or (self.instance.group if self.instance else None)
         acct_type = attrs.get('type') or (self.instance.type if self.instance else None)
@@ -148,6 +220,23 @@ class AccountSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 'group': 'Account group is required. Select a group from the Chart of Accounts groups.'
             })
+
+        # Bank-linked ledgers are structural and must remain in Bank Accounts hierarchy.
+        if self.instance is not None:
+            try:
+                linked_bank = getattr(self.instance, 'bank_account', None)
+            except Exception:
+                linked_bank = None
+            if linked_bank is not None:
+                new_type = attrs.get('type', self.instance.type)
+                new_group = attrs.get('group', self.instance.group)
+                new_parent = attrs.get('parent', self.instance.parent)
+                if new_type != 'asset':
+                    raise serializers.ValidationError({'type': 'Bank-linked ledger type is locked to asset.'})
+                if new_group is None or new_group.slug != 'bank_accounts':
+                    raise serializers.ValidationError({'group': 'Bank-linked ledger group is locked to Bank Accounts.'})
+                if new_parent is None or new_parent.code != '1150':
+                    raise serializers.ValidationError({'parent': 'Bank-linked ledger parent is locked to 1150 (Bank Accounts).'})
         return attrs
 
 
@@ -235,12 +324,13 @@ class JournalEntryWriteSerializer(serializers.ModelSerializer):
 class BankAccountSerializer(serializers.ModelSerializer):
     current_balance  = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
     linked_account_name = serializers.CharField(source='linked_account.name', read_only=True, default='')
+    linked_account_is_system = serializers.BooleanField(source='linked_account.is_system', read_only=True, default=False)
 
     class Meta:
         model  = BankAccount
         fields = (
             'id', 'name', 'bank_name', 'account_number', 'currency',
-            'opening_balance', 'linked_account', 'linked_account_name',
+            'opening_balance', 'linked_account', 'linked_account_name', 'linked_account_is_system',
             'is_active', 'current_balance', 'created_at',
         )
         read_only_fields = ('current_balance', 'created_at')

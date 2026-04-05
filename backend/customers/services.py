@@ -4,7 +4,24 @@ Customer service layer — all customer business logic lives here.
 Views call service functions; views never touch the ORM directly
 for business operations (create, update, soft-delete).
 """
+import logging
+
 from core.events import EventBus
+from parties.services import resolve_or_create_customer_party
+
+
+logger = logging.getLogger(__name__)
+
+
+def _sync_customer_party(instance) -> None:
+    """Best-effort Party sync for customer profile changes.
+
+    Sync failures are logged and do not block customer operations.
+    """
+    try:
+        resolve_or_create_customer_party(instance, dry_run=False)
+    except Exception as exc:
+        logger.exception('Customer->Party sync failed for customer %s: %s', instance.pk, exc)
 
 
 def create_customer(*, tenant, created_by, data: dict):
@@ -27,6 +44,7 @@ def create_customer(*, tenant, created_by, data: dict):
         **data,
     )
     customer.save()
+    _sync_customer_party(customer)
 
     EventBus.publish('customer.created', {
         'id': customer.pk,
@@ -52,6 +70,7 @@ def update_customer(*, instance, tenant, data: dict):
     for attr, value in data.items():
         setattr(instance, attr, value)
     instance.save()
+    _sync_customer_party(instance)
 
     EventBus.publish('customer.updated', {
         'id': instance.pk,

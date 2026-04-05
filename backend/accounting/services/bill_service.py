@@ -34,7 +34,12 @@ class BillService:
             else Decimal('0')
         )
         subtotal, vat_amount, total = compute_invoice_totals(line_items, discount, vat_rate)
-        return dict(subtotal=subtotal, vat_rate=vat_rate, vat_amount=vat_amount, total=total)
+        return {
+            'subtotal': subtotal,
+            'vat_rate': vat_rate,
+            'vat_amount': vat_amount,
+            'total': total,
+        }
 
     # ── Queries ───────────────────────────────────────────────────────────────
 
@@ -62,10 +67,30 @@ class BillService:
     @transaction.atomic
     def create(self, validated_data: dict):
         from accounting.models import Bill
+        from inventory.models import Supplier
         apply_vat  = validated_data.pop('apply_vat', True)
         line_items = validated_data.get('line_items', [])
         discount   = validated_data.get('discount', Decimal('0'))
         totals     = self._compute_totals(line_items, discount, apply_vat=apply_vat)
+
+        party_id = validated_data.get('party_id')
+        if party_id is None and validated_data.get('party') is not None:
+            party_id = validated_data['party'].pk
+
+        if party_id is None:
+            supplier_obj = validated_data.get('supplier')
+            supplier_id = validated_data.get('supplier_id')
+            if supplier_obj is None and supplier_id:
+                supplier_obj = Supplier.objects.filter(
+                    tenant=self.tenant,
+                    pk=supplier_id,
+                ).only('party_id').first()
+            if supplier_obj is not None:
+                party_id = getattr(supplier_obj, 'party_id', None)
+
+        if party_id is not None:
+            validated_data['party_id'] = party_id
+
         bill = Bill.objects.create(
             tenant=self.tenant,
             created_by=self.user,

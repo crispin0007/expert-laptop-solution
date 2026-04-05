@@ -1,5 +1,6 @@
 import csv
 import io
+import logging
 from decimal import Decimal, InvalidOperation
 from datetime import timedelta
 
@@ -43,6 +44,10 @@ from .services import (
     complete_stock_count,
     auto_reorder as run_auto_reorder,
 )
+from parties.services import resolve_or_create_supplier_party
+
+
+logger = logging.getLogger(__name__)
 
 
 class ProductPagination(PageNumberPagination):
@@ -418,6 +423,35 @@ class SupplierViewSet(NexusViewSet):
         if self.action in ('list', 'retrieve'):
             return [permissions.IsAuthenticated(), make_role_permission(*ALL_ROLES, permission_key='inventory.view')()]
         return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='inventory.manage')()]
+
+    @staticmethod
+    def _sync_supplier_party(instance) -> None:
+        """Best-effort Party sync for supplier profile changes.
+
+        Sync failures are logged and do not block supplier CRUD operations.
+        """
+        try:
+            resolve_or_create_supplier_party(instance, dry_run=False)
+        except Exception as exc:
+            logger.exception('Supplier->Party sync failed for supplier %s: %s', instance.pk, exc)
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save(tenant=self.tenant, created_by=self.request.user)
+        self._sync_supplier_party(instance)
+        out = self.get_serializer(instance)
+        return ApiResponse.created(data=out.data)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save()
+        self._sync_supplier_party(instance)
+        out = self.get_serializer(instance)
+        return ApiResponse.success(data=out.data)
 
 
 

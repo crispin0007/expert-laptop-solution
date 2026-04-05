@@ -225,16 +225,18 @@ class InvoiceService:
     def _compute_totals_kwargs(self, line_items, discount=Decimal('0'), apply_vat=True) -> dict:
         """Return dict of subtotal/vat_rate/vat_amount/total ready to save."""
         t = self.tenant
-        vat_rate = (t.vat_rate if t and t.vat_enabled else Decimal('0')) if apply_vat else Decimal('0')
+        vat_rate = Decimal('0')
+        if apply_vat and t and t.vat_enabled:
+            vat_rate = t.vat_rate
         subtotal, vat_amount, total = compute_invoice_totals(
             line_items, discount, vat_rate
         )
-        return dict(
-            subtotal=subtotal,
-            vat_rate=vat_rate,
-            vat_amount=vat_amount,
-            total=total,
-        )
+        return {
+            'subtotal': subtotal,
+            'vat_rate': vat_rate,
+            'vat_amount': vat_amount,
+            'total': total,
+        }
 
     # ── Create / update ───────────────────────────────────────────────────────
 
@@ -242,10 +244,22 @@ class InvoiceService:
     def create(self, validated_data: dict):
         """Create a draft invoice with computed totals."""
         from accounting.models import Invoice
+        from customers.models import Customer
         line_items = validated_data.get('line_items', [])
         discount = validated_data.get('discount', Decimal('0'))
         apply_vat = validated_data.pop('apply_vat', True)
         totals = self._compute_totals_kwargs(line_items, discount, apply_vat=apply_vat)
+
+        if validated_data.get('party_id') is None and validated_data.get('party') is None:
+            customer_obj = validated_data.get('customer')
+            customer_id = validated_data.get('customer_id')
+            if customer_obj is None and customer_id:
+                customer_obj = Customer.objects.filter(
+                    tenant=self.tenant,
+                    pk=customer_id,
+                ).only('party_id').first()
+            if customer_obj is not None and getattr(customer_obj, 'party_id', None):
+                validated_data['party_id'] = customer_obj.party_id
 
         # B24 — Snapshot cost_price at creation time so COGS is based on the
         # price the tenant paid when the invoice was raised, not the current
@@ -318,9 +332,21 @@ class InvoiceService:
     def generate_issued(self, validated_data: dict):
         """Create an invoice and immediately issue it (skip draft step)."""
         from accounting.models import Invoice
+        from customers.models import Customer
         line_items = validated_data.get('line_items', [])
         discount = validated_data.get('discount', Decimal('0'))
         totals = self._compute_totals_kwargs(line_items, discount)
+
+        if validated_data.get('party_id') is None and validated_data.get('party') is None:
+            customer_obj = validated_data.get('customer')
+            customer_id = validated_data.get('customer_id')
+            if customer_obj is None and customer_id:
+                customer_obj = Customer.objects.filter(
+                    tenant=self.tenant,
+                    pk=customer_id,
+                ).only('party_id').first()
+            if customer_obj is not None and getattr(customer_obj, 'party_id', None):
+                validated_data['party_id'] = customer_obj.party_id
 
         # B24 — Snapshot cost_price at creation time. Same rule as create():
         # issued invoices need locked COGS costs even more than drafts.

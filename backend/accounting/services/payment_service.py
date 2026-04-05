@@ -10,6 +10,94 @@ from django.utils import timezone
 log = logging.getLogger(__name__)
 
 
+def _resolve_party_id_from_invoice(invoice):
+    party_id = getattr(invoice, 'party_id', None)
+    if party_id is None and getattr(invoice, 'customer', None) is not None:
+        return getattr(invoice.customer, 'party_id', None)
+    return party_id
+
+
+def _resolve_party_id_from_bill(bill):
+    party_id = getattr(bill, 'party_id', None)
+    if party_id is None and getattr(bill, 'supplier', None) is not None:
+        return getattr(bill.supplier, 'party_id', None)
+    return party_id
+
+
+def _publish_invoice_paid_event(*, tenant, invoice, payment_amount):
+    try:
+        from core.events import EventBus
+        EventBus.publish('invoice.paid', {
+            'id': invoice.pk,
+            'tenant_id': tenant.id,
+            'customer_id': invoice.customer_id,
+            'amount': str(payment_amount),
+            'paid_at': invoice.paid_at.isoformat(),
+        }, tenant=tenant)
+    except Exception as exc:
+        log.warning('EventBus.publish invoice.paid failed for invoice %s: %s', invoice.pk, exc, exc_info=True)
+
+
+def _mark_invoice_paid_if_settled(*, tenant, invoice, payment_amount):
+    if not invoice or invoice.amount_due > Decimal('0'):
+        return
+
+    invoice.status = 'paid'
+    invoice.paid_at = timezone.now()
+    invoice.save(update_fields=['status', 'paid_at', 'updated_at'])
+    _publish_invoice_paid_event(tenant=tenant, invoice=invoice, payment_amount=payment_amount)
+
+
+def _mark_bill_paid_if_settled(*, bill):
+    if not bill or bill.amount_due > Decimal('0'):
+        return
+
+    bill.status = 'paid'
+    bill.paid_at = timezone.now()
+    bill.save(update_fields=['status', 'paid_at', 'updated_at'])
+
+
+def _allocate_to_invoice(*, payment, tenant, invoice):
+    from accounting.models import Invoice, Payment
+    from core.exceptions import AppValidationError, ConflictError
+    from django.utils import timezone as tz
+
+    if payment.type != Payment.TYPE_INCOMING:
+        raise AppValidationError({'detail': 'Only incoming payments can be linked to invoices.'})
+    if payment.invoice_id is not None:
+        raise ConflictError('Payment is already linked to an invoice.')
+
+    payment.invoice = invoice
+    payment.party_id = _resolve_party_id_from_invoice(invoice)
+    payment.save(update_fields=['invoice', 'party', 'updated_at'])
+
+    if invoice.amount_due <= Decimal('0'):
+        invoice.status = Invoice.STATUS_PAID
+        invoice.paid_at = tz.now()
+        invoice.save(update_fields=['status', 'paid_at', 'updated_at'])
+        _publish_invoice_paid_event(tenant=tenant, invoice=invoice, payment_amount=payment.amount)
+
+
+def _allocate_to_bill(*, payment, bill):
+    from accounting.models import Bill, Payment
+    from core.exceptions import AppValidationError, ConflictError
+    from django.utils import timezone as tz
+
+    if payment.type != Payment.TYPE_OUTGOING:
+        raise AppValidationError({'detail': 'Only outgoing payments can be linked to bills.'})
+    if payment.bill_id is not None:
+        raise ConflictError('Payment is already linked to a bill.')
+
+    payment.bill = bill
+    payment.party_id = _resolve_party_id_from_bill(bill)
+    payment.save(update_fields=['bill', 'party', 'updated_at'])
+
+    if bill.amount_due <= Decimal('0'):
+        bill.status = Bill.STATUS_PAID
+        bill.paid_at = tz.now()
+        bill.save(update_fields=['status', 'paid_at', 'updated_at'])
+
+
 def record_payment(
     *,
     tenant,
@@ -47,6 +135,10 @@ def record_payment(
     if bank_account and getattr(bank_account, 'tenant_id', None) != tenant.id:
         raise ValueError('Bank account does not belong to this workspace.')
 
+    party_id = _resolve_party_id_from_invoice(invoice) if invoice is not None else None
+    if party_id is None and bill is not None:
+        party_id = _resolve_party_id_from_bill(bill)
+
     payment = Payment.objects.create(
         tenant=tenant,
         created_by=created_by,
@@ -57,6 +149,7 @@ def record_payment(
         bank_account=bank_account,
         invoice=invoice,
         bill=bill,
+        party_id=party_id,
         reference=reference,
         notes=notes,
         party_name=party_name,
@@ -64,26 +157,8 @@ def record_payment(
     )
 
     # Auto-mark invoice/bill as paid when amount_due reaches 0
-    if invoice and invoice.amount_due <= Decimal('0'):
-        invoice.status = 'paid'
-        invoice.paid_at = timezone.now()
-        invoice.save(update_fields=['status', 'paid_at', 'updated_at'])
-        try:
-            from core.events import EventBus
-            EventBus.publish('invoice.paid', {
-                'id': invoice.pk,
-                'tenant_id': tenant.id,
-                'customer_id': invoice.customer_id,
-                'amount': str(payment.amount),
-                'paid_at': invoice.paid_at.isoformat(),
-            }, tenant=tenant)
-        except Exception as exc:
-            log.warning('EventBus.publish invoice.paid failed for invoice %s: %s', invoice.pk, exc, exc_info=True)
-
-    if bill and bill.amount_due <= Decimal('0'):
-        bill.status = 'paid'
-        bill.paid_at = timezone.now()
-        bill.save(update_fields=['status', 'paid_at', 'updated_at'])
+    _mark_invoice_paid_if_settled(tenant=tenant, invoice=invoice, payment_amount=payment.amount)
+    _mark_bill_paid_if_settled(bill=bill)
 
     return payment
 
@@ -105,47 +180,22 @@ def allocate_payment(payment, *, tenant, invoice=None, bill=None):
     Link an unallocated payment to an invoice or bill.
     Publishes invoice.paid / bill.paid events when the document is fully settled.
     """
-    from accounting.models import Invoice, Bill, Payment
-    from core.exceptions import AppValidationError, ConflictError, NotFoundError
-    from django.utils import timezone as tz
-
+    from core.exceptions import AppValidationError
     if invoice and bill:
         raise AppValidationError({'detail': 'Provide either invoice or bill, not both.'})
 
     if invoice:
-        if payment.type != Payment.TYPE_INCOMING:
-            raise AppValidationError({'detail': 'Only incoming payments can be linked to invoices.'})
-        if payment.invoice_id is not None:
-            raise ConflictError('Payment is already linked to an invoice.')
-        payment.invoice = invoice
-        payment.save(update_fields=['invoice', 'updated_at'])
-        if invoice.amount_due <= Decimal('0'):
-            invoice.status = Invoice.STATUS_PAID
-            invoice.paid_at = tz.now()
-            invoice.save(update_fields=['status', 'paid_at', 'updated_at'])
-            try:
-                from core.events import EventBus
-                EventBus.publish('invoice.paid', {
-                    'id': invoice.pk,
-                    'tenant_id': tenant.id,
-                    'customer_id': invoice.customer_id,
-                    'amount': str(payment.amount),
-                    'paid_at': invoice.paid_at.isoformat(),
-                }, tenant=tenant)
-            except Exception as exc:
-                log.warning('EventBus.publish invoice.paid failed for invoice %s: %s', invoice.pk, exc, exc_info=True)
+        _allocate_to_invoice(
+            payment=payment,
+            tenant=tenant,
+            invoice=invoice,
+        )
 
     elif bill:
-        if payment.type != Payment.TYPE_OUTGOING:
-            raise AppValidationError({'detail': 'Only outgoing payments can be linked to bills.'})
-        if payment.bill_id is not None:
-            raise ConflictError('Payment is already linked to a bill.')
-        payment.bill = bill
-        payment.save(update_fields=['bill', 'updated_at'])
-        if bill.amount_due <= Decimal('0'):
-            bill.status = Bill.STATUS_PAID
-            bill.paid_at = tz.now()
-            bill.save(update_fields=['status', 'paid_at', 'updated_at'])
+        _allocate_to_bill(
+            payment=payment,
+            bill=bill,
+        )
 
     else:
         raise AppValidationError({'detail': 'Provide invoice or bill to allocate.'})

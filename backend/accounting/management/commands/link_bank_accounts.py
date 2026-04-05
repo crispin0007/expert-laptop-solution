@@ -23,6 +23,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from accounting.models import Account, AccountGroup, BankAccount
+        from accounting.services.journal_service import ensure_bank_control_account, seed_chart_of_accounts
 
         tenant_id = options['tenant']
         dry_run   = options['dry_run']
@@ -37,18 +38,31 @@ class Command(BaseCommand):
 
         linked = 0
         skipped = 0
+        planned_codes_by_tenant = {}
 
         for bank in qs:
             tenant = bank.tenant
+            seed_chart_of_accounts(tenant, created_by=bank.created_by)
             try:
                 group = AccountGroup.objects.get(tenant=tenant, slug='bank_accounts')
             except AccountGroup.DoesNotExist:
-                group = None
+                self.stdout.write(
+                    self.style.WARNING(
+                        f'  SKIP  tenant={tenant.id} bank="{bank.name}" — missing bank_accounts group'
+                    )
+                )
+                skipped += 1
+                continue
 
-            existing = set(
-                Account.objects.filter(tenant=tenant, code__regex=r'^11[5-9]\d$')
-                .values_list('code', flat=True)
-            )
+            bank_control = ensure_bank_control_account(tenant, created_by=bank.created_by)
+
+            existing = planned_codes_by_tenant.get(tenant.id)
+            if existing is None:
+                existing = set(
+                    Account.objects.filter(tenant=tenant, code__regex=r'^11[5-9]\d$')
+                    .values_list('code', flat=True)
+                )
+                planned_codes_by_tenant[tenant.id] = existing
             code = next(
                 (str(n) for n in range(1150, 1200) if str(n) not in existing),
                 None,
@@ -56,7 +70,7 @@ class Command(BaseCommand):
             if code is None:
                 self.stdout.write(
                     self.style.WARNING(
-                        f'  SKIP  tenant={tenant_id} bank="{bank.name}" — bank account code range 1150–1199 exhausted'
+                        f'  SKIP  tenant={tenant.id} bank="{bank.name}" — bank account code range 1150–1199 exhausted'
                     )
                 )
                 skipped += 1
@@ -70,15 +84,18 @@ class Command(BaseCommand):
                 account = Account.objects.create(
                     tenant=tenant,
                     code=code,
-                    name=bank.name,
+                    name=(bank.bank_name or bank.name),
                     type=Account.TYPE_ASSET,
                     group=group,
+                    parent=bank_control,
                     description=f'Bank account: {bank.bank_name or bank.name}',
                     opening_balance=bank.opening_balance,
                     is_system=False,
                 )
                 bank.linked_account = account
                 bank.save(update_fields=['linked_account'])
+
+            existing.add(code)
 
             linked += 1
 

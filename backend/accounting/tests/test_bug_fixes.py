@@ -1901,6 +1901,308 @@ class TestCashFlowStatement:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# R1 — Reporting regressions (sales/AR date + amount correctness)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestR1ReportRegressions:
+
+    @pytest.mark.django_db
+    def test_sales_by_customer_accumulates_outstanding_per_invoice(self, tenant, admin_user):
+        """Outstanding must be computed per invoice row, not reused from a prior loop row."""
+        from customers.models import Customer
+        from accounting.models import Invoice, Payment
+        from accounting.services.report_service import sales_by_customer
+
+        customer = Customer.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            name='Acme Reporting',
+            type=Customer.TYPE_ORGANIZATION,
+        )
+
+        inv1 = Invoice.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            customer=customer,
+            date=datetime.date(2026, 1, 5),
+            line_items=[],
+            subtotal=Decimal('100.00'),
+            discount=Decimal('0.00'),
+            vat_rate=Decimal('0.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('100.00'),
+            status=Invoice.STATUS_ISSUED,
+        )
+        inv2 = Invoice.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            customer=customer,
+            date=datetime.date(2026, 1, 6),
+            line_items=[],
+            subtotal=Decimal('200.00'),
+            discount=Decimal('0.00'),
+            vat_rate=Decimal('0.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('200.00'),
+            status=Invoice.STATUS_ISSUED,
+        )
+
+        # Distinct paid amount on inv2 ensures per-row outstanding differs.
+        Payment.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            date=datetime.date(2026, 1, 7),
+            type=Payment.TYPE_INCOMING,
+            method=Payment.METHOD_CASH,
+            amount=Decimal('40.00'),
+            invoice=inv2,
+        )
+
+        out = sales_by_customer(tenant, datetime.date(2026, 1, 1), datetime.date(2026, 1, 31))
+        row = next(r for r in out['rows'] if r['customer_id'] == customer.id)
+
+        # expected: inv1 outstanding 100 + inv2 outstanding 160 = 260
+        assert row['outstanding'] == Decimal('260.00'), (
+            f"R1 FAIL: expected outstanding 260.00, got {row['outstanding']}"
+        )
+
+    @pytest.mark.django_db
+    def test_sales_by_item_computes_amount_when_line_amount_missing(self, tenant, admin_user):
+        """sales_by_item must derive amount from qty/unit_price/discount when amount key is absent."""
+        from accounting.models import Invoice
+        from accounting.services.report_service import sales_by_item
+
+        Invoice.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            date=datetime.date(2026, 2, 1),
+            line_items=[{
+                'description': 'Service Plan',
+                'qty': 2,
+                'unit_price': '100',
+                'discount': '10',
+            }],
+            subtotal=Decimal('180.00'),
+            discount=Decimal('0.00'),
+            vat_rate=Decimal('0.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('180.00'),
+            status=Invoice.STATUS_ISSUED,
+        )
+
+        out = sales_by_item(tenant, datetime.date(2026, 2, 1), datetime.date(2026, 2, 28))
+        row = next(r for r in out['rows'] if r['description'] == 'Service Plan')
+        assert row['total_amount'] == Decimal('180'), (
+            f"R1 FAIL: expected derived amount 180, got {row['total_amount']}"
+        )
+
+    @pytest.mark.django_db
+    def test_sales_reports_use_voucher_date_not_created_at(self, tenant, admin_user):
+        """Period filtering must follow invoice.date with legacy created_at fallback."""
+        from accounting.models import Invoice
+        from accounting.services.report_service import sales_by_customer
+        from django.utils import timezone
+
+        in_period = Invoice.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            date=datetime.date(2026, 3, 10),
+            line_items=[],
+            subtotal=Decimal('50.00'),
+            discount=Decimal('0.00'),
+            vat_rate=Decimal('0.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('50.00'),
+            status=Invoice.STATUS_ISSUED,
+        )
+        out_of_period = Invoice.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            date=datetime.date(2025, 12, 31),
+            line_items=[],
+            subtotal=Decimal('70.00'),
+            discount=Decimal('0.00'),
+            vat_rate=Decimal('0.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('70.00'),
+            status=Invoice.STATUS_ISSUED,
+        )
+
+        # Force created_at values to the opposite period to prove voucher-date behavior.
+        Invoice.objects.filter(pk=in_period.pk).update(
+            created_at=timezone.make_aware(datetime.datetime(2025, 12, 30, 12, 0, 0))
+        )
+        Invoice.objects.filter(pk=out_of_period.pk).update(
+            created_at=timezone.make_aware(datetime.datetime(2026, 3, 11, 12, 0, 0))
+        )
+
+        out = sales_by_customer(tenant, datetime.date(2026, 3, 1), datetime.date(2026, 3, 31))
+        assert out['grand_total'] == Decimal('50.00'), (
+            f"R1 FAIL: expected only voucher-dated invoice in range, got grand_total={out['grand_total']}"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S1 — Security: tenant isolation on accounting viewsets
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestS1TenantIsolation:
+
+    @pytest.mark.django_db
+    def test_tds_queryset_is_tenant_scoped(self, tenant, admin_user):
+        """TDSEntryViewSet.get_queryset() must never return entries from other tenants."""
+        from tenants.models import Tenant
+        from accounting.models import TDSEntry
+        from accounting.views import TDSEntryViewSet
+        from rest_framework.test import APIRequestFactory
+        from rest_framework.request import Request as DrfRequest
+
+        other_tenant = Tenant.objects.create(name='Other Co', slug='otherco')
+
+        TDSEntry.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            supplier_name='Tenant A Supplier',
+            taxable_amount=Decimal('1000.00'),
+            tds_rate=Decimal('0.10'),
+            period_month=1,
+            period_year=2082,
+        )
+        TDSEntry.objects.create(
+            tenant=other_tenant,
+            created_by=admin_user,
+            supplier_name='Tenant B Supplier',
+            taxable_amount=Decimal('2000.00'),
+            tds_rate=Decimal('0.10'),
+            period_month=1,
+            period_year=2082,
+        )
+
+        factory = APIRequestFactory()
+        raw = factory.get('/api/v1/accounting/tds/')
+        request = DrfRequest(raw)
+        request.user = admin_user
+        request.tenant = tenant
+
+        view = TDSEntryViewSet()
+        view.request = request
+        view.tenant = tenant
+        view.action = 'list'
+
+        rows = list(view.get_queryset())
+
+        assert len(rows) == 1, f"S1 FAIL: expected 1 tenant row, got {len(rows)}"
+        assert rows[0].tenant_id == tenant.id, (
+            f"S1 FAIL: leaked cross-tenant TDS row tenant_id={rows[0].tenant_id}, expected {tenant.id}"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# G1 — Custom account group management (Tally-like)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestG1CustomAccountGroupManagement:
+
+    @pytest.mark.django_db
+    def test_account_group_create_update_soft_delete(self, tenant, admin_user):
+        from accounting.views import AccountGroupViewSet
+        from accounting.models import AccountGroup
+        from rest_framework.test import APIRequestFactory
+        from rest_framework.request import Request as DrfRequest
+        from rest_framework.parsers import JSONParser
+
+        factory = APIRequestFactory()
+
+        raw_create = factory.post('/api/v1/accounting/account-groups/', {
+            'slug': 'custom_current_assets',
+            'name': 'Custom Current Assets',
+            'type': 'asset',
+            'report_section': 'bs_current_assets',
+            'normal_balance': 'debit',
+            'is_active': True,
+        }, format='json')
+        req_create = DrfRequest(raw_create, parsers=[JSONParser()])
+        req_create.user = admin_user
+        req_create.tenant = tenant
+
+        create_view = AccountGroupViewSet()
+        create_view.request = req_create
+        create_view.tenant = tenant
+        create_view.action = 'create'
+        create_view.format_kwarg = None
+        create_resp = create_view.create(req_create)
+        assert create_resp.status_code == 201
+
+        group_id = create_resp.data['data']['id']
+        group = AccountGroup.objects.get(pk=group_id)
+        assert group.tenant_id == tenant.id
+        assert group.is_system is False
+
+        raw_update = factory.patch(
+            f'/api/v1/accounting/account-groups/{group_id}/',
+            {'name': 'Custom Current Assets Updated'},
+            format='json',
+        )
+        req_update = DrfRequest(raw_update, parsers=[JSONParser()])
+        req_update.user = admin_user
+        req_update.tenant = tenant
+
+        update_view = AccountGroupViewSet()
+        update_view.request = req_update
+        update_view.tenant = tenant
+        update_view.action = 'partial_update'
+        update_view.kwargs = {'pk': str(group_id)}
+        update_view.format_kwarg = None
+        update_resp = update_view.update(req_update, pk=str(group_id), partial=True)
+        assert update_resp.status_code == 200
+
+        raw_delete = factory.delete(f'/api/v1/accounting/account-groups/{group_id}/')
+        req_delete = DrfRequest(raw_delete)
+        req_delete.user = admin_user
+        req_delete.tenant = tenant
+
+        delete_view = AccountGroupViewSet()
+        delete_view.request = req_delete
+        delete_view.tenant = tenant
+        delete_view.action = 'destroy'
+        delete_view.kwargs = {'pk': str(group_id)}
+        delete_view.format_kwarg = None
+        delete_resp = delete_view.destroy(req_delete, pk=str(group_id))
+        assert delete_resp.status_code == 204
+
+        group.refresh_from_db()
+        assert group.is_active is False
+
+    @pytest.mark.django_db
+    def test_system_group_cannot_be_deleted(self, tenant, admin_user):
+        from accounting.views import AccountGroupViewSet
+        from accounting.models import AccountGroup
+        from core.exceptions import ConflictError
+        from rest_framework.test import APIRequestFactory
+        from rest_framework.request import Request as DrfRequest
+        from rest_framework.parsers import JSONParser
+
+        system_group = AccountGroup.objects.filter(tenant=tenant, is_system=True).first()
+        assert system_group is not None
+
+        factory = APIRequestFactory()
+        raw_delete = factory.delete(f'/api/v1/accounting/account-groups/{system_group.pk}/')
+        req_delete = DrfRequest(raw_delete, parsers=[JSONParser()])
+        req_delete.user = admin_user
+        req_delete.tenant = tenant
+
+        view = AccountGroupViewSet()
+        view.request = req_delete
+        view.tenant = tenant
+        view.action = 'destroy'
+        view.kwargs = {'pk': str(system_group.pk)}
+        view.format_kwarg = None
+
+        with pytest.raises(ConflictError):
+            view.destroy(req_delete, pk=str(system_group.pk))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # N1 — run_recurring_journal is idempotent (no duplicate entries on Celery retry)
 # ─────────────────────────────────────────────────────────────────────────────
 

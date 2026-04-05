@@ -87,11 +87,13 @@ class Command(BaseCommand):
         Returns {code: Account} map.
         """
         from accounting.models import Account
+        from accounting.services.journal_service import DEFAULT_ACCOUNTS
+
+        system_codes = {code for code, _name, _type, _parent, _is_system in DEFAULT_ACCOUNTS}
 
         ACCOUNTS = [
             # code   name                             type
             ('1100', 'Cash in Hand',                  'asset'),
-            ('1160', 'Bank — Nepal Bank Limited',     'asset'),
             ('1200', 'Accounts Receivable',           'asset'),
             ('1300', 'Inventory / Stock',             'asset'),
             ('1400', 'Prepaid Expenses',              'asset'),
@@ -118,14 +120,24 @@ class Command(BaseCommand):
 
         acct_map = {}
         for code, name, atype in ACCOUNTS:
+            is_system = code in system_codes
             acct, created = Account.objects.get_or_create(
                 tenant=tenant, code=code,
-                defaults={'name': name, 'type': atype, 'is_system': True},
+                defaults={'name': name, 'type': atype, 'is_system': is_system},
             )
             # Ensure core accounts are always active (in case they were deactivated)
             if not acct.is_active:
                 acct.is_active = True
                 acct.save(update_fields=['is_active'])
+
+            # Keep demo-only accounts non-system and keep the demo bank generic.
+            updates = []
+            if acct.is_system != is_system:
+                acct.is_system = is_system
+                updates.append('is_system')
+            if updates:
+                acct.save(update_fields=updates)
+
             acct_map[code] = acct
             if created:
                 self.stdout.write(f'  Created account {code} — {name}')
@@ -353,7 +365,7 @@ class Command(BaseCommand):
             ('2200', '0',      '15780',  'VAT 13%'),
         ])
         je(mo(0, 10), '[DEMO] Interest income', [
-            ('1160', '3500', '0',    'Bank interest credited'),
+            ('1150', '3500', '0',    'Bank interest credited'),
             ('4300', '0',    '3500', 'Interest income'),
         ])
 

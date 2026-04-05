@@ -15,6 +15,7 @@ import {
   CalendarDays, ArrowLeftRight, FileText, Receipt, RotateCcw, Clock,
   Users, Truck, UserCheck, FileSpreadsheet, Printer, Loader2,
   PackageCheck, Archive, DollarSign, FileDown, CheckCircle2,
+  ChevronRight,
 } from 'lucide-react'
 import NepaliDatePicker from '../../components/NepaliDatePicker'
 import DateDisplay from '../../components/DateDisplay'
@@ -22,6 +23,7 @@ import {
   adStringToBsDisplay, currentFiscalYear, fiscalYearAdParams,
   fiscalYearOf, fiscalYearDateRange,
 } from '../../utils/nepaliDate'
+import { resolveReportRowDrill, type DrillNodeType, type DrillSeed } from './drillResolver'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -276,46 +278,70 @@ function CollapsibleGroup({
   )
 }
 
-/** Drill-down modal: shows all vouchers for a single account in the report period. */
-function DrillDownModal({
-  accountId, accountName, dateFrom, dateTo, onClose,
-}: {
-  accountId: number; accountName: string
-  dateFrom: string; dateTo: string
-  onClose: () => void
-}) {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['account-vouchers', accountId, dateFrom, dateTo],
+function ReportDrillModal({ seed, onClose }: { seed: DrillSeed; onClose: () => void }) {
+  const [stack, setStack] = useState<DrillSeed[]>([seed])
+  const current = stack[stack.length - 1]
+
+  const { data, isLoading, error } = useQuery<Record<string, unknown>>({
+    queryKey: ['report-drill', current.nodeType, current.nodeId, seed.dateFrom, seed.dateTo],
     queryFn: async () => {
-      const r = await apiClient.get(ACCOUNTING.REPORT_ACCOUNT_VOUCHERS, {
-        params: { account_id: accountId, date_from: dateFrom, date_to: dateTo },
+      const r = await apiClient.get(ACCOUNTING.REPORT_DRILL, {
+        params: {
+          node_type: current.nodeType,
+          node_id: current.nodeId,
+          date_from: seed.dateFrom,
+          date_to: seed.dateTo,
+        },
       })
-      return r.data.data
+      return r.data?.data ?? r.data
     },
-    staleTime: 30_000,
+    staleTime: 15_000,
   })
+
+  const openNext = (next: DrillSeed) => setStack(prev => [...prev, next])
+  const canGoBack = stack.length > 1
+
+  const rows = (data?.rows as Array<Record<string, unknown>>) ?? []
+  const lines = (data?.lines as Array<Record<string, unknown>>) ?? []
+  const nextRefs = (data?.next_refs as Array<Record<string, unknown>>) ?? []
+  const sourceRef = data?.source_ref as Record<string, unknown> | undefined
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[80vh] flex flex-col">
-        {/* Header */}
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[84vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-200">
-          <div>
-            <p className="text-sm font-semibold text-gray-900">{data?.account_code ?? '…'} — {accountName}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{fmt(dateFrom)} → {fmt(dateTo)}</p>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-gray-900 truncate">{String(data?.node_label ?? current.nodeLabel)}</p>
+            <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-1 flex-wrap">
+              {stack.map((item, i) => (
+                <span key={`${item.nodeType}-${item.nodeId}-${i}`} className="inline-flex items-center gap-1">
+                  <span className="capitalize">{item.nodeType.replace('_', ' ')}</span>
+                  {i < stack.length - 1 && <ChevronRight size={11} />}
+                </span>
+              ))}
+            </div>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">&times;</button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setStack(prev => prev.slice(0, -1))}
+              disabled={!canGoBack}
+              className={`px-2.5 py-1 text-xs rounded-md border ${canGoBack ? 'border-gray-300 text-gray-700 hover:bg-gray-50' : 'border-gray-200 text-gray-300 cursor-not-allowed'}`}
+            >
+              Back
+            </button>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">&times;</button>
+          </div>
         </div>
 
-        {/* Body */}
         <div className="overflow-auto flex-1">
           {isLoading && <Spinner />}
-          {error && <div className="p-4 text-sm text-red-600">Failed to load ledger.</div>}
-          {data && (
+          {error && <div className="p-4 text-sm text-red-600">Failed to load drill data.</div>}
+
+          {data?.node_type === 'account' && (
             <>
               <div className="flex items-center justify-between px-5 py-2 bg-gray-50 border-b border-gray-100 text-xs text-gray-500">
                 <span>Opening Balance</span>
-                <span className="tabular-nums font-medium text-gray-700">{npr(data.opening_balance)}</span>
+                <span className="tabular-nums font-medium text-gray-700">{npr(data.opening_balance as string | number)}</span>
               </div>
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
@@ -323,49 +349,171 @@ function DrillDownModal({
                     <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Date</th>
                     <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Ref</th>
                     <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Description</th>
-                    <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-28">Dr</th>
-                    <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-28">Cr</th>
+                    <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-24">Dr</th>
+                    <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-24">Cr</th>
                     <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-32">Balance</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {data.rows?.map((row: {date:string;entry_number:string;description:string;debit:string|number;credit:string|number;balance:string|number}, i: number) => (
-                    <tr key={`${row.entry_number}-${i}`} className="hover:bg-gray-50">
-                      <td className="px-4 py-2 text-gray-500">{fmt(row.date)}</td>
-                      <td className="px-4 py-2 font-mono text-xs text-gray-400">{row.entry_number}</td>
-                      <td className="px-4 py-2 text-gray-700 max-w-xs truncate">{row.description}</td>
-                      <td className="px-4 py-2 text-right tabular-nums text-gray-700">{Number.parseFloat(String(row.debit)) ? npr(row.debit) : <span className="text-gray-200">—</span>}</td>
-                      <td className="px-4 py-2 text-right tabular-nums text-gray-700">{Number.parseFloat(String(row.credit)) ? npr(row.credit) : <span className="text-gray-200">—</span>}</td>
-                      <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-900">{npr(row.balance)}</td>
+                  {rows.map((row, i) => (
+                    <tr
+                      key={`${String(row.entry_number ?? i)}-${String(row.node_id ?? i)}`}
+                      className="hover:bg-indigo-50 cursor-pointer"
+                      onClick={() => {
+                        const entryId = Number(row.node_id ?? 0)
+                        if (!entryId) return
+                        openNext({
+                          nodeType: 'journal_entry',
+                          nodeId: entryId,
+                          nodeLabel: String(row.entry_number ?? `Journal ${entryId}`),
+                          dateFrom: seed.dateFrom,
+                          dateTo: seed.dateTo,
+                        })
+                      }}
+                    >
+                      <td className="px-4 py-2 text-gray-500">{fmt(String(row.date ?? ''))}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-indigo-700">{String(row.entry_number ?? '—')}</td>
+                      <td className="px-4 py-2 text-gray-700 max-w-xs truncate">{String(row.description ?? '')}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-gray-700">{Number.parseFloat(String(row.debit ?? 0)) ? npr(row.debit as string | number) : <span className="text-gray-200">—</span>}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-gray-700">{Number.parseFloat(String(row.credit ?? 0)) ? npr(row.credit as string | number) : <span className="text-gray-200">—</span>}</td>
+                      <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-900">{npr(row.balance as string | number)}</td>
                     </tr>
                   ))}
-                  {!data.rows?.length && (
-                    <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-400 text-xs italic">No transactions in this period.</td></tr>
-                  )}
+                  {!rows.length && <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-400 text-xs italic">No transactions in this period.</td></tr>}
                 </tbody>
               </table>
-              {data.rows?.length > 0 && (
-                <div className="flex items-center justify-between px-5 py-2.5 bg-gray-800 text-white text-sm">
-                  <span className="font-semibold uppercase tracking-wide">Closing Balance</span>
-                  <span className="tabular-nums font-bold">{npr(data.rows[data.rows.length - 1]?.balance ?? 0)}</span>
+            </>
+          )}
+
+          {data?.node_type === 'journal_entry' && (
+            <div className="p-4 space-y-4">
+              <div className="grid grid-cols-2 gap-3 bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs">
+                <div><span className="text-gray-500">Date: </span><span className="font-medium text-gray-800">{fmt(String(data.date ?? ''))}</span></div>
+                <div><span className="text-gray-500">Reference: </span><span className="font-medium text-gray-800">{String(data.reference_type ?? '—')}</span></div>
+              </div>
+              <table className="w-full text-xs border border-gray-200 rounded-lg overflow-hidden">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-gray-500 uppercase tracking-wide">Account</th>
+                    <th className="px-3 py-2 text-left text-gray-500 uppercase tracking-wide">Description</th>
+                    <th className="px-3 py-2 text-right text-gray-500 uppercase tracking-wide">Debit</th>
+                    <th className="px-3 py-2 text-right text-gray-500 uppercase tracking-wide">Credit</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {lines.map((line, i) => (
+                    <tr key={`${String(line.line_id ?? i)}-${i}`}>
+                      <td className="px-3 py-2"><span className="font-mono text-indigo-600 mr-2">{String(line.account_code ?? '')}</span>{String(line.account_name ?? '')}</td>
+                      <td className="px-3 py-2 text-gray-500">{String(line.description ?? '') || '—'}</td>
+                      <td className="px-3 py-2 text-right text-emerald-700">{Number.parseFloat(String(line.debit ?? 0)) ? npr(line.debit as string | number) : '—'}</td>
+                      <td className="px-3 py-2 text-right text-red-600">{Number.parseFloat(String(line.credit ?? 0)) ? npr(line.credit as string | number) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {sourceRef && (
+                <div className="flex items-center justify-end">
+                  <button
+                    onClick={() => openNext({
+                      nodeType: String(sourceRef.node_type) as DrillNodeType,
+                      nodeId: Number(sourceRef.node_id),
+                      nodeLabel: String(sourceRef.label ?? ''),
+                      dateFrom: seed.dateFrom,
+                      dateTo: seed.dateTo,
+                    })}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition-colors"
+                  >
+                    Open Source <ChevronRight size={12} />
+                  </button>
                 </div>
               )}
+            </div>
+          )}
+
+          {['invoice', 'bill', 'payment', 'credit_note', 'debit_note'].includes(String(data?.node_type ?? '')) && (
+            <div className="p-4 space-y-3 text-sm">
+              <div className="border border-gray-200 rounded-lg p-3 bg-white space-y-1 text-gray-700">
+                {'invoice_number' in (data ?? {}) && <p>Invoice: <span className="font-semibold">{String(data.invoice_number)}</span></p>}
+                {'bill_number' in (data ?? {}) && <p>Bill: <span className="font-semibold">{String(data.bill_number)}</span></p>}
+                {'payment_number' in (data ?? {}) && <p>Payment: <span className="font-semibold">{String(data.payment_number)}</span></p>}
+                {'credit_note_number' in (data ?? {}) && <p>Credit Note: <span className="font-semibold">{String(data.credit_note_number)}</span></p>}
+                {'debit_note_number' in (data ?? {}) && <p>Debit Note: <span className="font-semibold">{String(data.debit_note_number)}</span></p>}
+                {'status' in (data ?? {}) && <p>Status: <span className="font-semibold capitalize">{String(data.status ?? '—')}</span></p>}
+                {'total' in (data ?? {}) && <p>Total: <span className="font-semibold">{npr(data.total as string | number)}</span></p>}
+                {'amount' in (data ?? {}) && <p>Amount: <span className="font-semibold">{npr(data.amount as string | number)}</span></p>}
+              </div>
+              {nextRefs.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  {nextRefs.map((ref, i) => (
+                    <button
+                      key={`${String(ref.node_type)}-${String(ref.node_id)}-${i}`}
+                      onClick={() => openNext({
+                        nodeType: String(ref.node_type) as DrillNodeType,
+                        nodeId: Number(ref.node_id),
+                        nodeLabel: String(ref.label ?? `${String(ref.node_type)} #${String(ref.node_id)}`),
+                        dateFrom: seed.dateFrom,
+                        dateTo: seed.dateTo,
+                      })}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition-colors"
+                    >
+                      Open {String(ref.node_type).replace('_', ' ')} <ChevronRight size={12} />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {['customer', 'supplier'].includes(String(data?.node_type ?? '')) && (
+            <>
+              <div className="flex items-center justify-between px-5 py-2 bg-gray-50 border-b border-gray-100 text-xs text-gray-500">
+                <span>Opening Balance</span>
+                <span className="tabular-nums font-medium text-gray-700">{npr(data.opening_balance as string | number)}</span>
+              </div>
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Date</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Type</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Reference</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Description</th>
+                    <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-24">Dr</th>
+                    <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-24">Cr</th>
+                    <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-32">Balance</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {rows.map((row, i) => (
+                    <tr key={`${String(row.reference ?? i)}-${i}`} className="hover:bg-gray-50">
+                      <td className="px-4 py-2 text-gray-500">{fmt(String(row.date ?? ''))}</td>
+                      <td className="px-4 py-2 text-xs capitalize text-gray-600">{String(row.type ?? '').replace(/_/g, ' ')}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-indigo-700">{String(row.reference ?? '—')}</td>
+                      <td className="px-4 py-2 text-gray-700 max-w-xs truncate">{String(row.description ?? '')}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-gray-700">{Number.parseFloat(String(row.debit ?? 0)) ? npr(row.debit as string | number) : <span className="text-gray-200">—</span>}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-gray-700">{Number.parseFloat(String(row.credit ?? 0)) ? npr(row.credit as string | number) : <span className="text-gray-200">—</span>}</td>
+                      <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-900">{npr(row.balance as string | number)}</td>
+                    </tr>
+                  ))}
+                  {!rows.length && <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400 text-xs italic">No statement transactions in this period.</td></tr>}
+                </tbody>
+              </table>
             </>
           )}
         </div>
       </div>
+
     </div>
   )
 }
 
 /** A single clickable account row with optional drill-down. */
 function DrillableRow({
-  account, indent = false, dateFrom, dateTo,
+  account, indent = false, dateFrom, dateTo, onDrill,
 }: {
   account: RptAccount; indent?: boolean; dateFrom?: string; dateTo?: string
+  onDrill?: (seed: DrillSeed) => void
 }) {
-  const [modal, setModal] = useState(false)
-  const canDrill = !!account.id && !!dateFrom && !!dateTo
+  const canDrill = !!account.id && !!dateFrom && !!dateTo && !!onDrill
 
   const rowContent = (
     <div className="flex items-center justify-between w-full">
@@ -384,7 +532,13 @@ function DrillableRow({
         <button
           type="button"
           className={`w-full flex items-center justify-between px-4 py-1.5 border-b border-gray-100 last:border-0 text-left group cursor-pointer hover:bg-indigo-50 ${indent ? 'pl-8' : ''}`}
-          onClick={() => setModal(true)}
+          onClick={() => onDrill?.({
+            nodeType: 'account',
+            nodeId: Number(account.id),
+            nodeLabel: `${account.code} — ${account.name}`,
+            dateFrom,
+            dateTo,
+          })}
           title="Click to view vouchers"
         >
           {rowContent}
@@ -393,15 +547,6 @@ function DrillableRow({
         <div className={`flex items-center justify-between px-4 py-1.5 border-b border-gray-100 last:border-0 hover:bg-gray-50 ${indent ? 'pl-8' : ''}`}>
           {rowContent}
         </div>
-      )}
-      {Boolean(modal) && account.id != null && dateFrom && dateTo && (
-        <DrillDownModal
-          accountId={account.id}
-          accountName={account.name}
-          dateFrom={dateFrom}
-          dateTo={dateTo}
-          onClose={() => setModal(false)}
-        />
       )}
     </>
   )
@@ -446,7 +591,7 @@ function RptDateBadge({ label }: { label: string }) {
 
 // ─── Profit & Loss ───────────────────────────────────────────────────────────
 
-function PLReportView({ data, dateFrom, dateTo }: { data: PLReport; dateFrom?: string; dateTo?: string }) {
+function PLReportView({ data, dateFrom, dateTo, onDrill }: { data: PLReport; dateFrom?: string; dateTo?: string; onDrill?: (seed: DrillSeed) => void }) {
   const gp  = Number.parseFloat(String(data.gross_profit))
   const net = Number.parseFloat(String(data.net_profit))
   const isProfit = net >= 0
@@ -455,7 +600,7 @@ function PLReportView({ data, dateFrom, dateTo }: { data: PLReport; dateFrom?: s
     return <p className="px-8 py-2 text-xs text-gray-400 italic">{msg}</p>
   }
   function accounts(list: RptAccount[]) {
-    return list?.map(r => <DrillableRow key={r.code} account={r} indent dateFrom={dateFrom} dateTo={dateTo} />)
+    return list?.map(r => <DrillableRow key={r.code} account={r} indent dateFrom={dateFrom} dateTo={dateTo} onDrill={onDrill} />)
   }
 
   return (
@@ -531,13 +676,13 @@ function PLReportView({ data, dateFrom, dateTo }: { data: PLReport; dateFrom?: s
 
 // ─── Balance Sheet ────────────────────────────────────────────────────────────
 
-function BSReportView({ data, asOf }: { data: BSReport; asOf?: string }) {
+function BSReportView({ data, asOf, onDrill }: { data: BSReport; asOf?: string; onDrill?: (seed: DrillSeed) => void }) {
   function emptyNote(msg: string) {
     return <p className="px-8 py-2 text-xs text-gray-400 italic">{msg}</p>
   }
   function accountRows(items: RptAccount[]) {
     // Balance sheet accounts use as_of_date as both from and to for the ledger drill-down.
-    return items?.map(r => <DrillableRow key={r.code} account={r} indent dateFrom={asOf} dateTo={asOf} />)
+    return items?.map(r => <DrillableRow key={r.code} account={r} indent dateFrom={asOf} dateTo={asOf} onDrill={onDrill} />)
   }
 
   return (
@@ -599,8 +744,7 @@ function BSReportView({ data, asOf }: { data: BSReport; asOf?: string }) {
 
 // ─── Trial Balance ────────────────────────────────────────────────────────────
 
-function TBReportView({ data, dateFrom, dateTo }: { data: TBReport; dateFrom?: string; dateTo?: string }) {
-  const [drill, setDrill] = useState<TBRow | null>(null)
+function TBReportView({ data, dateFrom, dateTo, onDrill }: { data: TBReport; dateFrom?: string; dateTo?: string; onDrill?: (seed: DrillSeed) => void }) {
   const n = (v: string|number) => Number.parseFloat(String(v))
   const dash = <span className="text-gray-200">—</span>
 
@@ -617,7 +761,13 @@ function TBReportView({ data, dateFrom, dateTo }: { data: TBReport; dateFrom?: s
       <tr
         key={row.code}
         className={`border-b border-gray-100 ${row.id && dateFrom ? 'cursor-pointer hover:bg-indigo-50 group' : 'hover:bg-gray-50'}`}
-        onClick={row.id && dateFrom ? () => setDrill(row) : undefined}
+        onClick={row.id && dateFrom && dateTo ? () => onDrill?.({
+          nodeType: 'account',
+          nodeId: Number(row.id),
+          nodeLabel: `${row.code} — ${row.name}`,
+          dateFrom,
+          dateTo,
+        }) : undefined}
         title={row.id && dateFrom ? 'Click to view vouchers' : undefined}
       >
         <td className="px-4 py-2 font-mono text-xs text-gray-400">{row.code}</td>
@@ -686,16 +836,6 @@ function TBReportView({ data, dateFrom, dateTo }: { data: TBReport; dateFrom?: s
         </tfoot>
       </table>
       {!data.accounts?.length && <EmptyState message="No accounts with activity in this period." />}
-
-      {drill != null && drill.id != null && dateFrom != null && dateTo != null && (
-        <DrillDownModal
-          accountId={drill.id}
-          accountName={drill.name}
-          dateFrom={dateFrom}
-          dateTo={dateTo}
-          onClose={() => setDrill(null)}
-        />
-      )}
     </div>
   )
 }
@@ -1011,7 +1151,7 @@ interface CashBookReport {
   transactions: CashBookTx[]
 }
 
-function CashBookView({ data }: { data: CashBookReport }) {
+function CashBookView({ data, dateFrom, dateTo, onDrill }: { data: CashBookReport; dateFrom?: string; dateTo?: string; onDrill?: (seed: DrillSeed) => void }) {
   const opening  = parseFloat(data.opening_balance  ?? '0')
   const closing  = parseFloat(data.closing_balance  ?? '0')
   const txs      = data.transactions ?? []
@@ -1068,8 +1208,20 @@ function CashBookView({ data }: { data: CashBookReport }) {
           </tr>
           {txs.map((tx, i) => {
             const bal = parseFloat(tx.balance)
+            const drillSeed = resolveReportRowDrill({
+              reportKey: 'cash-book',
+              row: tx as unknown as Record<string, unknown>,
+              dateFrom,
+              dateTo,
+            })
+            const canDrill = Boolean(drillSeed && onDrill)
             return (
-              <tr key={i} className="hover:bg-gray-50">
+              <tr
+                key={i}
+                className={canDrill ? 'hover:bg-indigo-50 cursor-pointer' : 'hover:bg-gray-50'}
+                onClick={canDrill ? () => onDrill?.(drillSeed as DrillSeed) : undefined}
+                title={canDrill ? 'Click to drill down' : undefined}
+              >
                 <td className="px-3 py-1.5 text-xs text-gray-500">{fmt(tx.date)}</td>
                 <td className="px-3 py-1.5 text-xs font-mono text-indigo-600">
                   {tx.voucher_number || tx.entry_number || '—'}
@@ -1106,9 +1258,9 @@ function CashBookView({ data }: { data: CashBookReport }) {
 
 // ─── GL Summary ───────────────────────────────────────────────────────────────
 
-interface GLSummaryGroup { label: string; rows: { code: string; name: string; balance: number }[]; total: number }
+interface GLSummaryGroup { label: string; rows: { id?: number; code: string; name: string; balance: number }[]; total: number }
 
-function GLSummaryView({ data }: { data: { groups: Record<string, GLSummaryGroup> } }) {
+function GLSummaryView({ data, dateFrom, dateTo, onDrill }: { data: { groups: Record<string, GLSummaryGroup> }; dateFrom?: string; dateTo?: string; onDrill?: (seed: DrillSeed) => void }) {
   const order = ['asset', 'liability', 'equity', 'revenue', 'expense']
   return (
     <div className="divide-y divide-gray-100">
@@ -1117,7 +1269,7 @@ function GLSummaryView({ data }: { data: { groups: Record<string, GLSummaryGroup
         if (!g) return null
         return (
           <RptSection key={k} title={g.label}>
-            {g.rows.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
+            {g.rows.map(r => <DrillableRow key={r.code} account={r} indent dateFrom={dateFrom} dateTo={dateTo} onDrill={onDrill} />)}
             {!g.rows.length && <p className="px-8 py-2 text-xs text-gray-400 italic">No activity.</p>}
             <RptTotal label={`Total ${g.label}`} amount={g.total} />
           </RptSection>
@@ -1275,9 +1427,11 @@ interface GenericTableProps {
   totalRow?: Record<string, unknown>
   summary?: { label: string; value: unknown }[]
   hideCols?: string[]
+  resolveRowDrill?: (row: Record<string, unknown>) => DrillSeed | null
+  onDrill?: (seed: DrillSeed) => void
 }
 
-function GenericTableView({ rows, totalRow, summary, hideCols = [] }: GenericTableProps) {
+function GenericTableView({ rows, totalRow, summary, hideCols = [], resolveRowDrill, onDrill }: GenericTableProps) {
   if (!rows?.length) return <p className="px-6 py-10 text-sm text-gray-400 text-center italic">No data for this period.</p>
   const allCols = Object.keys(rows[0]).filter(k => !hideCols.includes(k) && k !== 'sno')
   return (
@@ -1305,8 +1459,16 @@ function GenericTableView({ rows, totalRow, summary, hideCols = [] }: GenericTab
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, i) => (
-              <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+            {rows.map((row, i) => {
+              const drillSeed = resolveRowDrill?.(row) ?? null
+              const canDrill = Boolean(drillSeed && onDrill)
+              return (
+              <tr
+                key={i}
+                className={`border-b border-gray-100 ${canDrill ? 'hover:bg-indigo-50 cursor-pointer' : 'hover:bg-gray-50'}`}
+                onClick={canDrill ? () => onDrill?.(drillSeed as DrillSeed) : undefined}
+                title={canDrill ? 'Click to drill down' : undefined}
+              >
                 <td className="px-4 py-1.5 text-xs text-gray-400 tabular-nums">{i + 1}</td>
                 {allCols.map(c => {
                   const v = row[c]
@@ -1318,7 +1480,8 @@ function GenericTableView({ rows, totalRow, summary, hideCols = [] }: GenericTab
                   )
                 })}
               </tr>
-            ))}
+              )
+            })}
           </tbody>
           {totalRow && (
             <tfoot>
@@ -1813,6 +1976,7 @@ export default function ReportsPage() {
   const [compareEnabled, setCompareEnabled] = useState(false)
   const [compareFrom, setCompareFrom] = useState('')
   const [compareTo, setCompareTo]     = useState('')
+  const [drillSeed, setDrillSeed] = useState<DrillSeed | null>(null)
   const printRef = useRef<HTMLDivElement>(null)
 
   const report = REPORTS.find(r => r.key === reportKey)!
@@ -1935,9 +2099,9 @@ ${el.innerHTML}
     const d = reportData
 
     switch (reportKey) {
-      case 'pl':               return <PLReportView data={d as unknown as PLReport} dateFrom={dateFrom} dateTo={dateTo} />
-      case 'balance-sheet':    return <BSReportView data={d as unknown as BSReport} asOf={dateTo} />
-      case 'trial-balance':    return <TBReportView data={d as unknown as TBReport} dateFrom={dateFrom} dateTo={dateTo} />
+      case 'pl':               return <PLReportView data={d as unknown as PLReport} dateFrom={dateFrom} dateTo={dateTo} onDrill={setDrillSeed} />
+      case 'balance-sheet':    return <BSReportView data={d as unknown as BSReport} asOf={dateTo} onDrill={setDrillSeed} />
+      case 'trial-balance':    return <TBReportView data={d as unknown as TBReport} dateFrom={dateFrom} dateTo={dateTo} onDrill={setDrillSeed} />
       case 'aged-receivables': return <AgedReportView data={d as unknown as AgedReport} type="receivables" />
       case 'aged-payables':    return <AgedReportView data={d as unknown as AgedReport} type="payables" />
       case 'vat':              return <VATReportView data={d as unknown as VATReport} />
@@ -1956,12 +2120,12 @@ ${el.innerHTML}
                 <span className="text-xs text-indigo-500 ml-1">— Cost Centre P&L</span>
               </div>
             )}
-            <PLReportView data={d as unknown as PLReport} dateFrom={dateFrom} dateTo={dateTo} />
+            <PLReportView data={d as unknown as PLReport} dateFrom={dateFrom} dateTo={dateTo} onDrill={setDrillSeed} />
           </div>
         )
       }
-      case 'cash-book':         return <CashBookView data={d as unknown as CashBookReport} />
-      case 'gl-summary':       return <GLSummaryView data={d as unknown as { groups: Record<string, GLSummaryGroup> }} />
+      case 'cash-book':         return <CashBookView data={d as unknown as CashBookReport} dateFrom={dateFrom} dateTo={dateTo} onDrill={setDrillSeed} />
+      case 'gl-summary':       return <GLSummaryView data={d as unknown as { groups: Record<string, GLSummaryGroup> }} dateFrom={dateFrom} dateTo={dateTo} onDrill={setDrillSeed} />
       case 'annex-5':          return <Annex5View data={d} />
       case 'sales-summary':    return <SalesSummaryView data={d} />
       case 'customer-statement':
@@ -2051,6 +2215,8 @@ ${el.innerHTML}
         rows={rows}
         totalRow={hasTotalRow ? grandRow : undefined}
         summary={summaryRows.length ? summaryRows : undefined}
+        resolveRowDrill={(row) => resolveReportRowDrill({ reportKey, row, dateFrom, dateTo })}
+        onDrill={setDrillSeed}
       />
     )
   }
@@ -2307,6 +2473,13 @@ ${el.innerHTML}
           </div>
         </main>
       </div>
+
+      {drillSeed && (
+        <ReportDrillModal
+          seed={drillSeed}
+          onClose={() => setDrillSeed(null)}
+        />
+      )}
     </div>
   )
 }

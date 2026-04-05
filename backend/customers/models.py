@@ -29,6 +29,12 @@ class Customer(TenantModel):
 
     type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_INDIVIDUAL)
     name = models.CharField(max_length=255)
+    party = models.OneToOneField(
+        'parties.Party',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='customer_profile',
+    )
     # Auto-generated human-readable reference, e.g. CUS-0001 (per tenant)
     customer_number = models.CharField(max_length=32, blank=True, db_index=True)
     email = models.EmailField(blank=True)      # optional

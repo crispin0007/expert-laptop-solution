@@ -12,6 +12,7 @@ Coin workflow (per business rules):
 import logging
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from django.db import transaction
 
 log = logging.getLogger(__name__)
 
@@ -232,6 +233,57 @@ def handle_tenant_created(sender, instance, created, **kwargs):
         seed_chart_of_accounts(instance)
     except Exception as e:
         log.error("CoA seed failed for tenant %s: %s", instance.slug, e, exc_info=True)
+
+
+@receiver(post_save, sender='accounting.BankAccount')
+def ensure_bank_ledger_on_save(sender, instance, created, **kwargs):
+    """Auto-link a bank ledger account for direct ORM/admin create flows."""
+    if getattr(instance, 'is_deleted', False):
+        return
+
+    if instance.linked_account_id:
+        return
+
+    try:
+        from accounting.models import Account, AccountGroup
+        from accounting.services.journal_service import ensure_bank_control_account, seed_chart_of_accounts
+
+        tenant = instance.tenant
+        seed_chart_of_accounts(tenant, created_by=instance.created_by)
+        group = AccountGroup.objects.filter(tenant=tenant, slug='bank_accounts').first()
+        if group is None:
+            return
+
+        bank_control = ensure_bank_control_account(tenant, created_by=instance.created_by)
+
+        existing = set(
+            Account.objects.filter(tenant=tenant, code__regex=r'^11[5-9]\d$').values_list('code', flat=True)
+        )
+        code = next((str(n) for n in range(1150, 1200) if str(n) not in existing), None)
+        if code is None:
+            return
+
+        account = Account.objects.create(
+            tenant=tenant,
+            created_by=instance.created_by,
+            code=code,
+            name=(instance.bank_name or instance.name),
+            type=Account.TYPE_ASSET,
+            group=group,
+            parent=bank_control,
+            description=f'Bank account: {instance.bank_name or instance.name}',
+            opening_balance=instance.opening_balance,
+            is_system=False,
+        )
+    except Exception:
+        return
+
+    def _link_bank_account() -> None:
+        sender.objects.filter(pk=instance.pk, linked_account__isnull=True).update(
+            linked_account=account,
+        )
+
+    transaction.on_commit(_link_bank_account)
 
 
 # ─── Debit Note: journal on issue ──────────────────────────────────────────────

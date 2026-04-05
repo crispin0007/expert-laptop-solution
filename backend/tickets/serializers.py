@@ -235,8 +235,8 @@ class TicketCreateSerializer(NepaliModelSerializer):
             # Scope FK querysets to the current tenant — prevents cross-tenant IDOR
             self.fields['team_members'].child_relation.queryset = (
                 User.objects.filter(
-                    tenant_memberships__tenant=tenant,
-                    tenant_memberships__is_active=True,
+                    memberships__tenant=tenant,
+                    memberships__is_active=True,
                 ).distinct()
             )
             self.fields['vehicles'].child_relation.queryset = (

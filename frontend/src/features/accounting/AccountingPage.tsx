@@ -161,11 +161,12 @@ interface Account {
 interface AccountGroup {
   id: number; slug: string; name: string; type: string
   report_section: string; normal_balance: string; is_system: boolean
+  parent?: number | null; parent_name?: string
 }
 interface BankAccount {
   id: number; name: string; bank_name: string; account_number: string
   currency: string; opening_balance: string; current_balance: string
-  linked_account: number | null; created_at: string
+  linked_account: number | null; linked_account_is_system?: boolean; created_at: string
 }
 interface Payslip {
   id: number; staff: number; staff_name: string; period_start: string
@@ -254,7 +255,19 @@ interface PurchaseOrder {
   created_by_name: string | null; created_at: string; updated_at: string
   items: PurchaseOrderItem[]
 }
-interface LedgerRow { date: string; entry_number: string; description: string; debit: string; credit: string; balance: string }
+interface LedgerRow {
+  line_id?: number
+  entry_id?: number
+  date: string
+  entry_number: string
+  description: string
+  reference_type?: string
+  reference_id?: number | null
+  purpose?: string
+  debit: string
+  credit: string
+  balance: string
+}
 interface LedgerReport {
   account_code: string; account_name: string; date_from: string; date_to: string
   opening_balance: string; closing_balance: string; transactions: LedgerRow[]
@@ -283,6 +296,32 @@ function fmt(d: string | null) {
 }
 function npr(v: string | number) {
   return `NPR ${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function buildAccountingTabUrl(
+  tab: string,
+  extra?: Record<string, string | number | null | undefined>,
+) {
+  const params = new URLSearchParams()
+  params.set('tab', tab)
+  if (extra) {
+    Object.entries(extra).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && String(value).trim() !== '') {
+        params.set(key, String(value))
+      }
+    })
+  }
+  return `/accounting?${params.toString()}`
+}
+
+function resolveLedgerSourceRoute(referenceType?: string, referenceId?: number | null) {
+  if (!referenceType || !referenceId) return null
+  if (referenceType === 'invoice') return { tab: 'invoices', key: 'focus_invoice_id', id: referenceId }
+  if (referenceType === 'bill') return { tab: 'bills', key: 'focus_bill_id', id: referenceId }
+  if (referenceType === 'payment') return { tab: 'payments', key: 'focus_payment_id', id: referenceId }
+  if (referenceType === 'credit_note') return { tab: 'credit-notes', key: 'focus_credit_note_id', id: referenceId }
+  if (referenceType === 'debit_note') return { tab: 'debit-notes', key: 'focus_debit_note_id', id: referenceId }
+  return null
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -1106,6 +1145,8 @@ function InvoiceEditModal({ inv, onClose }: { inv: Invoice; onClose: () => void 
 function InvoicesTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { can } = usePermissions()
   const { fyYear } = useFY()
   const [statusFilter, setStatusFilter] = useState('')
@@ -1127,6 +1168,42 @@ function InvoicesTab() {
   const [detailInvoice, setDetailInvoice] = useState<Invoice | null>(null)
   const [markPaidInv, setMarkPaidInv] = useState<Invoice | null>(null)
   const [receiptPayment, setReceiptPayment] = useState<Payment | null>(null)
+  const focusInvoiceId = Number(searchParams.get('focus_invoice_id') ?? 0)
+
+  useEffect(() => {
+    if (!focusInvoiceId) return
+
+    let cancelled = false
+
+    const openFocusedInvoice = async () => {
+      const clearFocus = () => navigate(buildAccountingTabUrl('invoices'), { replace: true })
+
+      const fromList = data?.results?.find(inv => inv.id === focusInvoiceId)
+      if (fromList) {
+        setDetailInvoice(fromList)
+        clearFocus()
+        return
+      }
+
+      try {
+        const r = await apiClient.get(ACCOUNTING.INVOICE_DETAIL(focusInvoiceId))
+        if (cancelled) return
+        const inv = (r.data?.data ?? r.data) as Invoice
+        if (inv) {
+          setDetailInvoice(inv)
+        } else {
+          toast.error('Linked invoice not found')
+        }
+      } catch {
+        if (!cancelled) toast.error('Linked invoice not found')
+      } finally {
+        if (!cancelled) clearFocus()
+      }
+    }
+
+    void openFocusedInvoice()
+    return () => { cancelled = true }
+  }, [focusInvoiceId, data?.results, navigate])
 
   const { data: invBankAccounts = [] } = useQuery<BankAccount[]>({
     queryKey: ['bank-accounts-inv-paid'],
@@ -1720,6 +1797,8 @@ function BillEditModal({ bill, onClose }: { bill: Bill; onClose: () => void }) {
 function BillsTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { can } = usePermissions()
   const { fyYear } = useFY()
   const [statusFilter, setStatusFilter] = useState('')
@@ -1728,6 +1807,8 @@ function BillsTab() {
   const [editBill, setEditBill] = useState<Bill | null>(null)
   const [markPaidBill, setMarkPaidBill] = useState<Bill | null>(null)
   const [billReceiptPayment, setBillReceiptPayment] = useState<Payment | null>(null)
+  const [focusedBillId, setFocusedBillId] = useState<number | null>(null)
+  const focusBillId = Number(searchParams.get('focus_bill_id') ?? 0)
 
   const { data: billBankAccounts = [] } = useQuery<BankAccount[]>({
     queryKey: ['bank-accounts-bill-paid'],
@@ -1774,6 +1855,16 @@ function BillsTab() {
     onError: (e: { response?: { data?: { detail?: string } } }) =>
       toast.error(e?.response?.data?.detail ?? 'Failed to delete bill'),
   })
+
+  useEffect(() => {
+    if (!focusBillId) return
+    setFocusedBillId(focusBillId)
+    const raf = requestAnimationFrame(() => {
+      document.getElementById(`bill-row-${focusBillId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+    navigate(buildAccountingTabUrl('bills'), { replace: true })
+    return () => cancelAnimationFrame(raf)
+  }, [focusBillId, navigate])
 
   return (
     <div className="space-y-4">
@@ -1835,7 +1926,11 @@ function BillsTab() {
               {data?.results?.map(bill => {
                 const isOverdue = bill.status === 'approved' && bill.due_date && new Date(bill.due_date) < new Date()
                 return (
-                <tr key={bill.id} className={`hover:bg-gray-50/50 ${isOverdue ? 'bg-amber-50/50' : ''}`}>
+                <tr
+                  key={bill.id}
+                  id={`bill-row-${bill.id}`}
+                  className={`hover:bg-gray-50/50 ${isOverdue ? 'bg-amber-50/50' : ''} ${focusedBillId === bill.id ? 'bg-indigo-50 ring-1 ring-indigo-200' : ''}`}
+                >
                   <td className="px-4 py-3 font-mono text-xs font-medium text-indigo-600">{bill.bill_number}</td>
                   <td className="px-4 py-3 text-gray-700">{bill.supplier_name}</td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{fmt(bill.date || bill.created_at)}</td>
@@ -1890,8 +1985,12 @@ function BillsTab() {
 function PaymentsTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { can } = usePermissions()
   const { fyYear } = useFY()
+  const [focusedPaymentId, setFocusedPaymentId] = useState<number | null>(null)
+  const focusPaymentId = Number(searchParams.get('focus_payment_id') ?? 0)
   const { data, isLoading } = useQuery<ApiPage<Payment>>({
     queryKey: ['payments', fyYear],
     queryFn: () => apiClient.get(addFyParam(ACCOUNTING.PAYMENTS, fyYear)).then(r => toPage<Payment>(r.data)),
@@ -1901,6 +2000,16 @@ function PaymentsTab() {
     onSuccess: () => { toast.success('Payment deleted'); qc.invalidateQueries({ queryKey: ['payments'] }) },
     onError: (e: { response?: { data?: { detail?: string } } }) => toast.error(e?.response?.data?.detail ?? 'Delete failed'),
   })
+
+  useEffect(() => {
+    if (!focusPaymentId) return
+    setFocusedPaymentId(focusPaymentId)
+    const raf = requestAnimationFrame(() => {
+      document.getElementById(`payment-row-${focusPaymentId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+    navigate(buildAccountingTabUrl('payments'), { replace: true })
+    return () => cancelAnimationFrame(raf)
+  }, [focusPaymentId, navigate])
 
   return (
     <div className="space-y-4">
@@ -1921,7 +2030,11 @@ function PaymentsTab() {
             </thead>
             <tbody className="divide-y divide-gray-50">
               {data?.results?.map(p => (
-                <tr key={p.id} className="hover:bg-gray-50/50">
+                <tr
+                  key={p.id}
+                  id={`payment-row-${p.id}`}
+                  className={`hover:bg-gray-50/50 ${focusedPaymentId === p.id ? 'bg-indigo-50 ring-1 ring-indigo-200' : ''}`}
+                >
                   <td className="px-4 py-3 font-mono text-xs font-medium text-indigo-600">{p.payment_number}</td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{fmt(p.date)}</td>
                   <td className="px-4 py-3"><Badge status={p.type} /></td>
@@ -1951,10 +2064,14 @@ function PaymentsTab() {
 function CreditNotesTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { can } = usePermissions()
   const { fyYear } = useFY()
   const [editCn, setEditCn] = useState<CreditNote | null>(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [focusedCreditNoteId, setFocusedCreditNoteId] = useState<number | null>(null)
+  const focusCreditNoteId = Number(searchParams.get('focus_credit_note_id') ?? 0)
   const { data, isLoading } = useQuery<ApiPage<CreditNote>>({
     queryKey: ['credit-notes', fyYear],
     queryFn: () => apiClient.get(addFyParam(ACCOUNTING.CREDIT_NOTES, fyYear)).then(r => toPage<CreditNote>(r.data)),
@@ -1975,6 +2092,16 @@ function CreditNotesTab() {
     onError: (e: { response?: { data?: { detail?: string } } }) =>
       toast.error(e?.response?.data?.detail ?? 'Failed to delete credit note'),
   })
+
+  useEffect(() => {
+    if (!focusCreditNoteId) return
+    setFocusedCreditNoteId(focusCreditNoteId)
+    const raf = requestAnimationFrame(() => {
+      document.getElementById(`credit-note-row-${focusCreditNoteId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+    navigate(buildAccountingTabUrl('credit-notes'), { replace: true })
+    return () => cancelAnimationFrame(raf)
+  }, [focusCreditNoteId, navigate])
 
   return (
     <div>
@@ -2002,7 +2129,11 @@ function CreditNotesTab() {
             </thead>
             <tbody className="divide-y divide-gray-50">
               {data?.results?.map(cn => (
-                <tr key={cn.id} className="hover:bg-gray-50/50">
+                <tr
+                  key={cn.id}
+                  id={`credit-note-row-${cn.id}`}
+                  className={`hover:bg-gray-50/50 ${focusedCreditNoteId === cn.id ? 'bg-indigo-50 ring-1 ring-indigo-200' : ''}`}
+                >
                   <td className="px-4 py-3 font-mono text-xs font-medium text-indigo-600">{cn.credit_note_number}</td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{cn.invoice_number ?? '—'}</td>
                   <td className="px-4 py-3 font-medium text-gray-800">{npr(cn.total)}</td>
@@ -2900,9 +3031,12 @@ function nextRootCode(type: string, allAccts: Account[]): string {
 }
 
 function buildAccountTree(accounts: Account[], maxDepth = 5): { account: Account; depth: number }[] {
+  const ids = new Set(accounts.map(a => a.id))
   const byParent = new Map<number | null, Account[]>()
   accounts.forEach(a => {
-    const key = a.parent ?? null
+    // If a parent is not present in the current filtered set,
+    // promote this node to root so filtered trees still render.
+    const key = (a.parent != null && ids.has(a.parent)) ? a.parent : null
     if (!byParent.has(key)) byParent.set(key, [])
     byParent.get(key)!.push(a)
   })
@@ -3043,6 +3177,10 @@ function InlineAddRow({
   const [description, setDescription] = useState('')
   const [openingBal,  setOpeningBal]  = useState('0')
   const [groupId,     setGroupId]     = useState<number | ''>('')
+  const parentAccount = useMemo(
+    () => (state.parentId ? _allAccounts.find(a => a.id === state.parentId) ?? null : null),
+    [state.parentId, _allAccounts],
+  )
   const nameRef = useRef<HTMLInputElement>(null)
   useEffect(() => { nameRef.current?.focus() }, [])
 
@@ -3070,15 +3208,27 @@ function InlineAddRow({
       toast.error(e?.response?.data?.detail ?? e?.response?.data?.group?.[0] ?? e?.response?.data?.code?.[0] ?? 'Failed to create account'),
   })
 
+  useEffect(() => {
+    if (groupId) return
+    if (parentAccount?.group) {
+      setGroupId(parentAccount.group)
+      return
+    }
+    if (groups.length > 0) {
+      setGroupId(groups[0].id)
+    }
+  }, [groupId, groups, parentAccount])
+
   function submit(e?: React.FormEvent) {
     e?.preventDefault()
     if (!name.trim()) { nameRef.current?.focus(); return }
-    if (!groupId) { toast.error('Please select an account group.'); return }
+    const resolvedGroup = groupId || parentAccount?.group || groups[0]?.id || ''
+    if (!resolvedGroup) { toast.error('Please select an account group.'); return }
     mutation.mutate({
       code: code.trim(), name: name.trim(), type: state.type, parent: state.parentId,
       description: description.trim(),
       opening_balance: openingBal || '0',
-      group: groupId,
+      group: resolvedGroup,
     })
   }
 
@@ -3109,19 +3259,24 @@ function InlineAddRow({
               {state.type}
             </span>
           </div>
-          {/* Group selector — required for new accounts */}
-          <select
-            value={groupId}
-            onChange={e => setGroupId(e.target.value ? Number(e.target.value) : '')}
-            className={`w-full text-xs border rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400 ${
-              !groupId ? 'border-indigo-300 text-gray-400' : 'border-indigo-200 text-gray-700'
-            }`}
-          >
-            <option value="">— Select group (required) —</option>
-            {groups.map(g => (
-              <option key={g.id} value={g.id}>{g.name}</option>
-            ))}
-          </select>
+          {parentAccount?.group ? (
+            <div className="w-full text-xs border border-indigo-100 rounded px-2 py-1 bg-indigo-50 text-indigo-700">
+              Group inherited from parent: {parentAccount.group_name ?? `#${parentAccount.group}`}
+            </div>
+          ) : (
+            <select
+              value={groupId}
+              onChange={e => setGroupId(e.target.value ? Number(e.target.value) : '')}
+              className={`w-full text-xs border rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400 ${
+                !groupId ? 'border-indigo-300 text-gray-400' : 'border-indigo-200 text-gray-700'
+              }`}
+            >
+              <option value="">— Auto-select group —</option>
+              {groups.map(g => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </select>
+          )}
           <input data-lpignore="true"
             value={description} onChange={e => setDescription(e.target.value)}
             className="w-full text-xs border border-indigo-100 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-300 text-gray-500"
@@ -3152,6 +3307,221 @@ function InlineAddRow({
   )
 }
 
+function AccountGroupCreateModal({
+  defaultType,
+  onClose,
+}: {
+  defaultType: string
+  onClose: () => void
+}) {
+  const qc = useQueryClient()
+  const [type, setType] = useState(defaultType)
+  const [name, setName] = useState('')
+  const [slug, setSlug] = useState('')
+  const [description, setDescription] = useState('')
+  const [parent, setParent] = useState<number | ''>('')
+  const [affectsGrossProfit, setAffectsGrossProfit] = useState(false)
+  const [order, setOrder] = useState('0')
+
+  const defaultReportSectionByType: Record<string, string> = {
+    asset: 'bs_current_assets',
+    liability: 'bs_current_liabilities',
+    equity: 'bs_capital',
+    revenue: 'pnl_net',
+    expense: 'pnl_net',
+  }
+  const defaultNormalBalanceByType: Record<string, string> = {
+    asset: 'debit',
+    expense: 'debit',
+    liability: 'credit',
+    equity: 'credit',
+    revenue: 'credit',
+  }
+
+  const [reportSection, setReportSection] = useState(defaultReportSectionByType[defaultType] ?? 'bs_current_assets')
+  const [normalBalance, setNormalBalance] = useState(defaultNormalBalanceByType[defaultType] ?? 'debit')
+
+  const { data: parentGroups = [] } = useQuery<AccountGroup[]>({
+    queryKey: ['account-groups', 'create-modal', type],
+    queryFn: () => apiClient.get(ACCOUNTING.ACCOUNT_GROUPS + `?type=${type}`).then(r =>
+      Array.isArray(r.data) ? r.data : (r.data?.data ?? r.data?.results ?? []),
+    ),
+  })
+
+  function onTypeChange(nextType: string) {
+    setType(nextType)
+    setParent('')
+    setReportSection(defaultReportSectionByType[nextType] ?? 'bs_current_assets')
+    setNormalBalance(defaultNormalBalanceByType[nextType] ?? 'debit')
+    setAffectsGrossProfit(false)
+  }
+
+  const mutation = useMutation({
+    mutationFn: (payload: unknown) => apiClient.post(ACCOUNTING.ACCOUNT_GROUPS, payload),
+    onSuccess: () => {
+      toast.success('Account group created')
+      qc.invalidateQueries({ queryKey: ['account-groups'] })
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      onClose()
+    },
+    onError: (e: { response?: { data?: { detail?: string } } }) => {
+      const detail = e?.response?.data?.detail
+      toast.error(typeof detail === 'string' ? detail : 'Failed to create account group')
+    },
+  })
+
+  function toSlug(v: string) {
+    return v
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+  }
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!name.trim()) {
+      toast.error('Group name is required')
+      return
+    }
+
+    const resolvedSlug = (slug.trim() || toSlug(name))
+    if (!resolvedSlug) {
+      toast.error('Valid slug is required')
+      return
+    }
+
+    mutation.mutate({
+      name: name.trim(),
+      slug: resolvedSlug,
+      type,
+      description: description.trim(),
+      parent: parent || null,
+      report_section: reportSection,
+      normal_balance: normalBalance,
+      affects_gross_profit: affectsGrossProfit,
+      order: Number(order || '0'),
+      is_active: true,
+    })
+  }
+
+  return (
+    <Modal title="Create Account Group" onClose={onClose}>
+      <form onSubmit={submit} className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Type *">
+            <select value={type} onChange={e => onTypeChange(e.target.value)} className={selectCls}>
+              <option value="asset">Asset</option>
+              <option value="liability">Liability</option>
+              <option value="equity">Equity</option>
+              <option value="revenue">Revenue</option>
+              <option value="expense">Expense</option>
+            </select>
+          </Field>
+
+          <Field label="Parent Group">
+            <select
+              value={parent}
+              onChange={e => setParent(e.target.value ? Number(e.target.value) : '')}
+              className={selectCls}
+            >
+              <option value="">No Parent (Top Group)</option>
+              {parentGroups.map(g => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </select>
+          </Field>
+
+          <Field label="Group Name *">
+            <input
+              data-lpignore="true"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              className={inputCls}
+              placeholder="e.g. Computer Assets"
+              required
+            />
+          </Field>
+
+          <Field label="Slug *" hint="Auto-generated if left blank.">
+            <input
+              data-lpignore="true"
+              value={slug}
+              onChange={e => setSlug(e.target.value)}
+              className={inputCls}
+              placeholder="computer_assets"
+            />
+          </Field>
+
+          <Field label="Report Section *">
+            <select value={reportSection} onChange={e => setReportSection(e.target.value)} className={selectCls}>
+              <option value="bs_fixed_assets">BS: Fixed Assets</option>
+              <option value="bs_investments">BS: Investments</option>
+              <option value="bs_current_assets">BS: Current Assets</option>
+              <option value="bs_capital">BS: Capital & Equity</option>
+              <option value="bs_loans">BS: Loans & Borrowings</option>
+              <option value="bs_current_liabilities">BS: Current Liabilities</option>
+              <option value="pnl_gross">P&L: Gross Profit</option>
+              <option value="pnl_net">P&L: Net Profit</option>
+            </select>
+          </Field>
+
+          <Field label="Normal Balance *">
+            <select value={normalBalance} onChange={e => setNormalBalance(e.target.value)} className={selectCls}>
+              <option value="debit">Debit</option>
+              <option value="credit">Credit</option>
+            </select>
+          </Field>
+
+          <Field label="Order">
+            <input
+              data-lpignore="true"
+              type="number"
+              value={order}
+              onChange={e => setOrder(e.target.value)}
+              className={inputCls}
+              placeholder="0"
+            />
+          </Field>
+
+          <Field label="Gross Profit Impact">
+            <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+              <input
+                type="checkbox"
+                checked={affectsGrossProfit}
+                onChange={e => setAffectsGrossProfit(e.target.checked)}
+              />
+              Include in gross profit calculations
+            </label>
+          </Field>
+        </div>
+
+        <Field label="Description">
+          <input
+            data-lpignore="true"
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            className={inputCls}
+            placeholder="Optional group description"
+          />
+        </Field>
+
+        <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">Cancel</button>
+          <button
+            type="submit"
+            disabled={mutation.isPending}
+            className="px-5 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+          >
+            {mutation.isPending && <Loader2 size={14} className="animate-spin" />}
+            Create Group
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 // ─── Accounts Tab ──────────────────────────────────────────────────────────
 
 function AccountsTab() {
@@ -3167,8 +3537,23 @@ function AccountsTab() {
   const [editingId,    setEditingId]    = useState<number | null>(null)
   const [search,       setSearch]       = useState('')
   const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('active')
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
+  const [expandedAccounts, setExpandedAccounts] = useState<Set<number>>(new Set())
+  const [treeInitDone, setTreeInitDone] = useState(false)
+  const [newGroupType, setNewGroupType] = useState<string | null>(null)
 
   const allAccounts = data ?? []
+
+  useEffect(() => {
+    if (treeInitDone || !allAccounts.length) return
+    setExpandedAccounts(new Set(allAccounts.map(a => a.id)))
+    setTreeInitDone(true)
+  }, [allAccounts, treeInitDone])
+
+  const accountById = useMemo(
+    () => new Map(allAccounts.map(a => [a.id, a])),
+    [allAccounts],
+  )
 
   // ── Client-side search + filter ──────────────────────────────────────
   const visibleAccounts = allAccounts.filter(a => {
@@ -3259,11 +3644,32 @@ function AccountsTab() {
     ['expense',   'Expense',   'text-red-700    bg-red-50    border-red-100'],
   ]
 
+  const protectedCoreCodes = new Set([
+    '1000', '1100', '1150', '1200', '1300',
+    '2000', '2100', '2200', '2300',
+    '3000', '3100',
+    '4000', '4100', '4200',
+    '5000', '5100', '5200', '5300',
+  ])
+
   // Build tree per type-section (using visibleAccounts for search, but tree needs parent hierarchy from allAccounts)
   function renderSection(type: string, label: string, sectionCls: string) {
     // When searching, show flat list; tree requires all parents to be visible
     const sectionAll     = allAccounts.filter(a => a.type === type)
     const sectionVisible = visibleAccounts.filter(a => a.type === type)
+    const childParentIds = new Set(sectionAll.filter(a => a.parent !== null).map(a => a.parent as number))
+
+    const isHiddenByAncestor = (acct: Account) => {
+      let parentId = acct.parent
+      while (parentId) {
+        const parent = accountById.get(parentId)
+        if (!parent) break
+        if (!expandedAccounts.has(parentId)) return true
+        parentId = parent.parent ?? null
+      }
+      return false
+    }
+
     const treeItems      = search
       ? sectionVisible.map(a => ({ account: a, depth: 0 }))
       : buildAccountTree(sectionAll).filter(({ account: a }) =>
@@ -3278,6 +3684,18 @@ function AccountsTab() {
         {/* Section header */}
         <div className={`px-5 py-2.5 border-b flex items-center justify-between ${sectionCls}`}>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCollapsedSections(prev => {
+                const next = new Set(prev)
+                if (next.has(type)) next.delete(type)
+                else next.add(type)
+                return next
+              })}
+              className="text-gray-500 hover:text-gray-700 transition-colors"
+              title={collapsedSections.has(type) ? 'Expand section' : 'Collapse section'}
+            >
+              <ChevronDown size={14} className={`transition-transform ${collapsedSections.has(type) ? '-rotate-90' : ''}`} />
+            </button>
             <span className="font-semibold text-sm">{label} Accounts</span>
             <span className="text-xs text-gray-400 font-normal tabular-nums">
               ({treeItems.length} {activeFilter !== 'all' ? activeFilter : ''})
@@ -3289,6 +3707,8 @@ function AccountsTab() {
             <Plus size={12} /> Add {label}
           </button>
         </div>
+
+        {collapsedSections.has(type) ? null : (
 
         <table className="w-full text-sm">
           <thead className="border-b border-gray-50">
@@ -3310,10 +3730,14 @@ function AccountsTab() {
             )}
 
             {treeItems.map(({ account: a, depth }) => {
+              if (!search && isHiddenByAncestor(a)) return null
               const isChildInline = inlineAdd?.parentId === a.id
               const isEditing     = editingId === a.id
               const canAddChild   = depth < 5
+              const isProtectedCore = a.is_system && protectedCoreCodes.has(a.code)
               const parentAcc     = allAccounts.find(p => p.id === a.parent)
+              const hasChildren   = childParentIds.has(a.id)
+              const isExpanded    = expandedAccounts.has(a.id)
               return (
                 <Fragment key={a.id}>
                   {isEditing ? (
@@ -3327,7 +3751,23 @@ function AccountsTab() {
                       {/* Code */}
                       <td className="py-2 font-mono text-xs text-indigo-600"
                         style={{ paddingLeft: `${16 + depth * 20}px` }}>
-                        {depth > 0 && <span className="text-gray-300 mr-1">\u2514</span>}
+                        <button
+                          type="button"
+                          disabled={!hasChildren}
+                          onClick={() => {
+                            if (!hasChildren) return
+                            setExpandedAccounts(prev => {
+                              const next = new Set(prev)
+                              if (next.has(a.id)) next.delete(a.id)
+                              else next.add(a.id)
+                              return next
+                            })
+                          }}
+                          className={`mr-1 inline-flex items-center justify-center ${hasChildren ? 'text-gray-400 hover:text-indigo-600' : 'text-transparent cursor-default'}`}
+                          title={hasChildren ? (isExpanded ? 'Collapse sub-accounts' : 'Expand sub-accounts') : undefined}
+                        >
+                          <ChevronRight size={12} className={`transition-transform ${hasChildren && isExpanded ? 'rotate-90' : ''}`} />
+                        </button>
                         {a.code}
                       </td>
                       {/* Name + description */}
@@ -3361,10 +3801,19 @@ function AccountsTab() {
                         <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                           {/* Active / Inactive toggle */}
                           <button
-                            title={a.is_active ? 'Deactivate account' : 'Activate account'}
-                            onClick={() => toggleActiveMutation.mutate({ id: a.id, is_active: !a.is_active })}
+                            title={isProtectedCore ? 'Core system account status is locked' : (a.is_active ? 'Deactivate account' : 'Activate account')}
+                            onClick={() => {
+                              if (isProtectedCore) {
+                                toast.error('Core system account status is locked.')
+                                return
+                              }
+                              toggleActiveMutation.mutate({ id: a.id, is_active: !a.is_active })
+                            }}
+                            disabled={isProtectedCore}
                             className={`rounded p-1 transition-colors ${
-                              a.is_active
+                              isProtectedCore
+                                ? 'text-gray-300 cursor-not-allowed'
+                                : a.is_active
                                 ? 'text-green-500 hover:text-green-700 hover:bg-green-50'
                                 : 'text-gray-400 hover:text-green-600 hover:bg-green-50'
                             }`}>
@@ -3379,9 +3828,17 @@ function AccountsTab() {
                             </button>
                           )}
                           <button
-                            title="Edit account"
-                            onClick={() => { setInlineAdd(null); setEditingId(a.id) }}
-                            className="text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded p-1">
+                            title={isProtectedCore ? 'Core system account is locked' : 'Edit account'}
+                            onClick={() => {
+                              if (isProtectedCore) {
+                                toast.error('Core system account is locked.')
+                                return
+                              }
+                              setInlineAdd(null)
+                              setEditingId(a.id)
+                            }}
+                            disabled={isProtectedCore}
+                            className={`rounded p-1 ${isProtectedCore ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-amber-600 hover:bg-amber-50'}`}>
                             <Pencil size={12} />
                           </button>
                           {!a.is_system && (
@@ -3412,6 +3869,7 @@ function AccountsTab() {
             })}
           </tbody>
         </table>
+        )}
       </div>
     )
   }
@@ -3454,6 +3912,21 @@ function AccountsTab() {
           <Download size={13} /> Export CSV
         </button>
 
+        <button
+          onClick={() => setExpandedAccounts(new Set(allAccounts.map(a => a.id)))}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-colors"
+          title="Expand all account rows"
+        >
+          <ChevronsUpDown size={13} /> Expand All
+        </button>
+        <button
+          onClick={() => setExpandedAccounts(new Set())}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-colors"
+          title="Collapse all account rows"
+        >
+          <ChevronsDownUp size={13} /> Collapse All
+        </button>
+
         {/* New Group / Heading */}
         <div className="relative group">
           <button
@@ -3466,7 +3939,7 @@ function AccountsTab() {
               <button
                 key={type}
                 type="button"
-                onClick={() => openRoot(type)}
+                onClick={() => setNewGroupType(type)}
                 className={`w-full text-left px-4 py-2 text-xs font-medium hover:bg-gray-50 first:rounded-t-xl last:rounded-b-xl ${cls.split(' ')[0]}`}
               >
                 {label} Group
@@ -3503,6 +3976,13 @@ function AccountsTab() {
             </div>
           )}
         </div>
+      )}
+
+      {newGroupType && (
+        <AccountGroupCreateModal
+          defaultType={newGroupType}
+          onClose={() => setNewGroupType(null)}
+        />
       )}
     </div>
   )
@@ -3709,6 +4189,8 @@ function BanksTab() {
   const [showCreateCash, setShowCreateCash] = useState(false)
   const [editBank, setEditBank] = useState<BankAccount | null>(null)
   const [selectedBankId, setSelectedBankId] = useState<string>('')
+  const [statementSearch, setStatementSearch] = useState('')
+  const [cashSearch, setCashSearch] = useState('')
 
   const mutateDeleteBank = useMutation({
     mutationFn: (id: number) => apiClient.delete(ACCOUNTING.BANK_ACCOUNT_DETAIL(id)),
@@ -3750,6 +4232,19 @@ function BanksTab() {
     })
   })()
 
+  const filteredStmtRows = useMemo(() => {
+    const q = statementSearch.trim().toLowerCase()
+    if (!q) return stmtRows
+    return stmtRows.filter(p =>
+      String(p.payment_number ?? '').toLowerCase().includes(q) ||
+      String(p.reference ?? '').toLowerCase().includes(q) ||
+      String(p.invoice_number ?? '').toLowerCase().includes(q) ||
+      String(p.bill_number ?? '').toLowerCase().includes(q) ||
+      String(p.method ?? '').toLowerCase().includes(q) ||
+      String(p.type ?? '').toLowerCase().includes(q),
+    )
+  }, [stmtRows, statementSearch])
+
   const stmtIn  = stmtRows.filter(p => p.type === 'incoming').reduce((s, p) => s + parseFloat(p.amount || '0'), 0)
   const stmtOut = stmtRows.filter(p => p.type === 'outgoing').reduce((s, p) => s + parseFloat(p.amount || '0'), 0)
 
@@ -3767,6 +4262,25 @@ function BanksTab() {
       return { ...p, runningBalance: bal }
     })
   })()
+
+  const filteredCashRows = useMemo(() => {
+    const q = cashSearch.trim().toLowerCase()
+    if (!q) return cashRows
+    return cashRows.filter(p =>
+      String(p.payment_number ?? '').toLowerCase().includes(q) ||
+      String(p.reference ?? '').toLowerCase().includes(q) ||
+      String(p.invoice_number ?? '').toLowerCase().includes(q) ||
+      String(p.bill_number ?? '').toLowerCase().includes(q) ||
+      String(p.method ?? '').toLowerCase().includes(q) ||
+      String(p.type ?? '').toLowerCase().includes(q),
+    )
+  }, [cashRows, cashSearch])
+
+  const stmtInFiltered = filteredStmtRows.filter(p => p.type === 'incoming').reduce((s, p) => s + parseFloat(p.amount || '0'), 0)
+  const stmtOutFiltered = filteredStmtRows.filter(p => p.type === 'outgoing').reduce((s, p) => s + parseFloat(p.amount || '0'), 0)
+  const cashInFiltered = filteredCashRows.filter(p => p.type === 'incoming').reduce((s, p) => s + parseFloat(p.amount || '0'), 0)
+  const cashOutFiltered = filteredCashRows.filter(p => p.type === 'outgoing').reduce((s, p) => s + parseFloat(p.amount || '0'), 0)
+  const cashNetFiltered = cashInFiltered - cashOutFiltered
 
   return (
     <div className="space-y-4">
@@ -3837,7 +4351,11 @@ function BanksTab() {
                         {can('can_manage_accounting') && (
                           <>
                             <button onClick={() => setEditBank(b)} title="Edit" className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"><Pencil size={13} /></button>
-                            <button onClick={() => confirm({ title: 'Delete Bank Account', message: `Delete "${b.name}"? Linked payments and reconciliations may be affected.`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDeleteBank.mutate(b.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
+                            {b.linked_account_is_system ? (
+                              <button title="System-linked bank account cannot be deleted" className="p-1 text-gray-300 cursor-not-allowed rounded transition-colors" disabled><Trash2 size={13} /></button>
+                            ) : (
+                              <button onClick={() => confirm({ title: 'Delete Bank Account', message: `Delete "${b.name}"? Linked payments and reconciliations may be affected.`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDeleteBank.mutate(b.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
+                            )}
                           </>
                         )}
                       </div>
@@ -3906,6 +4424,17 @@ function BanksTab() {
                   <h4 className="text-sm font-semibold text-gray-700">{selectedBank?.name} — {selectedBank?.bank_name}</h4>
                   <span className="text-xs text-gray-400">A/C: {selectedBank?.account_number}</span>
                 </div>
+                <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
+                  <div className="relative max-w-sm">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input data-lpignore="true"
+                      value={statementSearch}
+                      onChange={e => setStatementSearch(e.target.value)}
+                      placeholder="Search payment, reference, invoice, bill..."
+                      className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                    />
+                  </div>
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm min-w-[700px]">
                     <thead className="bg-gray-50 border-b border-gray-100">
@@ -3921,9 +4450,9 @@ function BanksTab() {
                         <td colSpan={8} className="px-4 py-2 text-xs text-gray-500 italic">Opening Balance</td>
                         <td className="px-4 py-2 text-xs font-semibold text-gray-700">{npr(selectedBank?.opening_balance ?? '0')}</td>
                       </tr>
-                      {stmtRows.length === 0 ? (
-                        <tr><td colSpan={9} className="text-center py-8 text-gray-400 text-sm">No transactions for this bank account yet.</td></tr>
-                      ) : stmtRows.map(p => (
+                      {filteredStmtRows.length === 0 ? (
+                        <tr><td colSpan={9} className="text-center py-8 text-gray-400 text-sm">{stmtRows.length === 0 ? 'No transactions for this bank account yet.' : 'No transactions match your search.'}</td></tr>
+                      ) : filteredStmtRows.map(p => (
                         <tr key={p.id} className={`hover:bg-gray-50/50 ${p.type === 'incoming' ? 'bg-green-50/20' : 'bg-red-50/20'}`}>
                           <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{fmt(p.date)}</td>
                           <td className="px-4 py-3 font-mono text-xs font-medium text-indigo-600">{p.payment_number}</td>
@@ -3943,13 +4472,13 @@ function BanksTab() {
                         </tr>
                       ))}
                     </tbody>
-                    {stmtRows.length > 0 && (
+                    {filteredStmtRows.length > 0 && (
                       <tfoot className="bg-gray-50 border-t-2 border-gray-200">
                         <tr>
                           <td colSpan={6} className="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wide">Totals</td>
-                          <td className="px-4 py-3 font-bold text-green-700">{npr(stmtIn.toFixed(2))}</td>
-                          <td className="px-4 py-3 font-bold text-red-600">{npr(stmtOut.toFixed(2))}</td>
-                          <td className="px-4 py-3 font-bold text-indigo-700">{npr((stmtRows[stmtRows.length - 1]?.runningBalance ?? 0).toFixed(2))}</td>
+                          <td className="px-4 py-3 font-bold text-green-700">{npr(stmtInFiltered.toFixed(2))}</td>
+                          <td className="px-4 py-3 font-bold text-red-600">{npr(stmtOutFiltered.toFixed(2))}</td>
+                          <td className="px-4 py-3 font-bold text-indigo-700">{npr((filteredStmtRows[filteredStmtRows.length - 1]?.runningBalance ?? 0).toFixed(2))}</td>
                         </tr>
                       </tfoot>
                     )}
@@ -3996,6 +4525,17 @@ function BanksTab() {
 
             {/* Cash statement table with running balance */}
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
+                <div className="relative max-w-sm">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input data-lpignore="true"
+                    value={cashSearch}
+                    onChange={e => setCashSearch(e.target.value)}
+                    placeholder="Search payment, reference, invoice, bill..."
+                    className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                  />
+                </div>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm min-w-[700px]">
                   <thead className="bg-gray-50 border-b border-gray-100">
@@ -4006,9 +4546,9 @@ function BanksTab() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {cashRows.length === 0 ? (
-                      <tr><td colSpan={9} className="text-center py-8 text-gray-400 text-sm">No cash transactions recorded. Click &lsquo;Record Cash&rsquo; to add one.</td></tr>
-                    ) : cashRows.map(p => (
+                    {filteredCashRows.length === 0 ? (
+                      <tr><td colSpan={9} className="text-center py-8 text-gray-400 text-sm">{cashRows.length === 0 ? 'No cash transactions recorded. Click \'Record Cash\' to add one.' : 'No transactions match your search.'}</td></tr>
+                    ) : filteredCashRows.map(p => (
                       <tr key={p.id} className={`hover:bg-gray-50/50 ${p.type === 'incoming' ? 'bg-green-50/20' : 'bg-red-50/20'}`}>
                         <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{fmt(p.date)}</td>
                         <td className="px-4 py-3 font-mono text-xs font-medium text-indigo-600">{p.payment_number}</td>
@@ -4028,13 +4568,13 @@ function BanksTab() {
                       </tr>
                     ))}
                   </tbody>
-                  {cashRows.length > 0 && (
+                  {filteredCashRows.length > 0 && (
                     <tfoot className="bg-gray-50 border-t-2 border-gray-200">
                       <tr>
                         <td colSpan={6} className="px-4 py-3 text-xs font-semibold text-gray-600 uppercase tracking-wide">Totals</td>
-                        <td className="px-4 py-3 font-bold text-green-700">{npr(cashIn.toFixed(2))}</td>
-                        <td className="px-4 py-3 font-bold text-red-600">{npr(cashOut.toFixed(2))}</td>
-                        <td className="px-4 py-3 font-bold text-indigo-700">{npr(cashNet.toFixed(2))}</td>
+                        <td className="px-4 py-3 font-bold text-green-700">{npr(cashInFiltered.toFixed(2))}</td>
+                        <td className="px-4 py-3 font-bold text-red-600">{npr(cashOutFiltered.toFixed(2))}</td>
+                        <td className="px-4 py-3 font-bold text-indigo-700">{npr(cashNetFiltered.toFixed(2))}</td>
                       </tr>
                     </tfoot>
                   )}
@@ -6969,11 +7509,15 @@ const DN_STATUS: Record<string, string> = {
 function DebitNotesTab() {
   const qc = useQueryClient()
   const confirm = useConfirm()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { can } = usePermissions()
   const [statusFilter, setStatusFilter] = useState('')
   const { fyYear } = useFY()
   const [showCreate, setShowCreate] = useState(false)
   const [editDn, setEditDn] = useState<DebitNote | null>(null)
+  const [focusedDebitNoteId, setFocusedDebitNoteId] = useState<number | null>(null)
+  const focusDebitNoteId = Number(searchParams.get('focus_debit_note_id') ?? 0)
 
   const { data, isLoading } = useQuery<ApiPage<DebitNote>>({
     queryKey: ['debit-notes', statusFilter, fyYear],
@@ -6987,6 +7531,16 @@ function DebitNotesTab() {
     onSuccess: () => { toast.success('Debit note deleted'); qc.invalidateQueries({ queryKey: ['debit-notes'] }) },
     onError: (e: { response?: { data?: { detail?: string } } }) => toast.error(e?.response?.data?.detail ?? 'Failed to delete'),
   })
+
+  useEffect(() => {
+    if (!focusDebitNoteId) return
+    setFocusedDebitNoteId(focusDebitNoteId)
+    const raf = requestAnimationFrame(() => {
+      document.getElementById(`debit-note-row-${focusDebitNoteId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+    navigate(buildAccountingTabUrl('debit-notes'), { replace: true })
+    return () => cancelAnimationFrame(raf)
+  }, [focusDebitNoteId, navigate])
 
   return (
     <div className="space-y-4">
@@ -7036,7 +7590,11 @@ function DebitNotesTab() {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {data?.results?.map(dn => (
-                    <tr key={dn.id} className="hover:bg-gray-50 transition-colors">
+                    <tr
+                      key={dn.id}
+                      id={`debit-note-row-${dn.id}`}
+                      className={`hover:bg-gray-50 transition-colors ${focusedDebitNoteId === dn.id ? 'bg-indigo-50 ring-1 ring-indigo-200' : ''}`}
+                    >
                       <td className="px-4 py-3 font-mono font-semibold text-gray-700 whitespace-nowrap">{dn.debit_note_number}</td>
                       <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{dn.bill_number}</td>
                       <td className="px-4 py-3 font-semibold text-gray-800 whitespace-nowrap">{npr(dn.total)}</td>
@@ -7280,12 +7838,13 @@ function BankReconciliationTab() {
   const [selected, setSelected] = useState<BankReconciliation | null>(null)
   const [newLine, setNewLine] = useState({ date: '', description: '', amount: '' })
   const [showNew, setShowNew] = useState(false)
+  const [lineSearch, setLineSearch] = useState('')
   const [newRec, setNewRec] = useState({ bank_account: '', statement_date: '', opening_balance: '', closing_balance: '', notes: '' })
   const [showCreate, setShowCreate] = useState(false)
 
-  const { data: banks } = useQuery({
+  const { data: banks } = useQuery<ApiPage<BankAccount>>({
     queryKey: ['bank-accounts'],
-    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS + '?page_size=100').then(r => r.data?.data ?? r.data?.results ?? []),
+    queryFn: () => apiClient.get(ACCOUNTING.BANK_ACCOUNTS + '?page_size=100').then(r => toPage<BankAccount>(r.data)),
   })
 
   const { data, isLoading } = useQuery<ApiPage<BankReconciliation>>({
@@ -7295,9 +7854,26 @@ function BankReconciliationTab() {
 
   const { data: detail, isLoading: detailLoading } = useQuery<BankReconciliation>({
     queryKey: ['bank-reconciliation', selected?.id],
-    queryFn: () => apiClient.get(ACCOUNTING.BANK_RECONCILIATION_DETAIL(selected!.id)).then(r => r.data),
+    queryFn: () => apiClient.get(ACCOUNTING.BANK_RECONCILIATION_DETAIL(selected!.id)).then(r => {
+      const payload = r.data?.data ?? r.data
+      return {
+        ...payload,
+        lines: Array.isArray(payload?.lines) ? payload.lines : [],
+      } as BankReconciliation
+    }),
     enabled: !!selected,
   })
+
+  const detailLines = Array.isArray(detail?.lines) ? detail.lines : []
+  const filteredDetailLines = useMemo(() => {
+    const q = lineSearch.trim().toLowerCase()
+    if (!q) return detailLines
+    return detailLines.filter(line =>
+      String(line.description ?? '').toLowerCase().includes(q) ||
+      String(line.date ?? '').toLowerCase().includes(q) ||
+      String(line.amount ?? '').toLowerCase().includes(q),
+    )
+  }, [detailLines, lineSearch])
 
   const mutateCreate = useMutation({
     mutationFn: (d: typeof newRec) => apiClient.post(ACCOUNTING.BANK_RECONCILIATIONS, d),
@@ -7330,7 +7906,7 @@ function BankReconciliationTab() {
     onError: () => toast.error('Delete failed'),
   })
 
-  const bankList: Array<{id: number; name: string; bank_name: string}> = Array.isArray(banks) ? banks : []
+  const bankList: Array<{id: number; name: string; bank_name: string}> = banks?.results ?? []
 
   return (
     <div className="space-y-4">
@@ -7472,6 +8048,17 @@ function BankReconciliationTab() {
               )}
 
               <div className="overflow-x-auto">
+                <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
+                  <div className="relative max-w-sm">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input data-lpignore="true"
+                      value={lineSearch}
+                      onChange={e => setLineSearch(e.target.value)}
+                      placeholder="Search line description, date, amount..."
+                      className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                    />
+                  </div>
+                </div>
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b border-gray-100">
                     <tr>
@@ -7481,9 +8068,9 @@ function BankReconciliationTab() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {detail.lines.length === 0 ? (
-                      <tr><td colSpan={5} className="text-center py-8 text-gray-400 text-sm">No statement lines yet. Add lines above.</td></tr>
-                    ) : detail.lines.map(line => (
+                    {filteredDetailLines.length === 0 ? (
+                      <tr><td colSpan={5} className="text-center py-8 text-gray-400 text-sm">{detailLines.length === 0 ? 'No statement lines yet. Add lines above.' : 'No statement lines match your search.'}</td></tr>
+                    ) : filteredDetailLines.map(line => (
                       <tr key={line.id} className={`transition-colors ${line.is_matched ? 'bg-emerald-50/40' : 'hover:bg-gray-50'}`}>
                         <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmt(line.date)}</td>
                         <td className="px-4 py-3 text-gray-700">{line.description}</td>
@@ -7811,6 +8398,7 @@ function RecurringJournalsTab() {
 // ─── Ledger Tab ───────────────────────────────────────────────────────────────
 
 function LedgerTab() {
+  const navigate = useNavigate()
   const { data: accounts } = useQuery<ApiPage<Account>>({
     queryKey: ['accounts-ledger-select'],
     queryFn: () => apiClient.get(ACCOUNTING.ACCOUNTS + '?no_page=1').then(r =>
@@ -7821,9 +8409,13 @@ function LedgerTab() {
   })
 
   const [accountCode, setAccountCode] = useState('')
+  const [accountInput, setAccountInput] = useState('')
+  const [accountDropdownOpen, setAccountDropdownOpen] = useState(false)
   const [dateFrom, setDateFrom] = useState(() => fiscalYearAdParams(currentFiscalYear()).date_from)
   const [dateTo, setDateTo]     = useState(() => new Date().toISOString().slice(0, 10))
+  const [txSearch, setTxSearch] = useState('')
   const [submitted, setSubmitted] = useState(false)
+  const [selectedTxn, setSelectedTxn] = useState<LedgerRow | null>(null)
 
   const { data: ledger, isLoading, isFetching } = useQuery<LedgerReport>({
     queryKey: ['ledger', accountCode, dateFrom, dateTo],
@@ -7832,18 +8424,260 @@ function LedgerTab() {
   })
 
   const accList = accounts?.results ?? []
+  const selectedAccountLabel = useMemo(() => {
+    const found = accList.find(a => a.code === accountCode)
+    return found ? `${found.code} — ${found.name}` : ''
+  }, [accList, accountCode])
+
+  const resolveAccountCode = (inputValue: string) => {
+    const v = inputValue.trim()
+    if (!v) return ''
+
+    const directCode = v.split('—')[0].trim()
+    if (accList.some(a => a.code === directCode)) return directCode
+
+    const exactLabel = accList.find(a => `${a.code} — ${a.name}`.toLowerCase() === v.toLowerCase())
+    if (exactLabel) return exactLabel.code
+
+    const exactName = accList.find(a => a.name.toLowerCase() === v.toLowerCase())
+    if (exactName) return exactName.code
+
+    return ''
+  }
+
+  const filteredAccounts = useMemo(() => {
+    const q = accountInput.trim().toLowerCase()
+    if (!q) return accList
+    return accList.filter(a =>
+      String(a.code ?? '').toLowerCase().includes(q) ||
+      String(a.name ?? '').toLowerCase().includes(q) ||
+      String(a.description ?? '').toLowerCase().includes(q),
+    )
+  }, [accList, accountInput])
+  const filteredTransactions = useMemo(() => {
+    const rows = ledger?.transactions ?? []
+    const q = txSearch.trim().toLowerCase()
+    if (!q) return rows
+    return rows.filter(row =>
+      String(row.date ?? '').toLowerCase().includes(q) ||
+      String(row.entry_number ?? '').toLowerCase().includes(q) ||
+      String(row.description ?? '').toLowerCase().includes(q) ||
+      String(row.debit ?? '').toLowerCase().includes(q) ||
+      String(row.credit ?? '').toLowerCase().includes(q) ||
+      String(row.balance ?? '').toLowerCase().includes(q),
+    )
+  }, [ledger, txSearch])
+
+  const { data: drillJournal, isLoading: drillJournalLoading } = useQuery<JournalEntry | null>({
+    queryKey: ['ledger-drill-journal', selectedTxn?.entry_id],
+    queryFn: async () => {
+      if (!selectedTxn?.entry_id) return null
+      const r = await apiClient.get(ACCOUNTING.JOURNAL_DETAIL(selectedTxn.entry_id))
+      return (r.data?.data ?? r.data) as JournalEntry
+    },
+    enabled: !!selectedTxn?.entry_id,
+  })
+
+  const { data: drillSource, isLoading: drillSourceLoading } = useQuery<Invoice | Bill | Payment | CreditNote | DebitNote | null>({
+    queryKey: ['ledger-drill-source', drillJournal?.reference_type, drillJournal?.reference_id],
+    queryFn: async () => {
+      if (!drillJournal?.reference_type || !drillJournal?.reference_id) return null
+      const refType = drillJournal.reference_type
+      const refId = drillJournal.reference_id
+
+      if (refType === 'invoice') {
+        const r = await apiClient.get(ACCOUNTING.INVOICE_DETAIL(refId))
+        return (r.data?.data ?? r.data) as Invoice
+      }
+      if (refType === 'bill') {
+        const r = await apiClient.get(ACCOUNTING.BILL_DETAIL(refId))
+        return (r.data?.data ?? r.data) as Bill
+      }
+      if (refType === 'payment') {
+        const r = await apiClient.get(ACCOUNTING.PAYMENT_DETAIL(refId))
+        return (r.data?.data ?? r.data) as Payment
+      }
+      if (refType === 'credit_note') {
+        const r = await apiClient.get(ACCOUNTING.CREDIT_NOTE_DETAIL(refId))
+        return (r.data?.data ?? r.data) as CreditNote
+      }
+      if (refType === 'debit_note') {
+        const r = await apiClient.get(ACCOUNTING.DEBIT_NOTE_DETAIL(refId))
+        return (r.data?.data ?? r.data) as DebitNote
+      }
+      return null
+    },
+    enabled: !!drillJournal?.reference_type && !!drillJournal?.reference_id,
+  })
+
+  const sourceRoute = useMemo(
+    () => resolveLedgerSourceRoute(drillJournal?.reference_type, drillJournal?.reference_id),
+    [drillJournal?.reference_type, drillJournal?.reference_id],
+  )
+
+  const openSourceDocument = () => {
+    if (!sourceRoute) return
+    const extra: Record<string, string | number> = {
+      [sourceRoute.key]: sourceRoute.id,
+      from: 'ledger',
+    }
+    navigate(buildAccountingTabUrl(sourceRoute.tab, extra))
+    setSelectedTxn(null)
+  }
 
   return (
     <div className="space-y-5">
+      {selectedTxn && (
+        <Modal title="Ledger Drill-Down" onClose={() => setSelectedTxn(null)}>
+          <div className="space-y-4 text-sm">
+            <div className="text-xs text-gray-500 flex items-center gap-1">
+              <span>Ledger</span>
+              <ChevronRight size={12} />
+              <span>{selectedTxn.entry_number || 'Voucher'}</span>
+              {sourceRoute && (
+                <>
+                  <ChevronRight size={12} />
+                  <span className="capitalize">{String(drillJournal?.reference_type ?? '').replace(/_/g, ' ')}</span>
+                </>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 bg-gray-50 border border-gray-200 rounded-lg p-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-gray-500">Voucher</p>
+                <p className="font-semibold text-gray-800">{selectedTxn.entry_number}</p>
+              </div>
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-gray-500">Date</p>
+                <p className="font-semibold text-gray-800">{fmt(selectedTxn.date)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-gray-500">Reference</p>
+                <p className="font-medium text-gray-700">{selectedTxn.reference_type ?? '—'}{selectedTxn.reference_id ? ` #${selectedTxn.reference_id}` : ''}</p>
+              </div>
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-gray-500">Purpose</p>
+                <p className="font-medium text-gray-700">{selectedTxn.purpose || '—'}</p>
+              </div>
+            </div>
+
+            {drillJournalLoading ? (
+              <div className="flex items-center gap-2 text-gray-500"><Loader2 size={14} className="animate-spin" /> Loading voucher lines...</div>
+            ) : drillJournal ? (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Voucher Lines</p>
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-gray-500 uppercase tracking-wide">Account</th>
+                        <th className="px-3 py-2 text-left text-gray-500 uppercase tracking-wide">Description</th>
+                        <th className="px-3 py-2 text-right text-gray-500 uppercase tracking-wide">Debit</th>
+                        <th className="px-3 py-2 text-right text-gray-500 uppercase tracking-wide">Credit</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {(drillJournal.lines ?? []).map(line => (
+                        <tr key={line.id}>
+                          <td className="px-3 py-2"><span className="font-mono text-indigo-600 text-[11px] mr-2">{line.account_code}</span>{line.account_name}</td>
+                          <td className="px-3 py-2 text-gray-500">{line.description || '—'}</td>
+                          <td className="px-3 py-2 text-right text-emerald-700">{Number(line.debit) > 0 ? npr(line.debit) : '—'}</td>
+                          <td className="px-3 py-2 text-right text-red-600">{Number(line.credit) > 0 ? npr(line.credit) : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <p className="text-gray-500">Voucher details not available.</p>
+            )}
+
+            {drillJournal?.reference_type && (
+              <div className="border border-gray-200 rounded-lg p-3 bg-white">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Source Document</p>
+                  {sourceRoute && (
+                    <button
+                      onClick={openSourceDocument}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition-colors"
+                    >
+                      Open Full Document <ChevronRight size={12} />
+                    </button>
+                  )}
+                </div>
+                {drillSourceLoading ? (
+                  <div className="flex items-center gap-2 text-gray-500"><Loader2 size={14} className="animate-spin" /> Loading source...</div>
+                ) : drillSource ? (
+                  <div className="space-y-1 text-gray-700">
+                    {'invoice_number' in drillSource && <p>Invoice: <span className="font-semibold">{drillSource.invoice_number}</span></p>}
+                    {'bill_number' in drillSource && <p>Bill: <span className="font-semibold">{drillSource.bill_number}</span></p>}
+                    {'payment_number' in drillSource && <p>Payment: <span className="font-semibold">{drillSource.payment_number}</span></p>}
+                    {'credit_note_number' in drillSource && <p>Credit Note: <span className="font-semibold">{drillSource.credit_note_number}</span></p>}
+                    {'debit_note_number' in drillSource && <p>Debit Note: <span className="font-semibold">{drillSource.debit_note_number}</span></p>}
+                    {'total' in drillSource && <p>Total: <span className="font-semibold">{npr((drillSource as Invoice | Bill | CreditNote | DebitNote).total)}</span></p>}
+                    {'amount' in drillSource && <p>Amount: <span className="font-semibold">{npr((drillSource as Payment).amount)}</span></p>}
+                    {'status' in drillSource && <p>Status: <span className="font-semibold capitalize">{String((drillSource as { status?: string }).status ?? '—')}</span></p>}
+                  </div>
+                ) : (
+                  <p className="text-gray-500">No linked source document available.</p>
+                )}
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-end">
           <div className="sm:col-span-2">
             <label className="block text-xs font-medium text-gray-600 mb-1">Account</label>
-            <select value={accountCode} onChange={e => { setAccountCode(e.target.value); setSubmitted(false) }}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
-              <option value="">Select account…</option>
-              {accList.map(a => <option key={a.id} value={a.code}>{a.code} — {a.name}</option>)}
-            </select>
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                data-lpignore="true"
+                value={accountInput || selectedAccountLabel}
+                onFocus={() => setAccountDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setAccountDropdownOpen(false), 120)}
+                onChange={e => {
+                  const v = e.target.value
+                  setAccountInput(v)
+                  setAccountCode(resolveAccountCode(v))
+                  setSubmitted(false)
+                  setAccountDropdownOpen(true)
+                }}
+                placeholder="Search and select account..."
+                className="w-full border border-gray-200 rounded-lg pl-8 pr-8 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <ChevronDown size={14} className={`absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 transition-transform ${accountDropdownOpen ? 'rotate-180' : ''}`} />
+
+              {accountDropdownOpen && (
+                <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-64 overflow-auto">
+                  {filteredAccounts.length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-gray-400">No matching accounts</div>
+                  ) : (
+                    filteredAccounts.slice(0, 120).map(a => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          const label = `${a.code} — ${a.name}`
+                          setAccountInput(label)
+                          setAccountCode(a.code)
+                          setSubmitted(false)
+                          setAccountDropdownOpen(false)
+                        }}
+                        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-indigo-50"
+                      >
+                        <span className="font-mono text-xs text-indigo-600 mr-2">{a.code}</span>
+                        <span>{a.name}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
@@ -7890,8 +8724,19 @@ function LedgerTab() {
               <p className="text-xs text-gray-500">Closing: <strong className="text-gray-800">{npr(ledger.closing_balance)}</strong></p>
             </div>
           </div>
-          {(ledger.transactions ?? []).length === 0 ? (
-            <div className="text-center py-10 text-gray-400 text-sm">No transactions in this period</div>
+          <div className="px-6 py-3 border-b border-gray-100 bg-gray-50">
+            <div className="relative max-w-sm">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input data-lpignore="true"
+                value={txSearch}
+                onChange={e => setTxSearch(e.target.value)}
+                placeholder="Search entry #, description, amount..."
+                className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              />
+            </div>
+          </div>
+          {filteredTransactions.length === 0 ? (
+            <div className="text-center py-10 text-gray-400 text-sm">{(ledger.transactions ?? []).length === 0 ? 'No transactions in this period' : 'No transactions match your search'}</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -7903,10 +8748,10 @@ function LedgerTab() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {(ledger.transactions ?? []).map((row, i) => (
-                    <tr key={i} className="hover:bg-gray-50 transition-colors">
+                  {filteredTransactions.map((row, i) => (
+                    <tr key={`${row.entry_id ?? row.entry_number}-${row.line_id ?? i}`} className="hover:bg-indigo-50/40 transition-colors cursor-pointer" onClick={() => setSelectedTxn(row)}>
                       <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmt(row.date)}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-gray-600">{row.entry_number}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-indigo-700 underline underline-offset-2">{row.entry_number}</td>
                       <td className="px-4 py-3 text-gray-700">{row.description || '—'}</td>
                       <td className="px-4 py-3 text-emerald-700 font-medium whitespace-nowrap">{Number(row.debit)  > 0 ? npr(row.debit)  : '—'}</td>
                       <td className="px-4 py-3 text-red-600    font-medium whitespace-nowrap">{Number(row.credit) > 0 ? npr(row.credit) : '—'}</td>
@@ -7928,6 +8773,7 @@ function LedgerTab() {
 function DayBookTab() {
   const today = new Date().toISOString().slice(0, 10)
   const [date, setDate]          = useState(today)
+  const [entrySearch, setEntrySearch] = useState('')
   const [submitted, setSubmitted] = useState(false)
   const [expandedEntry, setExpandedEntry] = useState<Set<string>>(new Set())
 
@@ -7936,6 +8782,22 @@ function DayBookTab() {
     queryFn: () => apiClient.get(`${ACCOUNTING.REPORT_DAY_BOOK}?date=${date}`).then(r => r.data?.data ?? r.data),
     enabled: submitted,
   })
+
+  const filteredDayEntries = useMemo(() => {
+    const rows = dayBook?.entries ?? []
+    const q = entrySearch.trim().toLowerCase()
+    if (!q) return rows
+    return rows.filter(entry =>
+      String(entry.entry_number ?? '').toLowerCase().includes(q) ||
+      String(entry.description ?? '').toLowerCase().includes(q) ||
+      String(entry.reference_type ?? '').toLowerCase().includes(q) ||
+      (entry.lines ?? []).some(line =>
+        String(line.account_code ?? '').toLowerCase().includes(q) ||
+        String(line.account_name ?? '').toLowerCase().includes(q) ||
+        String(line.description ?? '').toLowerCase().includes(q),
+      ),
+    )
+  }, [dayBook, entrySearch])
 
   return (
     <div className="space-y-5">
@@ -7950,13 +8812,22 @@ function DayBookTab() {
             {(isLoading || isFetching) ? <Loader2 size={14} className="animate-spin" /> : <CalendarDays size={14} />}
             Load Day Book
           </button>
+          <div className="relative min-w-[260px]">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input data-lpignore="true"
+              value={entrySearch}
+              onChange={e => setEntrySearch(e.target.value)}
+              placeholder="Search entry #, description, account..."
+              className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
+            />
+          </div>
           {dayBook && !isLoading && (dayBook.entries ?? []).length > 0 && (
-            expandedEntry.size === (dayBook.entries ?? []).length
+            expandedEntry.size === filteredDayEntries.length && filteredDayEntries.length > 0
               ? <button onClick={() => setExpandedEntry(new Set())}
                   className="flex items-center gap-2 px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
                   <ChevronsDownUp size={14} /> Collapse All
                 </button>
-              : <button onClick={() => setExpandedEntry(new Set((dayBook.entries ?? []).map(e => e.entry_number)))}
+              : <button onClick={() => setExpandedEntry(new Set(filteredDayEntries.map(e => e.entry_number)))}
                   className="flex items-center gap-2 px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
                   <ChevronsUpDown size={14} /> Expand All
                 </button>
@@ -7983,14 +8854,14 @@ function DayBookTab() {
             </div>
           </div>
 
-          {(dayBook.entries ?? []).length === 0 ? (
+          {filteredDayEntries.length === 0 ? (
             <div className="text-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-200">
               <CalendarDays size={36} className="mx-auto text-gray-300 mb-3" />
-              <p className="text-sm text-gray-500 font-medium">No journal entries on {fmt(dayBook.date)}</p>
+              <p className="text-sm text-gray-500 font-medium">{(dayBook.entries ?? []).length === 0 ? `No journal entries on ${fmt(dayBook.date)}` : 'No journal entries match your search'}</p>
             </div>
           ) : (
             <div className="space-y-2">
-              {(dayBook.entries ?? []).map(entry => (
+              {filteredDayEntries.map(entry => (
                 <div key={entry.entry_number} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                   <button className="w-full px-5 py-4 text-left flex items-center gap-4 hover:bg-gray-50 transition-colors"
                     onClick={() => setExpandedEntry(s => { const n = new Set(s); n.has(entry.entry_number) ? n.delete(entry.entry_number) : n.add(entry.entry_number); return n })}>

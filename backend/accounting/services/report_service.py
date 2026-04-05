@@ -41,6 +41,14 @@ def _period_meta(date_from=None, date_to=None):
     return meta
 
 
+def _voucher_date_filter(start, end):
+    """Match document voucher date, with legacy fallback to created_at date."""
+    return (
+        Q(date__gte=start, date__lte=end) |
+        Q(date__isnull=True, created_at__date__gte=start, created_at__date__lte=end)
+    )
+
+
 def _account_balance(tenant, account_code, date_from=None, date_to=None):
     """
     Net balance for a single account code within a date range, including
@@ -438,6 +446,118 @@ def balance_sheet(tenant, as_of_date, compare_as_of=None):
 
 # ─── Trial Balance ────────────────────────────────────────────────────────────
 
+def _trial_balance_opening_and_period_maps(tenant, date_from, date_to):
+    """Return grouped debit/credit maps for pre-period and in-period lines."""
+    from accounting.models import JournalLine
+    from django.db.models import Sum as _Sum
+
+    pre_qs = (
+        JournalLine.objects
+        .filter(
+            entry__tenant=tenant,
+            entry__is_posted=True,
+            entry__date__lt=date_from,
+        )
+        .values('account_id')
+        .annotate(debit=_Sum('debit'), credit=_Sum('credit'))
+    )
+    per_qs = (
+        JournalLine.objects
+        .filter(
+            entry__tenant=tenant,
+            entry__is_posted=True,
+            entry__date__gte=date_from,
+            entry__date__lte=date_to,
+        )
+        .values('account_id')
+        .annotate(debit=_Sum('debit'), credit=_Sum('credit'))
+    )
+    return {row['account_id']: row for row in pre_qs}, {row['account_id']: row for row in per_qs}
+
+
+def _trial_balance_row(acc, pre_map, period_map):
+    """Compute one trial balance row and debit/credit splits for totals."""
+    ob_field = acc.opening_balance or _zero()
+
+    pre = pre_map.get(acc.pk, {})
+    pre_dr = pre.get('debit') or _zero()
+    pre_cr = pre.get('credit') or _zero()
+
+    per = period_map.get(acc.pk, {})
+    period_dr = per.get('debit') or _zero()
+    period_cr = per.get('credit') or _zero()
+
+    is_debit_normal = acc.type in ('asset', 'expense')
+    if is_debit_normal:
+        opening = ob_field + pre_dr - pre_cr
+        closing = opening + period_dr - period_cr
+    else:
+        opening = ob_field + pre_cr - pre_dr
+        closing = opening + period_cr - period_dr
+
+    if not (opening or period_dr or period_cr or closing):
+        return None
+
+    if is_debit_normal:
+        o_dr = max(opening, _zero())
+        o_cr = max(-opening, _zero())
+        c_dr = max(closing, _zero())
+        c_cr = max(-closing, _zero())
+    else:
+        o_cr = max(opening, _zero())
+        o_dr = max(-opening, _zero())
+        c_cr = max(closing, _zero())
+        c_dr = max(-closing, _zero())
+
+    return {
+        'row': {
+            'id': acc.pk,
+            'code': acc.code,
+            'name': acc.name,
+            'type': acc.type,
+            'group_name': acc.group.name if acc.group_id else '',
+            'opening_dr': o_dr,
+            'opening_cr': o_cr,
+            'period_dr': period_dr,
+            'period_cr': period_cr,
+            'closing_dr': c_dr,
+            'closing_cr': c_cr,
+        },
+        'o_dr': o_dr,
+        'o_cr': o_cr,
+        'p_dr': period_dr,
+        'p_cr': period_cr,
+        'c_dr': c_dr,
+        'c_cr': c_cr,
+    }
+
+
+def _trial_balance_rows_and_totals(accounts, pre_map, period_map):
+    """Build trial balance rows and running totals in a single pass."""
+    rows = []
+    totals = {
+        'total_opening_dr': _zero(),
+        'total_opening_cr': _zero(),
+        'total_period_dr': _zero(),
+        'total_period_cr': _zero(),
+        'total_closing_dr': _zero(),
+        'total_closing_cr': _zero(),
+    }
+
+    for acc in accounts:
+        computed = _trial_balance_row(acc, pre_map, period_map)
+        if not computed:
+            continue
+        rows.append(computed['row'])
+        totals['total_opening_dr'] += computed['o_dr']
+        totals['total_opening_cr'] += computed['o_cr']
+        totals['total_period_dr'] += computed['p_dr']
+        totals['total_period_cr'] += computed['p_cr']
+        totals['total_closing_dr'] += computed['c_dr']
+        totals['total_closing_cr'] += computed['c_cr']
+
+    return rows, totals
+
 def trial_balance(tenant, date_from, date_to):
     """
     Tally-style Trial Balance with three columns per account:
@@ -457,8 +577,7 @@ def trial_balance(tenant, date_from, date_to):
     The old implementation ran 2 queries per account (2×N total) which caused
     timeouts on tenants with 50+ accounts.
     """
-    from accounting.models import Account, JournalLine
-    from django.db.models import Sum as _Sum
+    from accounting.models import Account
 
     accounts = list(
         Account.objects.filter(tenant=tenant, is_active=True)
@@ -474,110 +593,20 @@ def trial_balance(tenant, date_from, date_to):
             'total_closing_dr': _zero(), 'total_closing_cr': _zero(),
         }
 
-    # ── Query 1: All pre-period lines (before date_from) ─────────────────────
-    pre_qs = (
-        JournalLine.objects
-        .filter(
-            entry__tenant=tenant,
-            entry__is_posted=True,
-            entry__date__lt=date_from,
-        )
-        .values('account_id')
-        .annotate(debit=_Sum('debit'), credit=_Sum('credit'))
-    )
-    pre_map = {row['account_id']: row for row in pre_qs}
-
-    # ── Query 2: All in-period lines (date_from … date_to) ───────────────────
-    per_qs = (
-        JournalLine.objects
-        .filter(
-            entry__tenant=tenant,
-            entry__is_posted=True,
-            entry__date__gte=date_from,
-            entry__date__lte=date_to,
-        )
-        .values('account_id')
-        .annotate(debit=_Sum('debit'), credit=_Sum('credit'))
-    )
-    period_map = {row['account_id']: row for row in per_qs}
-
-    # ── Build rows in Python — O(N) with no further DB queries ───────────────
-    rows = []
-    total_opening_dr = _zero()
-    total_opening_cr = _zero()
-    total_period_dr  = _zero()
-    total_period_cr  = _zero()
-    total_closing_dr = _zero()
-    total_closing_cr = _zero()
-
-    for acc in accounts:
-        ob_field = acc.opening_balance or _zero()
-
-        pre      = pre_map.get(acc.pk, {})
-        pre_dr   = pre.get('debit')  or _zero()
-        pre_cr   = pre.get('credit') or _zero()
-
-        per      = period_map.get(acc.pk, {})
-        period_dr  = per.get('debit')  or _zero()
-        period_cr  = per.get('credit') or _zero()
-
-        is_debit_normal = acc.type in ('asset', 'expense')
-        if is_debit_normal:
-            opening = ob_field + pre_dr - pre_cr
-        else:
-            opening = ob_field + pre_cr - pre_dr
-
-        if is_debit_normal:
-            closing = opening + period_dr - period_cr
-        else:
-            closing = opening + period_cr - period_dr
-
-        # Skip accounts with no activity at all
-        if not (opening or period_dr or period_cr or closing):
-            continue
-
-        if is_debit_normal:
-            o_dr = max(opening,  _zero())
-            o_cr = max(-opening, _zero())
-            c_dr = max(closing,  _zero())
-            c_cr = max(-closing, _zero())
-        else:
-            o_cr = max(opening,  _zero())
-            o_dr = max(-opening, _zero())
-            c_cr = max(closing,  _zero())
-            c_dr = max(-closing, _zero())
-
-        rows.append({
-            'id':           acc.pk,
-            'code':         acc.code,
-            'name':         acc.name,
-            'type':         acc.type,
-            'group_name':   acc.group.name if acc.group_id else '',
-            'opening_dr':   o_dr,
-            'opening_cr':   o_cr,
-            'period_dr':    period_dr,
-            'period_cr':    period_cr,
-            'closing_dr':   c_dr,
-            'closing_cr':   c_cr,
-        })
-        total_opening_dr += o_dr
-        total_opening_cr += o_cr
-        total_period_dr  += period_dr
-        total_period_cr  += period_cr
-        total_closing_dr += c_dr
-        total_closing_cr += c_cr
+    pre_map, period_map = _trial_balance_opening_and_period_maps(tenant, date_from, date_to)
+    rows, totals = _trial_balance_rows_and_totals(accounts, pre_map, period_map)
 
     return {
         'date_from':         str(date_from),
         'date_to':           str(date_to),
         'accounts':          rows,
-        'total_opening_dr':  total_opening_dr,
-        'total_opening_cr':  total_opening_cr,
-        'total_period_dr':   total_period_dr,
-        'total_period_cr':   total_period_cr,
-        'total_closing_dr':  total_closing_dr,
-        'total_closing_cr':  total_closing_cr,
-        'balanced':          total_closing_dr == total_closing_cr,
+        'total_opening_dr':  totals['total_opening_dr'],
+        'total_opening_cr':  totals['total_opening_cr'],
+        'total_period_dr':   totals['total_period_dr'],
+        'total_period_cr':   totals['total_period_cr'],
+        'total_closing_dr':  totals['total_closing_dr'],
+        'total_closing_cr':  totals['total_closing_cr'],
+        'balanced':          totals['total_closing_dr'] == totals['total_closing_cr'],
     }
 
 
@@ -602,7 +631,9 @@ def aged_receivables(tenant, as_of_date):
 
     for inv in invoices:
         due = inv.due_date
-        remaining = float(max(inv.total - inv.paid_sum, Decimal('0')))
+        remaining = max(inv.total - inv.paid_sum, _zero())
+        if remaining <= _zero():
+            continue
         entry = {
             'id':             inv.pk,
             'invoice_number': inv.invoice_number,
@@ -659,7 +690,9 @@ def aged_payables(tenant, as_of_date):
 
     for bill in bills:
         due = bill.due_date
-        remaining = float(max(bill.total - bill.paid_sum, Decimal('0')))
+        remaining = max(bill.total - bill.paid_sum, _zero())
+        if remaining <= _zero():
+            continue
         entry = {
             'id':          bill.pk,
             'bill_number': bill.bill_number,
@@ -797,6 +830,126 @@ def _bulk_group_balances(tenant, as_of_date, group_slugs):
     return result
 
 
+def _cashflow_depreciation_addback(tenant, date_from, date_to):
+    """Return depreciation amount to add back in indirect cash flow."""
+    from accounting.models import JournalLine, JournalEntry
+    from django.db.models import Value
+    from django.db.models.functions import Coalesce
+
+    dep_qs = JournalLine.objects.filter(
+        entry__tenant=tenant,
+        entry__is_posted=True,
+        entry__date__gte=date_from,
+        entry__date__lte=date_to,
+        account__type='expense',
+    ).filter(
+        Q(entry__reference_type=JournalEntry.REF_DEPRECIATION) |
+        Q(entry__purpose=JournalEntry.PURPOSE_DEPRECIATION) |
+        Q(account__name__icontains='depreciation') |
+        Q(account__name__icontains='amortis'),
+    ).aggregate(
+        d=Coalesce(Sum('debit'), Value(Decimal('0'))),
+        c=Coalesce(Sum('credit'), Value(Decimal('0'))),
+    )
+    return (dep_qs['d'] or _zero()) - (dep_qs['c'] or _zero())
+
+
+def _cashflow_working_capital_changes(opening_balances, closing_balances):
+    """Return working-capital line items and total for cash-flow operating section."""
+    wc_items = []
+    for slug, pos_label, neg_label, is_asset in [
+        ('sundry_debtors',       'Decrease in Trade Receivables',          'Increase in Trade Receivables',          True),
+        ('stock_in_hand',        'Decrease in Inventories',                'Increase in Inventories',                True),
+        ('loans_advances_asset', 'Decrease in Loans & Advances (Asset)',   'Increase in Loans & Advances (Asset)',   True),
+        ('other_current_assets', 'Decrease in Other Current Assets',       'Increase in Other Current Assets',       True),
+        ('sundry_creditors',     'Increase in Trade Payables',             'Decrease in Trade Payables',             False),
+        ('duties_taxes_vat',     'Increase in VAT Payable',                'Decrease in VAT Payable',                False),
+        ('duties_taxes_tds',     'Increase in TDS Payable',                'Decrease in TDS Payable',                False),
+        ('current_liabilities',  'Increase in Other Current Liabilities',  'Decrease in Other Current Liabilities',  False),
+    ]:
+        change = (opening_balances[slug] - closing_balances[slug]) if is_asset else (closing_balances[slug] - opening_balances[slug])
+        if change != _zero():
+            wc_items.append({
+                'label': pos_label if change >= _zero() else neg_label,
+                'amount': str(change),
+            })
+
+    wc_total = sum(Decimal(item['amount']) for item in wc_items)
+    return wc_items, wc_total
+
+
+def _cashflow_investing_items(opening_balances, closing_balances, dep_amount):
+    """Return investing section items and total."""
+    investing_items = []
+
+    fa_nbv_change = closing_balances['fixed_assets'] - opening_balances['fixed_assets']
+    fa_cash = -(fa_nbv_change + dep_amount)
+    if fa_cash != _zero():
+        label = 'Proceeds from Disposal of Fixed Assets' if fa_cash > _zero() else 'Purchase of Fixed Assets'
+        investing_items.append({'label': label, 'amount': str(fa_cash)})
+
+    inv_cash = -(closing_balances['investments'] - opening_balances['investments'])
+    if inv_cash != _zero():
+        label = 'Proceeds from Sale of Investments' if inv_cash > _zero() else 'Purchase of Investments'
+        investing_items.append({'label': label, 'amount': str(inv_cash)})
+
+    investing_total = sum(Decimal(item['amount']) for item in investing_items)
+    return investing_items, investing_total
+
+
+def _cashflow_financing_items(tenant, date_from, date_to, opening_balances, closing_balances, net_profit):
+    """Return financing section items and total, including FY-close guard."""
+    from accounting.models import JournalEntry
+
+    financing_items = []
+    for slug, pos_label, neg_label in [
+        ('bank_od', 'Increase in Bank Overdraft', 'Repayment of Bank Overdraft'),
+        ('loans_liability', 'Proceeds from Term Loans', 'Repayment of Term Loans'),
+    ]:
+        change = closing_balances[slug] - opening_balances[slug]
+        if change != _zero():
+            financing_items.append({
+                'label': pos_label if change >= _zero() else neg_label,
+                'amount': str(change),
+            })
+
+    equity_change = (
+        (closing_balances['capital_account'] - opening_balances['capital_account'])
+        + (closing_balances['reserves_surplus'] - opening_balances['reserves_surplus'])
+    )
+    has_fy_close = JournalEntry.objects.filter(
+        tenant=tenant,
+        reference_type=JournalEntry.REF_FY_CLOSE,
+        is_posted=True,
+        date__gte=date_from,
+        date__lte=date_to,
+    ).exists()
+    if has_fy_close:
+        equity_change -= net_profit
+
+    if equity_change != _zero():
+        label = 'Capital Introduced (Owner Investment)' if equity_change >= _zero() else 'Capital Withdrawn (Drawings)'
+        financing_items.append({'label': label, 'amount': str(equity_change)})
+
+    financing_total = sum(Decimal(item['amount']) for item in financing_items)
+    return financing_items, financing_total
+
+
+def _cashflow_payment_method_breakdown(tenant, date_from, date_to):
+    """Return backward-compatible direct-method payment totals by method."""
+    from accounting.models import Payment
+
+    by_method = {}
+    for payment in Payment.objects.filter(
+        tenant=tenant,
+        date__gte=date_from,
+        date__lte=date_to,
+    ).exclude(method='credit_note').values('method', 'type', 'amount'):
+        by_method.setdefault(payment['method'], {'incoming': _zero(), 'outgoing': _zero()})
+        by_method[payment['method']][payment['type']] += payment['amount']
+    return by_method
+
+
 def cash_flow(tenant, date_from, date_to):
     """
     Indirect-method Cash Flow Statement (Tally-style three-section layout).
@@ -842,10 +995,6 @@ def cash_flow(tenant, date_from, date_to):
     1× profit_and_loss + 1× depreciation aggregate + 1× payments).
     """
     from datetime import timedelta
-    from accounting.models import JournalLine, Payment, JournalEntry
-    from django.db.models import Value
-    from django.db.models.functions import Coalesce
-
     opening_date = date_from - timedelta(days=1)
 
     # All account groups needed — fetched in 2 bulk queries (one per date).
@@ -861,122 +1010,19 @@ def cash_flow(tenant, date_from, date_to):
         'bank_od', 'loans_liability', 'capital_account', 'reserves_surplus',
     ]
     op = _bulk_group_balances(tenant, opening_date, _ALL_SLUGS)
-    cl = _bulk_group_balances(tenant, date_to,      _ALL_SLUGS)
+    cl = _bulk_group_balances(tenant, date_to, _ALL_SLUGS)
 
     # ── Net Profit ────────────────────────────────────────────────────────────
     pl = profit_and_loss(tenant, date_from, date_to)
     net_profit = Decimal(str(pl['net_profit']))
 
-    # ── Depreciation add-back ─────────────────────────────────────────────────
-    # Primary: match by reference_type / purpose (set by the depreciation service).
-    # Secondary: name-based fallback for manual depreciation journal entries.
-    dep_qs = JournalLine.objects.filter(
-        entry__tenant=tenant,
-        entry__is_posted=True,
-        entry__date__gte=date_from,
-        entry__date__lte=date_to,
-        account__type='expense',
-    ).filter(
-        Q(entry__reference_type=JournalEntry.REF_DEPRECIATION) |
-        Q(entry__purpose=JournalEntry.PURPOSE_DEPRECIATION) |
-        Q(account__name__icontains='depreciation') |
-        Q(account__name__icontains='amortis'),
-    ).aggregate(
-        d=Coalesce(Sum('debit'),  Value(Decimal('0'))),
-        c=Coalesce(Sum('credit'), Value(Decimal('0'))),
-    )
-    dep_amount = (dep_qs['d'] or _zero()) - (dep_qs['c'] or _zero())
-
-    # ── Working Capital Changes ───────────────────────────────────────────────
-    # Assets:      decrease = released cash (positive). increase = consumed cash (negative).
-    # Liabilities: increase = retained cash (positive). decrease = used cash (negative).
-    wc_items = []
-    for slug, pos_label, neg_label, is_asset in [
-        ('sundry_debtors',       'Decrease in Trade Receivables',          'Increase in Trade Receivables',          True),
-        ('stock_in_hand',        'Decrease in Inventories',                'Increase in Inventories',                True),
-        ('loans_advances_asset', 'Decrease in Loans & Advances (Asset)',   'Increase in Loans & Advances (Asset)',   True),
-        ('other_current_assets', 'Decrease in Other Current Assets',       'Increase in Other Current Assets',       True),
-        ('sundry_creditors',     'Increase in Trade Payables',             'Decrease in Trade Payables',             False),
-        ('duties_taxes_vat',     'Increase in VAT Payable',                'Decrease in VAT Payable',                False),
-        ('duties_taxes_tds',     'Increase in TDS Payable',                'Decrease in TDS Payable',                False),
-        ('current_liabilities',  'Increase in Other Current Liabilities',  'Decrease in Other Current Liabilities',  False),
-    ]:
-        change = (op[slug] - cl[slug]) if is_asset else (cl[slug] - op[slug])
-        if change != _zero():
-            wc_items.append({
-                'label':  pos_label if change >= _zero() else neg_label,
-                'amount': str(change),
-            })
-
-    wc_total        = sum(Decimal(i['amount']) for i in wc_items)
+    dep_amount = _cashflow_depreciation_addback(tenant, date_from, date_to)
+    wc_items, wc_total = _cashflow_working_capital_changes(op, cl)
     operating_adj   = dep_amount + wc_total
     operating_total = net_profit + operating_adj
 
-    # ── Investing Activities ──────────────────────────────────────────────────
-    investing_items = []
-
-    # Fixed Assets: adjust the NBV change to remove depreciation (already added
-    # back in operating), giving a figure closer to actual purchases / disposals.
-    #   NBV change = purchases − disposals_at_NBV − depreciation
-    #   Cash from FA = −(purchases − disposals_at_NBV)
-    #               = −(NBV change + depreciation)
-    fa_nbv_change = cl['fixed_assets'] - op['fixed_assets']
-    fa_cash        = -(fa_nbv_change + dep_amount)   # negative = net purchase
-    if fa_cash != _zero():
-        label = 'Proceeds from Disposal of Fixed Assets' if fa_cash > _zero() else 'Purchase of Fixed Assets'
-        investing_items.append({'label': label, 'amount': str(fa_cash)})
-
-    # Investments: increase = cash outflow, decrease = cash inflow.
-    inv_cash = -(cl['investments'] - op['investments'])
-    if inv_cash != _zero():
-        label = 'Proceeds from Sale of Investments' if inv_cash > _zero() else 'Purchase of Investments'
-        investing_items.append({'label': label, 'amount': str(inv_cash)})
-
-    investing_total = sum(Decimal(i['amount']) for i in investing_items)
-
-    # ── Financing Activities ──────────────────────────────────────────────────
-    # Debt instruments: increase = borrowed (inflow), decrease = repaid (outflow).
-    financing_items = []
-    for slug, pos_label, neg_label in [
-        ('bank_od',        'Increase in Bank Overdraft',  'Repayment of Bank Overdraft'),
-        ('loans_liability', 'Proceeds from Term Loans',   'Repayment of Term Loans'),
-    ]:
-        change = cl[slug] - op[slug]
-        if change != _zero():
-            financing_items.append({
-                'label':  pos_label if change >= _zero() else neg_label,
-                'amount': str(change),
-            })
-
-    # Owner equity: show only actual owner transactions (injections / withdrawals).
-    # During a period, capital/reserves balances change only from explicit owner
-    # movements (not from P&L — that stays in revenue/expense accounts until
-    # fiscal-year close). If a FY-close entry falls within the period, its effect
-    # on reserves is already reflected in net_profit (operating), so we subtract
-    # net_profit to avoid double-counting.
-    equity_change = (
-        (cl['capital_account'] - op['capital_account'])
-        + (cl['reserves_surplus'] - op['reserves_surplus'])
-    )
-    # Detect whether a FY-close entry exists in this period (rare edge case).
-    from accounting.models import JournalEntry
-    has_fy_close = JournalEntry.objects.filter(
-        tenant=tenant,
-        reference_type=JournalEntry.REF_FY_CLOSE,
-        is_posted=True,
-        date__gte=date_from,
-        date__lte=date_to,
-    ).exists()
-    if has_fy_close:
-        # The FY-close entry transferred net_profit into reserves — subtract to
-        # reverse that so only the actual owner cash movements remain.
-        equity_change -= net_profit
-
-    if equity_change != _zero():
-        label = 'Capital Introduced (Owner Investment)' if equity_change >= _zero() else 'Capital Withdrawn (Drawings)'
-        financing_items.append({'label': label, 'amount': str(equity_change)})
-
-    financing_total = sum(Decimal(i['amount']) for i in financing_items)
+    investing_items, investing_total = _cashflow_investing_items(op, cl, dep_amount)
+    financing_items, financing_total = _cashflow_financing_items(tenant, date_from, date_to, op, cl, net_profit)
 
     # ── Reconciliation ────────────────────────────────────────────────────────
     net_change       = operating_total + investing_total + financing_total
@@ -985,15 +1031,7 @@ def cash_flow(tenant, date_from, date_to):
     expected_closing = opening_cash + net_change
     difference       = closing_cash - expected_closing   # should be zero
 
-    # ── Legacy direct-method payment breakdown (kept for backward compat) ─────
-    by_method: dict = {}
-    for p in Payment.objects.filter(
-        tenant=tenant,
-        date__gte=date_from,
-        date__lte=date_to,
-    ).exclude(method='credit_note').values('method', 'type', 'amount'):
-        by_method.setdefault(p['method'], {'incoming': _zero(), 'outgoing': _zero()})
-        by_method[p['method']][p['type']] += p['amount']
+    by_method = _cashflow_payment_method_breakdown(tenant, date_from, date_to)
 
     return {
         'date_from': str(date_from),
@@ -1086,9 +1124,14 @@ def ledger_report(tenant, account_code, date_from, date_to):
         else:
             running += line.credit - line.debit
         rows.append({
+            'line_id':       line.id,
+            'entry_id':      line.entry_id,
             'date':         str(line.entry.date),
             'entry_number': line.entry.entry_number,
             'description':  line.description or line.entry.description,
+            'reference_type': line.entry.reference_type,
+            'reference_id':  line.entry.reference_id,
+            'purpose':       line.entry.purpose,
             'debit':        line.debit,
             'credit':       line.credit,
             'balance':      running,
@@ -1096,6 +1139,7 @@ def ledger_report(tenant, account_code, date_from, date_to):
 
     return {
         'account_code':  account.code,
+        'account_id':    account.id,
         'account_name':  account.name,
         'date_from':     str(date_from),
         'date_to':       str(date_to),
@@ -1103,6 +1147,245 @@ def ledger_report(tenant, account_code, date_from, date_to):
         'closing_balance': running,
         'transactions':  rows,
     }
+
+
+def report_drill_node(tenant, node_type, node_id, date_from=None, date_to=None):
+    """Resolve a generic drill node for accounting reports.
+
+    Supported nodes:
+    - account -> account ledger transactions (next: journal_entry)
+    - journal_entry -> voucher lines + source reference (next: source document)
+    - invoice | bill | payment | credit_note | debit_note -> source document detail
+    - customer | supplier -> statement transactions within date range
+    """
+    from accounting.models import Account, JournalEntry, Invoice, Bill, Payment, CreditNote, DebitNote
+
+    if node_type == 'account':
+        try:
+            account = Account.objects.get(tenant=tenant, pk=node_id, is_active=True)
+        except Account.DoesNotExist:
+            raise ValueError('Account not found for drill-down.')
+        if not date_from or not date_to:
+            raise ValueError('date_from and date_to are required for account drill-down.')
+        data = ledger_report(tenant, account.code, date_from, date_to)
+        txns = data.get('transactions', [])
+        rows = [
+            {
+                'node_type': 'journal_entry',
+                'node_id': tx.get('entry_id'),
+                'line_id': tx.get('line_id'),
+                'date': tx.get('date'),
+                'entry_number': tx.get('entry_number'),
+                'description': tx.get('description'),
+                'debit': tx.get('debit'),
+                'credit': tx.get('credit'),
+                'balance': tx.get('balance'),
+                'reference_type': tx.get('reference_type'),
+                'reference_id': tx.get('reference_id'),
+            }
+            for tx in txns
+        ]
+        return {
+            'node_type': 'account',
+            'node_id': account.id,
+            'node_label': f'{account.code} — {account.name}',
+            'date_from': str(date_from),
+            'date_to': str(date_to),
+            'opening_balance': data.get('opening_balance', _zero()),
+            'closing_balance': data.get('closing_balance', _zero()),
+            'rows': rows,
+        }
+
+    if node_type == 'journal_entry':
+        try:
+            je = JournalEntry.objects.prefetch_related('lines__account').get(
+                tenant=tenant,
+                pk=node_id,
+                is_posted=True,
+            )
+        except JournalEntry.DoesNotExist:
+            raise ValueError('Journal entry not found for drill-down.')
+
+        source_ref = None
+        if je.reference_type and je.reference_id:
+            source_ref = {
+                'node_type': je.reference_type,
+                'node_id': je.reference_id,
+                'label': f"{je.reference_type.replace('_', ' ')} #{je.reference_id}",
+            }
+
+        return {
+            'node_type': 'journal_entry',
+            'node_id': je.id,
+            'node_label': je.entry_number,
+            'date': str(je.date),
+            'description': je.description,
+            'reference_type': je.reference_type,
+            'reference_id': je.reference_id,
+            'source_ref': source_ref,
+            'lines': [
+                {
+                    'line_id': line.id,
+                    'account_id': line.account_id,
+                    'account_code': line.account.code,
+                    'account_name': line.account.name,
+                    'description': line.description,
+                    'debit': line.debit,
+                    'credit': line.credit,
+                }
+                for line in je.lines.all()
+            ],
+        }
+
+    if node_type == 'invoice':
+        try:
+            inv = Invoice.objects.select_related('customer').get(tenant=tenant, pk=node_id)
+        except Invoice.DoesNotExist:
+            raise ValueError('Invoice not found for drill-down.')
+        return {
+            'node_type': 'invoice',
+            'node_id': inv.id,
+            'node_label': inv.invoice_number,
+            'invoice_number': inv.invoice_number,
+            'date': str(inv.date or inv.created_at.date()),
+            'status': inv.status,
+            'customer_id': inv.customer_id,
+            'customer_name': inv.customer_name,
+            'total': inv.total,
+            'amount_due': inv.amount_due,
+            'next_refs': [
+                {
+                    'node_type': 'customer',
+                    'node_id': inv.customer_id,
+                    'label': inv.customer_name,
+                }
+            ] if inv.customer_id else [],
+        }
+
+    if node_type == 'bill':
+        try:
+            bill = Bill.objects.select_related('supplier').get(tenant=tenant, pk=node_id)
+        except Bill.DoesNotExist:
+            raise ValueError('Bill not found for drill-down.')
+        supplier_name = bill.supplier.name if bill.supplier else (bill.supplier_name or '')
+        return {
+            'node_type': 'bill',
+            'node_id': bill.id,
+            'node_label': bill.bill_number,
+            'bill_number': bill.bill_number,
+            'date': str(bill.date or bill.created_at.date()),
+            'status': bill.status,
+            'supplier_id': bill.supplier_id,
+            'supplier_name': supplier_name,
+            'total': bill.total,
+            'amount_due': bill.amount_due,
+            'next_refs': [
+                {
+                    'node_type': 'supplier',
+                    'node_id': bill.supplier_id,
+                    'label': supplier_name,
+                }
+            ] if bill.supplier_id else [],
+        }
+
+    if node_type == 'payment':
+        try:
+            pay = Payment.objects.select_related('invoice', 'bill').get(tenant=tenant, pk=node_id)
+        except Payment.DoesNotExist:
+            raise ValueError('Payment not found for drill-down.')
+        refs = []
+        if pay.invoice_id:
+            refs.append({'node_type': 'invoice', 'node_id': pay.invoice_id, 'label': pay.invoice_number})
+        if pay.bill_id:
+            refs.append({'node_type': 'bill', 'node_id': pay.bill_id, 'label': pay.bill_number})
+        return {
+            'node_type': 'payment',
+            'node_id': pay.id,
+            'node_label': pay.payment_number,
+            'payment_number': pay.payment_number,
+            'date': str(pay.date),
+            'status': pay.cheque_status or pay.type,
+            'amount': pay.amount,
+            'type': pay.type,
+            'method': pay.method,
+            'next_refs': refs,
+        }
+
+    if node_type == 'credit_note':
+        try:
+            cn = CreditNote.objects.select_related('invoice').get(tenant=tenant, pk=node_id)
+        except CreditNote.DoesNotExist:
+            raise ValueError('Credit note not found for drill-down.')
+        return {
+            'node_type': 'credit_note',
+            'node_id': cn.id,
+            'node_label': cn.credit_note_number,
+            'credit_note_number': cn.credit_note_number,
+            'date': str(cn.created_at.date()),
+            'status': cn.status,
+            'total': cn.total,
+            'next_refs': [
+                {
+                    'node_type': 'invoice',
+                    'node_id': cn.invoice_id,
+                    'label': cn.invoice_number,
+                }
+            ] if cn.invoice_id else [],
+        }
+
+    if node_type == 'debit_note':
+        try:
+            dn = DebitNote.objects.select_related('bill').get(tenant=tenant, pk=node_id)
+        except DebitNote.DoesNotExist:
+            raise ValueError('Debit note not found for drill-down.')
+        return {
+            'node_type': 'debit_note',
+            'node_id': dn.id,
+            'node_label': dn.debit_note_number,
+            'debit_note_number': dn.debit_note_number,
+            'date': str(dn.created_at.date()),
+            'status': dn.status,
+            'total': dn.total,
+            'next_refs': [
+                {
+                    'node_type': 'bill',
+                    'node_id': dn.bill_id,
+                    'label': dn.bill_number,
+                }
+            ] if dn.bill_id else [],
+        }
+
+    if node_type == 'customer':
+        if not date_from or not date_to:
+            raise ValueError('date_from and date_to are required for customer drill-down.')
+        data = customer_statement(tenant, node_id, date_from, date_to)
+        return {
+            'node_type': 'customer',
+            'node_id': node_id,
+            'node_label': data.get('customer', {}).get('name', f'Customer #{node_id}'),
+            'date_from': str(date_from),
+            'date_to': str(date_to),
+            'opening_balance': data.get('opening_balance', _zero()),
+            'closing_balance': data.get('closing_balance', _zero()),
+            'rows': data.get('transactions', []),
+        }
+
+    if node_type == 'supplier':
+        if not date_from or not date_to:
+            raise ValueError('date_from and date_to are required for supplier drill-down.')
+        data = supplier_statement(tenant, node_id, date_from, date_to)
+        return {
+            'node_type': 'supplier',
+            'node_id': node_id,
+            'node_label': data.get('supplier', {}).get('name', f'Supplier #{node_id}'),
+            'date_from': str(date_from),
+            'date_to': str(date_to),
+            'opening_balance': data.get('opening_balance', _zero()),
+            'closing_balance': data.get('closing_balance', _zero()),
+            'rows': data.get('transactions', []),
+        }
+
+    raise ValueError(f'Unsupported drill node_type: {node_type}')
 
 
 # ─── Day Book ────────────────────────────────────────────────────────────────────
@@ -1226,6 +1509,7 @@ def gl_master(tenant, date_from, date_to):
             continue  # skip completely untouched accounts
 
         rows.append({
+            'account_id':       acc.pk,
             'code':             acc.code,
             'name':             acc.name,
             'type':             acc.type,
@@ -1259,8 +1543,8 @@ def customer_receivable_summary(tenant, as_of_date):
 
     invoices = (
         Invoice.objects
-        .filter(tenant=tenant, status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID],
-                created_at__date__lte=as_of_date)
+        .filter(tenant=tenant, status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID])
+        .filter(Q(date__lte=as_of_date) | Q(date__isnull=True, created_at__date__lte=as_of_date))
         .select_related('customer')
         .annotate(paid_sum=Coalesce(DSum('payments__amount'), Value(_zero()), output_field=DecimalField()))
     )
@@ -1308,8 +1592,8 @@ def invoice_age_detail(tenant, as_of_date):
 
     invoices = (
         Invoice.objects
-        .filter(tenant=tenant, status=Invoice.STATUS_ISSUED,
-                created_at__date__lte=as_of_date)
+        .filter(tenant=tenant, status=Invoice.STATUS_ISSUED)
+        .filter(Q(date__lte=as_of_date) | Q(date__isnull=True, created_at__date__lte=as_of_date))
         .select_related('customer')
         .annotate(paid_sum=Coalesce(DSum('payments__amount'), Value(_zero()), output_field=DecimalField()))
         .order_by('due_date', 'created_at')
@@ -1317,8 +1601,8 @@ def invoice_age_detail(tenant, as_of_date):
 
     rows = []
     for inv in invoices:
-        outstanding = float(max(inv.total - inv.paid_sum, _zero()))
-        if outstanding <= 0:
+        outstanding = max(inv.total - inv.paid_sum, _zero())
+        if outstanding <= _zero():
             continue
         due = inv.due_date
         days = (as_of_date - due).days if due else 0
@@ -1333,13 +1617,15 @@ def invoice_age_detail(tenant, as_of_date):
         else:
             bucket = '90_plus'
         rows.append({
+            'invoice_id':     inv.pk,
             'invoice_number': inv.invoice_number,
+            'customer_id':    inv.customer_id,
             'customer':       inv.customer.name if inv.customer else '',
             'date':           str(inv.created_at.date()),
             'due_date':       str(due) if due else None,
             'days_overdue':   max(days, 0),
-            'total':          float(inv.total),
-            'paid':           float(inv.paid_sum),
+            'total':          inv.total,
+            'paid':           inv.paid_sum,
             'outstanding':    outstanding,
             'bucket':         bucket,
         })
@@ -1369,7 +1655,8 @@ def customer_statement(tenant, customer_id, date_from, date_to):
     inv_before = Invoice.objects.filter(
         tenant=tenant, customer=customer,
         status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID],
-        created_at__date__lt=date_from,
+    ).filter(
+        Q(date__lt=date_from) | Q(date__isnull=True, created_at__date__lt=date_from)
     ).aggregate(t=DSum('total'))['t'] or _zero()
 
     pay_before = Payment.objects.filter(
@@ -1391,12 +1678,12 @@ def customer_statement(tenant, customer_id, date_from, date_to):
 
     for inv in Invoice.objects.filter(
         tenant=tenant, customer=customer,
-        created_at__date__gte=date_from, created_at__date__lte=date_to,
         status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID, Invoice.STATUS_VOID],
-    ).order_by('created_at'):
+    ).filter(_voucher_date_filter(date_from, date_to)).order_by('date', 'created_at'):
+        voucher_date = inv.date or inv.created_at.date()
         txns.append({
-            'sort_key': inv.created_at.isoformat(),
-            'date':      str(inv.created_at.date()),
+            'sort_key': f"{voucher_date.isoformat()}-{inv.pk:010d}",
+            'date':      str(voucher_date),
             'type':      'invoice',
             'reference': inv.invoice_number,
             'description': f"Invoice {inv.invoice_number}",
@@ -1467,9 +1754,11 @@ def supplier_payable_summary(tenant, as_of_date):
 
     bills = (
         Bill.objects
-        .filter(tenant=tenant,
-                status__in=[Bill.STATUS_APPROVED, Bill.STATUS_PAID],
-                created_at__date__lte=as_of_date)
+        .filter(
+            tenant=tenant,
+            status__in=[Bill.STATUS_APPROVED, Bill.STATUS_PAID],
+        )
+        .filter(Q(date__lte=as_of_date) | Q(date__isnull=True, created_at__date__lte=as_of_date))
         .select_related('supplier')
         .annotate(paid_sum=Coalesce(DSum('payments__amount'), Value(_zero()), output_field=DecimalField()))
     )
@@ -1515,8 +1804,8 @@ def bill_age_detail(tenant, as_of_date):
 
     bills = (
         Bill.objects
-        .filter(tenant=tenant, status=Bill.STATUS_APPROVED,
-                created_at__date__lte=as_of_date)
+        .filter(tenant=tenant, status=Bill.STATUS_APPROVED)
+        .filter(Q(date__lte=as_of_date) | Q(date__isnull=True, created_at__date__lte=as_of_date))
         .select_related('supplier')
         .annotate(paid_sum=Coalesce(DSum('payments__amount'), Value(_zero()), output_field=DecimalField()))
         .order_by('due_date', 'created_at')
@@ -1524,8 +1813,8 @@ def bill_age_detail(tenant, as_of_date):
 
     rows = []
     for bill in bills:
-        outstanding = float(max(bill.total - bill.paid_sum, _zero()))
-        if outstanding <= 0:
+        outstanding = max(bill.total - bill.paid_sum, _zero())
+        if outstanding <= _zero():
             continue
         due = bill.due_date
         days = (as_of_date - due).days if due else 0
@@ -1541,13 +1830,15 @@ def bill_age_detail(tenant, as_of_date):
             bucket = '90_plus'
         sname = bill.supplier.name if bill.supplier else bill.supplier_name
         rows.append({
+            'bill_id':      bill.pk,
             'bill_number': bill.bill_number,
+            'supplier_id':  bill.supplier_id,
             'supplier':    sname,
             'date':        str(bill.created_at.date()),
             'due_date':    str(due) if due else None,
             'days_overdue': max(days, 0),
-            'total':       float(bill.total),
-            'paid':        float(bill.paid_sum),
+            'total':       bill.total,
+            'paid':        bill.paid_sum,
             'outstanding': outstanding,
             'bucket':      bucket,
         })
@@ -1576,7 +1867,8 @@ def supplier_statement(tenant, supplier_id, date_from, date_to):
     bill_before = Bill.objects.filter(
         tenant=tenant, supplier=supplier,
         status__in=[Bill.STATUS_APPROVED, Bill.STATUS_PAID],
-        created_at__date__lt=date_from,
+    ).filter(
+        Q(date__lt=date_from) | Q(date__isnull=True, created_at__date__lt=date_from)
     ).aggregate(t=DSum('total'))['t'] or _zero()
 
     pay_before = Payment.objects.filter(
@@ -1597,12 +1889,12 @@ def supplier_statement(tenant, supplier_id, date_from, date_to):
 
     for bill in Bill.objects.filter(
         tenant=tenant, supplier=supplier,
-        created_at__date__gte=date_from, created_at__date__lte=date_to,
         status__in=[Bill.STATUS_APPROVED, Bill.STATUS_PAID, Bill.STATUS_VOID],
-    ).order_by('created_at'):
+    ).filter(_voucher_date_filter(date_from, date_to)).order_by('date', 'created_at'):
+        voucher_date = bill.date or bill.created_at.date()
         txns.append({
-            'sort_key':    bill.created_at.isoformat(),
-            'date':        str(bill.created_at.date()),
+            'sort_key':    f"{voucher_date.isoformat()}-{bill.pk:010d}",
+            'date':        str(voucher_date),
             'type':        'bill',
             'reference':   bill.bill_number,
             'description': f"Bill {bill.bill_number}",
@@ -1668,9 +1960,7 @@ def _active_invoices(tenant, date_from, date_to):
     return Invoice.objects.filter(
         tenant=tenant,
         status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID],
-        created_at__date__gte=date_from,
-        created_at__date__lte=date_to,
-    )
+    ).filter(_voucher_date_filter(date_from, date_to))
 
 
 def sales_by_customer(tenant, date_from, date_to):
@@ -1700,7 +1990,7 @@ def sales_by_customer(tenant, date_from, date_to):
                 'outstanding':   _zero(),
                 'invoice_count': 0,
             }
-            outstanding = max(inv.total - inv.paid_sum, _zero())
+        outstanding = max(inv.total - inv.paid_sum, _zero())
         summary[cid]['subtotal']      += inv.subtotal
         summary[cid]['discount']      += inv.discount
         summary[cid]['vat_amount']    += inv.vat_amount
@@ -1733,7 +2023,13 @@ def sales_by_item(tenant, date_from, date_to):
         for line in (inv.line_items or []):
             key  = line.get('product_name') or line.get('description') or 'Unspecified'
             qty  = Decimal(str(line.get('qty') or line.get('quantity') or 0))
-            amt  = Decimal(str(line.get('amount') or 0))
+            amt_raw = line.get('amount')
+            if amt_raw is not None:
+                amt = Decimal(str(amt_raw))
+            else:
+                unit_price = Decimal(str(line.get('unit_price') or 0))
+                discount_pct = Decimal(str(line.get('discount') or 0)) / Decimal('100')
+                amt = qty * unit_price * (Decimal('1') - discount_pct)
             items[key]['description']  = key
             items[key]['total_qty']   += qty
             items[key]['total_amount'] += amt
@@ -1760,7 +2056,8 @@ def sales_by_customer_monthly(tenant, date_from, date_to):
 
     for inv in qs:
         cname = inv.customer.name if inv.customer else '(No Customer)'
-        m = f"{inv.created_at.year}-{inv.created_at.month:02d}"
+        voucher_date = inv.date or inv.created_at.date()
+        m = f"{voucher_date.year}-{voucher_date.month:02d}"
         data[cname][m] += inv.total
         months_set.add(m)
 
@@ -1833,7 +2130,9 @@ def sales_master(tenant, date_from, date_to):
     rows = []
     for inv in qs:
         rows.append({
+            'invoice_id':     inv.pk,
             'invoice_number': inv.invoice_number,
+            'customer_id':    inv.customer_id,
             'date':           str(inv.created_at.date()),
             'customer':       inv.customer.name if inv.customer else '',
             'pan_vat':        inv.customer.vat_number if inv.customer else '',
@@ -2081,7 +2380,9 @@ def purchase_master(tenant, date_from, date_to):
     rows = []
     for bill in qs:
         rows.append({
+            'bill_id':     bill.pk,
             'bill_number': bill.bill_number,
+            'supplier_id': bill.supplier_id,
             'date':        str(bill.created_at.date()),
             'supplier':    bill.supplier.name if bill.supplier else bill.supplier_name,
             'subtotal':    bill.subtotal,

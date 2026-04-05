@@ -267,6 +267,12 @@ class Supplier(TenantModel):
     """Vendor/supplier that products are purchased from."""
 
     name           = models.CharField(max_length=255)
+    party          = models.OneToOneField(
+        'parties.Party',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='supplier_profile',
+    )
     contact_person = models.CharField(max_length=128, blank=True)
     email          = models.EmailField(blank=True)
     phone          = models.CharField(max_length=32, blank=True)

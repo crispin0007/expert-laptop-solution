@@ -77,6 +77,39 @@ def _get_account_by_group(tenant, group_slug, fallback_code=None):
     )
 
 
+def _get_party_account_or_fallback(*, tenant, party, group_slug, fallback_code):
+    """Return party sub-ledger account when valid, else control/group fallback."""
+    if party is not None and getattr(party, 'account_id', None):
+        account = getattr(party, 'account', None)
+        if account is not None and getattr(account, 'tenant_id', None) == tenant.id and account.is_active:
+            return account
+    return _get_account_by_group(tenant, group_slug, fallback_code)
+
+
+def _incoming_contra_account(payment, tenant):
+    party = getattr(payment, 'party', None)
+    if party is None and payment.invoice_id and payment.invoice:
+        party = getattr(payment.invoice, 'party', None)
+    return _get_party_account_or_fallback(
+        tenant=tenant,
+        party=party,
+        group_slug='sundry_debtors',
+        fallback_code='1200',
+    )
+
+
+def _bill_clear_account(payment, tenant):
+    party = getattr(payment, 'party', None)
+    if party is None and payment.bill:
+        party = getattr(payment.bill, 'party', None)
+    return _get_party_account_or_fallback(
+        tenant=tenant,
+        party=party,
+        group_slug='sundry_creditors',
+        fallback_code='2100',
+    )
+
+
 def _make_entry(tenant, created_by, date, description, reference_type, reference_id, lines,
                 purpose='', reversal_reason='', reversed_by_user=None, reversal_timestamp=None):
     """
@@ -229,7 +262,12 @@ def create_invoice_journal(invoice, created_by=None):
     always balances, regardless of document-level discounts or rounding.
     """
     tenant   = invoice.tenant
-    ar       = _get_account_by_group(tenant, 'sundry_debtors',   '1200')
+    ar       = _get_party_account_or_fallback(
+        tenant=tenant,
+        party=getattr(invoice, 'party', None),
+        group_slug='sundry_debtors',
+        fallback_code='1200',
+    )
     svc_rev  = _get_account_by_group(tenant, 'sales_accounts',   '4100')
     prod_rev = _get_account_by_group(tenant, 'sales_accounts',   '4200')
     vat_pay  = _get_account_by_group(tenant, 'duties_taxes_vat', '2200')
@@ -268,7 +306,12 @@ def reverse_invoice_journal(invoice, created_by=None):
       Cr  Accounts Receivable 1200 (total)
     """
     tenant   = invoice.tenant
-    ar       = _get_account_by_group(tenant, 'sundry_debtors',   '1200')
+    ar       = _get_party_account_or_fallback(
+        tenant=tenant,
+        party=getattr(invoice, 'party', None),
+        group_slug='sundry_debtors',
+        fallback_code='1200',
+    )
     svc_rev  = _get_account_by_group(tenant, 'sales_accounts',   '4100')
     prod_rev = _get_account_by_group(tenant, 'sales_accounts',   '4200')
     vat_pay  = _get_account_by_group(tenant, 'duties_taxes_vat', '2200')
@@ -314,7 +357,12 @@ def create_bill_journal(bill, created_by=None):
     """
     tenant  = bill.tenant
     expense = _get_account_by_group(tenant, 'indirect_expense',  '5300')  # Other Expenses — NOT 5100 COGS
-    ap      = _get_account_by_group(tenant, 'sundry_creditors',  '2100')
+    ap      = _get_party_account_or_fallback(
+        tenant=tenant,
+        party=getattr(bill, 'party', None),
+        group_slug='sundry_creditors',
+        fallback_code='2100',
+    )
     vat_pay = _get_account_by_group(tenant, 'duties_taxes_vat',  '2200')
 
     lines = [
@@ -371,7 +419,7 @@ def create_payment_journal(payment, created_by=None):
             cr_desc = f"Receipt – {payment.payment_number} ({contra_acc.name})"
         else:
             # Standard: Dr Cash/Bank → Cr Accounts Receivable (clears invoice)
-            contra_acc = _get_account_by_group(tenant, 'sundry_debtors', '1200')
+            contra_acc = _incoming_contra_account(payment, tenant)
             cr_desc = f"Clear AR – {payment.payment_number}"
         lines = [
             (cash_acc,   payment.amount, Decimal('0'), f"Receipt – {payment.payment_number}"),
@@ -380,7 +428,7 @@ def create_payment_journal(payment, created_by=None):
         desc = f"Receipt {payment.payment_number}"
     elif payment.bill_id:
         # Outgoing: supplier bill payment — clears Accounts Payable
-        ap = _get_account_by_group(tenant, 'sundry_creditors', '2100')
+        ap = _bill_clear_account(payment, tenant)
         lines = [
             (ap,       payment.amount, Decimal('0'), f"Clear AP – {payment.payment_number}"),
             (cash_acc, Decimal('0'),   payment.amount, f"Payment – {payment.payment_number}"),
@@ -418,7 +466,12 @@ def create_credit_note_journal(credit_note, created_by=None):
       Cr  Accounts Receivable 1200 (total      — customer owes us less)
     """
     tenant   = credit_note.tenant
-    ar       = _get_account_by_group(tenant, 'sundry_debtors',   '1200')
+    ar       = _get_party_account_or_fallback(
+        tenant=tenant,
+        party=getattr(getattr(credit_note, 'invoice', None), 'party', None),
+        group_slug='sundry_debtors',
+        fallback_code='1200',
+    )
     svc_rev  = _get_account_by_group(tenant, 'sales_accounts',   '4100')
     prod_rev = _get_account_by_group(tenant, 'sales_accounts',   '4200')
     vat_pay  = _get_account_by_group(tenant, 'duties_taxes_vat', '2200')
@@ -460,7 +513,12 @@ def reverse_credit_note_journal(credit_note, created_by=None):
       Cr  VAT Payable          2200  (vat_amount — restore the VAT liability)
     """
     tenant   = credit_note.tenant
-    ar       = _get_account_by_group(tenant, 'sundry_debtors',   '1200')
+    ar       = _get_party_account_or_fallback(
+        tenant=tenant,
+        party=getattr(getattr(credit_note, 'invoice', None), 'party', None),
+        group_slug='sundry_debtors',
+        fallback_code='1200',
+    )
     svc_rev  = _get_account_by_group(tenant, 'sales_accounts',   '4100')
     prod_rev = _get_account_by_group(tenant, 'sales_accounts',   '4200')
     vat_pay  = _get_account_by_group(tenant, 'duties_taxes_vat', '2200')
@@ -502,7 +560,12 @@ def reverse_debit_note_journal(debit_note, created_by=None):
       Cr  Accounts Payable 2100 (restore what we owe the supplier)
     """
     t = debit_note.tenant
-    ap_acc      = _get_account_by_group(t, 'sundry_creditors',  '2100')
+    ap_acc      = _get_party_account_or_fallback(
+        tenant=t,
+        party=getattr(getattr(debit_note, 'bill', None), 'party', None),
+        group_slug='sundry_creditors',
+        fallback_code='2100',
+    )
     expense_acc = _get_account_by_group(t, 'indirect_expense',  '5300')
     vat_acc     = _get_account_by_group(t, 'duties_taxes_vat',  '2200')
 
@@ -895,6 +958,7 @@ DEFAULT_ACCOUNTS = [
     # (code, name, type, parent_code, is_system)
     ('1000', 'Assets',               'asset',     None,   True),
     ('1100', 'Cash',                 'asset',     '1000', True),
+    ('1150', 'Bank Accounts',        'asset',     '1000', True),
     ('1200', 'Accounts Receivable',  'asset',     '1000', True),
     ('1300', 'Inventory Asset',      'asset',     '1000', True),
     ('2000', 'Liabilities',          'liability', None,   True),
@@ -980,6 +1044,49 @@ def seed_chart_of_accounts(tenant, created_by=None):
     return created_map
 
 
+def ensure_bank_control_account(tenant, created_by=None):
+    """Ensure tenant has Bank Accounts control ledger (1150) under Assets (1000)."""
+    from accounting.models import Account, AccountGroup
+
+    assets_parent = Account.objects.filter(tenant=tenant, code='1000').first()
+    group = AccountGroup.objects.filter(tenant=tenant, slug='bank_accounts').first()
+
+    control, _ = Account.objects.get_or_create(
+        tenant=tenant,
+        code='1150',
+        defaults={
+            'name': 'Bank Accounts',
+            'type': Account.TYPE_ASSET,
+            'parent': assets_parent,
+            'group': group,
+            'is_system': True,
+            'created_by': created_by,
+        },
+    )
+
+    update_fields = []
+    if control.parent_id != getattr(assets_parent, 'id', None):
+        control.parent = assets_parent
+        update_fields.append('parent')
+    if group is not None and control.group_id != group.id:
+        control.group = group
+        update_fields.append('group')
+    if control.type != Account.TYPE_ASSET:
+        control.type = Account.TYPE_ASSET
+        update_fields.append('type')
+    if control.name != 'Bank Accounts':
+        control.name = 'Bank Accounts'
+        update_fields.append('name')
+    if not control.is_system:
+        control.is_system = True
+        update_fields.append('is_system')
+
+    if update_fields:
+        control.save(update_fields=update_fields)
+
+    return control
+
+
 # ─── Debit Note journal (purchase return to supplier) ────────────────────────
 
 def create_debit_note_journal(debit_note, created_by=None):
@@ -994,7 +1101,12 @@ def create_debit_note_journal(debit_note, created_by=None):
     from accounting.models import Account
     t = debit_note.tenant
 
-    ap_acc      = _get_account_by_group(t, 'sundry_creditors', '2100')
+    ap_acc      = _get_party_account_or_fallback(
+        tenant=t,
+        party=getattr(getattr(debit_note, 'bill', None), 'party', None),
+        group_slug='sundry_creditors',
+        fallback_code='2100',
+    )
     expense_acc = _get_account_by_group(t, 'indirect_expense', '5300')
     vat_acc     = _get_account_by_group(t, 'duties_taxes_vat', '2200')
 

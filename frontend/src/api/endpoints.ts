@@ -202,6 +202,8 @@ export const ACCOUNTING = {
   REPORT_PRODUCT_PROFITABILITY: '/accounting/reports/product-profitability/',
   // Drill-down: vouchers for a single account
   REPORT_ACCOUNT_VOUCHERS: '/accounting/reports/account-vouchers/',
+  // Generic drill-down endpoint
+  REPORT_DRILL: '/accounting/reports/drill/',
   // System
   REPORT_ACTIVITY_LOG: '/accounting/reports/activity-log/',
   REPORT_USER_LOG: '/accounting/reports/user-log/',

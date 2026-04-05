@@ -57,6 +57,7 @@ INSTALLED_APPS = [
 
     # local — Sprint 2
     'customers',
+    'parties',
     'departments',
     'roles',
 
