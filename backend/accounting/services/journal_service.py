@@ -1449,57 +1449,74 @@ ACCOUNT_CODE_TO_GROUP = {
 }
 
 # ── GROUP_DEFS ────────────────────────────────────────────────────────────────
-# 22 standard Tally-style groups seeded per tenant.
+# System group hierarchy:
+#   [type]_root -> standard system groups for that type.
 _GROUP_DEFS = [
+    # Root nodes
+    {'slug': 'assets_root',          'name': 'Assets',                    'type': 'asset',
+     'report_section': 'bs_current_assets',       'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 1,  'parent_slug': None},
+    {'slug': 'liabilities_root',     'name': 'Liabilities',               'type': 'liability',
+     'report_section': 'bs_current_liabilities',  'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 2,  'parent_slug': None},
+    {'slug': 'equity_root',          'name': 'Equity',                    'type': 'equity',
+     'report_section': 'bs_capital',              'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 3,  'parent_slug': None},
+    {'slug': 'revenue_root',         'name': 'Revenue',                   'type': 'revenue',
+     'report_section': 'pnl_net',                'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 4,  'parent_slug': None},
+    {'slug': 'expense_root',         'name': 'Expenses',                  'type': 'expense',
+     'report_section': 'pnl_net',                'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 5,  'parent_slug': None},
+
     # Revenue
     {'slug': 'sales_accounts',       'name': 'Sales Accounts',            'type': 'revenue',
-     'report_section': 'pnl_gross', 'normal_balance': 'credit', 'affects_gross_profit': True,  'order': 10},
+     'report_section': 'pnl_gross', 'normal_balance': 'credit', 'affects_gross_profit': True,  'order': 10, 'parent_slug': 'revenue_root'},
     {'slug': 'direct_income',        'name': 'Direct Income',             'type': 'revenue',
-     'report_section': 'pnl_gross', 'normal_balance': 'credit', 'affects_gross_profit': True,  'order': 11},
+     'report_section': 'pnl_gross', 'normal_balance': 'credit', 'affects_gross_profit': True,  'order': 11, 'parent_slug': 'revenue_root'},
     {'slug': 'indirect_income',      'name': 'Indirect Income',           'type': 'revenue',
-     'report_section': 'pnl_net',   'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 12},
+     'report_section': 'pnl_net',   'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 12, 'parent_slug': 'revenue_root'},
+
     # Expense
     {'slug': 'purchase_accounts',    'name': 'Purchase Accounts',         'type': 'expense',
-     'report_section': 'pnl_gross', 'normal_balance': 'debit',  'affects_gross_profit': True,  'order': 20},
+     'report_section': 'pnl_gross', 'normal_balance': 'debit',  'affects_gross_profit': True,  'order': 20, 'parent_slug': 'expense_root'},
     {'slug': 'direct_expense',       'name': 'Direct Expenses',           'type': 'expense',
-     'report_section': 'pnl_gross', 'normal_balance': 'debit',  'affects_gross_profit': True,  'order': 21},
+     'report_section': 'pnl_gross', 'normal_balance': 'debit',  'affects_gross_profit': True,  'order': 21, 'parent_slug': 'expense_root'},
     {'slug': 'indirect_expense',     'name': 'Indirect Expenses',         'type': 'expense',
-     'report_section': 'pnl_net',   'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 22},
+     'report_section': 'pnl_net',   'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 22, 'parent_slug': 'expense_root'},
+
     # Assets
     {'slug': 'fixed_assets',         'name': 'Fixed Assets',              'type': 'asset',
-     'report_section': 'bs_fixed_assets',       'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 30},
+     'report_section': 'bs_fixed_assets',       'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 30, 'parent_slug': 'assets_root'},
     {'slug': 'investments',          'name': 'Investments',               'type': 'asset',
-     'report_section': 'bs_investments',        'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 31},
+     'report_section': 'bs_investments',        'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 31, 'parent_slug': 'assets_root'},
     {'slug': 'stock_in_hand',        'name': 'Stock in Hand',             'type': 'asset',
-     'report_section': 'bs_current_assets',     'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 32},
+     'report_section': 'bs_current_assets',     'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 32, 'parent_slug': 'assets_root'},
     {'slug': 'sundry_debtors',       'name': 'Sundry Debtors',            'type': 'asset',
-     'report_section': 'bs_current_assets',     'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 33},
+     'report_section': 'bs_current_assets',     'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 33, 'parent_slug': 'assets_root'},
     {'slug': 'bank_accounts',        'name': 'Bank Accounts',             'type': 'asset',
-     'report_section': 'bs_current_assets',     'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 34},
+     'report_section': 'bs_current_assets',     'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 34, 'parent_slug': 'assets_root'},
     {'slug': 'cash_in_hand',         'name': 'Cash in Hand',              'type': 'asset',
-     'report_section': 'bs_current_assets',     'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 35},
+     'report_section': 'bs_current_assets',     'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 35, 'parent_slug': 'assets_root'},
     {'slug': 'loans_advances_asset', 'name': 'Loans & Advances (Asset)',  'type': 'asset',
-     'report_section': 'bs_current_assets',     'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 36},
+     'report_section': 'bs_current_assets',     'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 36, 'parent_slug': 'assets_root'},
     {'slug': 'other_current_assets', 'name': 'Other Current Assets',      'type': 'asset',
-     'report_section': 'bs_current_assets',     'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 37},
+     'report_section': 'bs_current_assets',     'normal_balance': 'debit',  'affects_gross_profit': False, 'order': 37, 'parent_slug': 'assets_root'},
+
     # Liabilities
     {'slug': 'sundry_creditors',     'name': 'Sundry Creditors',          'type': 'liability',
-     'report_section': 'bs_current_liabilities', 'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 40},
+     'report_section': 'bs_current_liabilities', 'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 40, 'parent_slug': 'liabilities_root'},
     {'slug': 'duties_taxes_vat',     'name': 'Duties & Taxes (VAT)',      'type': 'liability',
-     'report_section': 'bs_current_liabilities', 'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 41},
+     'report_section': 'bs_current_liabilities', 'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 41, 'parent_slug': 'liabilities_root'},
     {'slug': 'duties_taxes_tds',     'name': 'Duties & Taxes (TDS)',      'type': 'liability',
-     'report_section': 'bs_current_liabilities', 'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 42},
+     'report_section': 'bs_current_liabilities', 'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 42, 'parent_slug': 'liabilities_root'},
     {'slug': 'current_liabilities',  'name': 'Current Liabilities',       'type': 'liability',
-     'report_section': 'bs_current_liabilities', 'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 43},
+     'report_section': 'bs_current_liabilities', 'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 43, 'parent_slug': 'liabilities_root'},
     {'slug': 'bank_od',              'name': 'Bank OD & Overdraft',       'type': 'liability',
-     'report_section': 'bs_loans',              'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 44},
+     'report_section': 'bs_loans',              'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 44, 'parent_slug': 'liabilities_root'},
     {'slug': 'loans_liability',      'name': 'Loans (Liability)',          'type': 'liability',
-     'report_section': 'bs_loans',              'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 45},
+     'report_section': 'bs_loans',              'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 45, 'parent_slug': 'liabilities_root'},
+
     # Equity
     {'slug': 'capital_account',      'name': 'Capital Account',           'type': 'equity',
-     'report_section': 'bs_capital',            'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 50},
+     'report_section': 'bs_capital',            'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 50, 'parent_slug': 'equity_root'},
     {'slug': 'reserves_surplus',     'name': 'Reserves & Surplus',        'type': 'equity',
-     'report_section': 'bs_capital',            'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 51},
+     'report_section': 'bs_capital',            'normal_balance': 'credit', 'affects_gross_profit': False, 'order': 51, 'parent_slug': 'equity_root'},
 ]
 
 
@@ -1555,7 +1572,7 @@ def _slug_for_code(code: str, acct_type: str) -> str | None:
 
 def seed_account_groups(tenant, created_by=None) -> dict:
     """
-    Idempotently create the 22 standard AccountGroups for a tenant.
+    Idempotently create the standard system AccountGroups for a tenant.
     Also backfills Account.group FK for any account that doesn't have one yet,
     using code-range matching (_slug_for_code).
 
@@ -1568,6 +1585,8 @@ def seed_account_groups(tenant, created_by=None) -> dict:
     from accounting.models import AccountGroup, Account
 
     group_map: dict = {}
+    desired_by_slug = {d['slug']: d for d in _GROUP_DEFS}
+
     for d in _GROUP_DEFS:
         grp, _ = AccountGroup.objects.get_or_create(
             tenant=tenant,
@@ -1583,7 +1602,41 @@ def seed_account_groups(tenant, created_by=None) -> dict:
                 'is_active':            True,
             },
         )
+        # Keep seeded system-group metadata aligned across old tenants.
+        update_fields = []
+        if grp.is_system is False:
+            grp.is_system = True
+            update_fields.append('is_system')
+        if grp.is_active is False:
+            grp.is_active = True
+            update_fields.append('is_active')
+        if grp.type != d['type']:
+            grp.type = d['type']
+            update_fields.append('type')
+        if grp.report_section != d['report_section']:
+            grp.report_section = d['report_section']
+            update_fields.append('report_section')
+        if grp.normal_balance != d['normal_balance']:
+            grp.normal_balance = d['normal_balance']
+            update_fields.append('normal_balance')
+        if grp.affects_gross_profit != d['affects_gross_profit']:
+            grp.affects_gross_profit = d['affects_gross_profit']
+            update_fields.append('affects_gross_profit')
+        if grp.order != d['order']:
+            grp.order = d['order']
+            update_fields.append('order')
+        if update_fields:
+            grp.save(update_fields=update_fields)
+
         group_map[d['slug']] = grp
+
+    # Enforce parent hierarchy for seeded system groups.
+    for slug, grp in group_map.items():
+        parent_slug = desired_by_slug.get(slug, {}).get('parent_slug')
+        desired_parent = group_map.get(parent_slug) if parent_slug else None
+        if grp.parent_id != getattr(desired_parent, 'id', None):
+            grp.parent = desired_parent
+            grp.save(update_fields=['parent'])
 
     # Backfill unassigned accounts using code-range matching
     unassigned = Account.objects.filter(tenant=tenant, group__isnull=True, is_active=True)
