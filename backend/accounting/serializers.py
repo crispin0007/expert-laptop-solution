@@ -113,42 +113,6 @@ class AccountGroupSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class AccountGroupWriteSerializer(serializers.ModelSerializer):
-    """Write serializer for custom AccountGroup CRUD."""
-
-    class Meta:
-        model = AccountGroup
-        fields = (
-            'id', 'slug', 'name', 'description', 'type',
-            'report_section', 'affects_gross_profit', 'normal_balance',
-            'parent', 'order', 'is_active',
-        )
-        read_only_fields = ('id',)
-
-    def validate_parent(self, parent):
-        if parent is None:
-            return parent
-        tenant = _tenant_from_context(self)
-        _ensure_same_tenant(parent, tenant, 'parent')
-        return parent
-
-    def validate_slug(self, slug):
-        if not slug:
-            return slug
-        return slug.strip().lower().replace(' ', '_')
-
-    def validate(self, attrs):
-        parent = attrs.get('parent', self.instance.parent if self.instance else None)
-        group_type = attrs.get('type', self.instance.type if self.instance else None)
-        if parent is not None and group_type is not None and parent.type != group_type:
-            raise serializers.ValidationError({'parent': 'Parent group type must match group type.'})
-
-        if self.instance is not None and self.instance.is_system:
-            raise serializers.ValidationError('System groups cannot be modified.')
-
-        return attrs
-
-
 # ─── Chart of Accounts ───────────────────────────────────────────────────────
 
 class AccountSerializer(serializers.ModelSerializer):

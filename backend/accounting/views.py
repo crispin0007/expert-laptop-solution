@@ -3,7 +3,6 @@ accounting/views.py — Full accounting module viewsets.
 """
 import logging
 from decimal import Decimal
-from django.db import IntegrityError
 from rest_framework import viewsets, permissions, status
 
 logger = logging.getLogger(__name__)
@@ -35,7 +34,7 @@ from .models import (
     CostCentre, FiscalYearClose, PaymentAllocation,
 )
 from .serializers import (
-    AccountGroupSerializer, AccountGroupWriteSerializer,
+    AccountGroupSerializer,
     CoinTransactionSerializer, PayslipSerializer, InvoiceSerializer,
     AccountSerializer, JournalEntrySerializer, JournalEntryWriteSerializer,
     BankAccountSerializer, BillSerializer, PaymentSerializer, CreditNoteSerializer,
@@ -48,6 +47,13 @@ from .serializers import (
 )
 
 
+def _parse_csv_values(raw_value: str) -> list[str]:
+    """Parse comma-separated query param values, skipping empty tokens."""
+    if not raw_value:
+        return []
+    return [item.strip() for item in raw_value.split(',') if item.strip()]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Account Groups
 # ─────────────────────────────────────────────────────────────────────────────
@@ -56,108 +62,30 @@ class AccountGroupViewSet(NexusViewSet):
     """
     AccountGroup management for the current tenant.
     - list/retrieve: manager+
-    - create/update/delete: admin+
+    - create/update/delete: disabled (read-only endpoint)
     """
 
     queryset         = AccountGroup.objects.all()
     serializer_class = AccountGroupSerializer
     required_module  = 'accounting'
-    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
+    http_method_names = ['get', 'head', 'options']
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
-            return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
-        return [permissions.IsAuthenticated(), make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')()]
-
-    def get_serializer_class(self):
-        if self.action in ('create', 'update', 'partial_update'):
-            return AccountGroupWriteSerializer
-        return AccountGroupSerializer
+            return [
+                permissions.IsAuthenticated(),
+                make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')(),
+            ]
+        return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
         self.ensure_tenant()
         qs = AccountGroup.objects.filter(tenant=self.tenant, is_active=True).order_by('order', 'name')
         if acct_type := self.request.query_params.get('type'):
-            types = [t.strip() for t in acct_type.split(',') if t.strip()]
-            qs = qs.filter(type__in=types) if len(types) > 1 else qs.filter(type=types[0])
+            types = _parse_csv_values(acct_type)
+            if types:
+                qs = qs.filter(type__in=types) if len(types) > 1 else qs.filter(type=types[0])
         return qs
-
-    def create(self, request, *args, **kwargs):
-        self.ensure_tenant()
-        from accounting.services.journal_service import seed_account_groups
-
-        # Ensure system group roots exist before creating custom groups.
-        group_map = seed_account_groups(self.tenant)
-
-        serializer = self.get_serializer(data=request.data, context=self.get_serializer_context())
-        serializer.is_valid(raise_exception=True)
-
-        slug = serializer.validated_data.get('slug')
-        if slug and AccountGroup.objects.filter(tenant=self.tenant, slug=slug).exists():
-            raise ConflictError(f"Account group slug '{slug}' already exists.")
-
-        group_type = serializer.validated_data.get('type')
-        root_slug_by_type = {
-            'asset': 'assets_root',
-            'liability': 'liabilities_root',
-            'equity': 'equity_root',
-            'revenue': 'revenue_root',
-            'expense': 'expense_root',
-        }
-        target_parent = group_map.get(root_slug_by_type.get(group_type, ''))
-
-        # Fallback for older tenants if root is unexpectedly missing.
-        if target_parent is None:
-            target_parent = (
-                AccountGroup.objects.filter(
-                    tenant=self.tenant,
-                    type=group_type,
-                    is_system=True,
-                    is_active=True,
-                    parent__isnull=True,
-                )
-                .order_by('order', 'id')
-                .first()
-            )
-
-        try:
-            group = serializer.save(
-                tenant=self.tenant,
-                created_by=request.user,
-                is_system=False,
-                parent=target_parent,
-            )
-        except IntegrityError:
-            raise ConflictError('Account group with this slug already exists.')
-        return ApiResponse.created(data=AccountGroupSerializer(group).data)
-
-    def update(self, request, *args, **kwargs):
-        partial = kwargs.pop('partial', False)
-        instance = self.get_object()
-        if instance.is_system:
-            raise ConflictError('System groups cannot be edited.')
-        serializer = self.get_serializer(
-            instance,
-            data=request.data,
-            partial=partial,
-            context=self.get_serializer_context(),
-        )
-        serializer.is_valid(raise_exception=True)
-        group = serializer.save()
-        return ApiResponse.success(data=AccountGroupSerializer(group).data)
-
-    def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        if instance.is_system:
-            raise ConflictError('System groups cannot be deleted.')
-        if instance.accounts.filter(is_active=True).exists():
-            raise ConflictError('Cannot delete group with active accounts. Move accounts first.')
-        if instance.sub_groups.filter(is_active=True).exists():
-            raise ConflictError('Cannot delete group with active child groups.')
-        instance.is_active = False
-        instance.save(update_fields=['is_active'])
-        return ApiResponse.no_content()
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Chart of Accounts
@@ -181,8 +109,9 @@ class AccountViewSet(NexusViewSet):
         self.ensure_tenant()
         qs = Account.objects.filter(tenant=self.tenant).select_related('parent', 'group').order_by('code')
         if acct_type := self.request.query_params.get('type'):
-            types = [t.strip() for t in acct_type.split(',') if t.strip()]
-            qs = qs.filter(type__in=types) if len(types) > 1 else qs.filter(type=types[0])
+            types = _parse_csv_values(acct_type)
+            if types:
+                qs = qs.filter(type__in=types) if len(types) > 1 else qs.filter(type=types[0])
         if group_slug := self.request.query_params.get('group_slug'):
             qs = qs.filter(group__slug=group_slug)
         # B10 — Annotate pre-computed debit/credit sums so Account.balance

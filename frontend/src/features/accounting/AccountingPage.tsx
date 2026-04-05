@@ -3158,6 +3158,7 @@ function InlineEditRow({
 
 interface InlineAddState {
   parentId: number | null
+  resolvedParentId: number | null
   type: string
   depth: number
   suggestedCode: string
@@ -3178,9 +3179,14 @@ function InlineAddRow({
   const [openingBal,  setOpeningBal]  = useState('0')
   const [groupId,     setGroupId]     = useState<number | ''>('')
   const parentAccount = useMemo(
-    () => (state.parentId ? _allAccounts.find(a => a.id === state.parentId) ?? null : null),
-    [state.parentId, _allAccounts],
+    () => (state.resolvedParentId ? _allAccounts.find(a => a.id === state.resolvedParentId) ?? null : null),
+    [state.resolvedParentId, _allAccounts],
   )
+  const isControlParent = Boolean(
+    parentAccount && parentAccount.is_system && parentAccount.parent === null &&
+    ['1000', '2000', '3000', '4000', '5000'].includes(parentAccount.code)
+  )
+  const shouldInheritParentGroup = Boolean(parentAccount?.group) && !isControlParent
   const nameRef = useRef<HTMLInputElement>(null)
   useEffect(() => { nameRef.current?.focus() }, [])
 
@@ -3210,14 +3216,14 @@ function InlineAddRow({
 
   useEffect(() => {
     if (groupId) return
-    if (parentAccount?.group) {
+    if (shouldInheritParentGroup && parentAccount?.group) {
       setGroupId(parentAccount.group)
       return
     }
     if (groups.length > 0) {
       setGroupId(groups[0].id)
     }
-  }, [groupId, groups, parentAccount])
+  }, [groupId, groups, parentAccount, shouldInheritParentGroup])
 
   function submit(e?: React.FormEvent) {
     e?.preventDefault()
@@ -3225,7 +3231,7 @@ function InlineAddRow({
     const resolvedGroup = groupId || parentAccount?.group || groups[0]?.id || ''
     if (!resolvedGroup) { toast.error('Please select an account group.'); return }
     mutation.mutate({
-      code: code.trim(), name: name.trim(), type: state.type, parent: state.parentId,
+      code: code.trim(), name: name.trim(), type: state.type, parent: state.resolvedParentId,
       description: description.trim(),
       opening_balance: openingBal || '0',
       group: resolvedGroup,
@@ -3259,7 +3265,7 @@ function InlineAddRow({
               {state.type}
             </span>
           </div>
-          {parentAccount?.group ? (
+          {shouldInheritParentGroup && parentAccount?.group ? (
             <div className="w-full text-xs border border-indigo-100 rounded px-2 py-1 bg-indigo-50 text-indigo-700">
               Group inherited from parent: {parentAccount.group_name ?? `#${parentAccount.group}`}
             </div>
@@ -3307,202 +3313,6 @@ function InlineAddRow({
   )
 }
 
-function AccountGroupCreateModal({
-  defaultType,
-  onClose,
-}: {
-  defaultType: string
-  onClose: () => void
-}) {
-  const qc = useQueryClient()
-  const [type, setType] = useState(defaultType)
-  const [name, setName] = useState('')
-  const [slug, setSlug] = useState('')
-  const [description, setDescription] = useState('')
-  const [affectsGrossProfit, setAffectsGrossProfit] = useState(false)
-  const [order, setOrder] = useState('0')
-
-  const defaultReportSectionByType: Record<string, string> = {
-    asset: 'bs_current_assets',
-    liability: 'bs_current_liabilities',
-    equity: 'bs_capital',
-    revenue: 'pnl_net',
-    expense: 'pnl_net',
-  }
-  const defaultNormalBalanceByType: Record<string, string> = {
-    asset: 'debit',
-    expense: 'debit',
-    liability: 'credit',
-    equity: 'credit',
-    revenue: 'credit',
-  }
-
-  const [reportSection, setReportSection] = useState(defaultReportSectionByType[defaultType] ?? 'bs_current_assets')
-  const [normalBalance, setNormalBalance] = useState(defaultNormalBalanceByType[defaultType] ?? 'debit')
-
-  function onTypeChange(nextType: string) {
-    setType(nextType)
-    setReportSection(defaultReportSectionByType[nextType] ?? 'bs_current_assets')
-    setNormalBalance(defaultNormalBalanceByType[nextType] ?? 'debit')
-    setAffectsGrossProfit(false)
-  }
-
-  const mutation = useMutation({
-    mutationFn: (payload: unknown) => apiClient.post(ACCOUNTING.ACCOUNT_GROUPS, payload),
-    onSuccess: () => {
-      toast.success('Account group created')
-      qc.invalidateQueries({ queryKey: ['account-groups'] })
-      qc.invalidateQueries({ queryKey: ['accounts'] })
-      onClose()
-    },
-    onError: (e: { response?: { data?: { detail?: string } } }) => {
-      const detail = e?.response?.data?.detail
-      toast.error(typeof detail === 'string' ? detail : 'Failed to create account group')
-    },
-  })
-
-  function toSlug(v: string) {
-    return v
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '')
-  }
-
-  function submit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!name.trim()) {
-      toast.error('Group name is required')
-      return
-    }
-
-    const resolvedSlug = (slug.trim() || toSlug(name))
-    if (!resolvedSlug) {
-      toast.error('Valid slug is required')
-      return
-    }
-
-    mutation.mutate({
-      name: name.trim(),
-      slug: resolvedSlug,
-      type,
-      description: description.trim(),
-      report_section: reportSection,
-      normal_balance: normalBalance,
-      affects_gross_profit: affectsGrossProfit,
-      order: Number(order || '0'),
-      is_active: true,
-    })
-  }
-
-  return (
-    <Modal title="Create Account Group" onClose={onClose}>
-      <form onSubmit={submit} className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Type *">
-            <select value={type} onChange={e => onTypeChange(e.target.value)} className={selectCls}>
-              <option value="asset">Asset</option>
-              <option value="liability">Liability</option>
-              <option value="equity">Equity</option>
-              <option value="revenue">Revenue</option>
-              <option value="expense">Expense</option>
-            </select>
-          </Field>
-
-          <div className="text-xs text-gray-500 flex items-center mt-7">
-            Parent is auto-assigned to the selected type root.
-          </div>
-
-          <Field label="Group Name *">
-            <input
-              data-lpignore="true"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              className={inputCls}
-              placeholder="e.g. Computer Assets"
-              required
-            />
-          </Field>
-
-          <Field label="Slug *" hint="Auto-generated if left blank.">
-            <input
-              data-lpignore="true"
-              value={slug}
-              onChange={e => setSlug(e.target.value)}
-              className={inputCls}
-              placeholder="computer_assets"
-            />
-          </Field>
-
-          <Field label="Report Section *">
-            <select value={reportSection} onChange={e => setReportSection(e.target.value)} className={selectCls}>
-              <option value="bs_fixed_assets">BS: Fixed Assets</option>
-              <option value="bs_investments">BS: Investments</option>
-              <option value="bs_current_assets">BS: Current Assets</option>
-              <option value="bs_capital">BS: Capital & Equity</option>
-              <option value="bs_loans">BS: Loans & Borrowings</option>
-              <option value="bs_current_liabilities">BS: Current Liabilities</option>
-              <option value="pnl_gross">P&L: Gross Profit</option>
-              <option value="pnl_net">P&L: Net Profit</option>
-            </select>
-          </Field>
-
-          <Field label="Normal Balance *">
-            <select value={normalBalance} onChange={e => setNormalBalance(e.target.value)} className={selectCls}>
-              <option value="debit">Debit</option>
-              <option value="credit">Credit</option>
-            </select>
-          </Field>
-
-          <Field label="Order">
-            <input
-              data-lpignore="true"
-              type="number"
-              value={order}
-              onChange={e => setOrder(e.target.value)}
-              className={inputCls}
-              placeholder="0"
-            />
-          </Field>
-
-          <Field label="Gross Profit Impact">
-            <label className="inline-flex items-center gap-2 text-sm text-gray-600">
-              <input
-                type="checkbox"
-                checked={affectsGrossProfit}
-                onChange={e => setAffectsGrossProfit(e.target.checked)}
-              />
-              Include in gross profit calculations
-            </label>
-          </Field>
-        </div>
-
-        <Field label="Description">
-          <input
-            data-lpignore="true"
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            className={inputCls}
-            placeholder="Optional group description"
-          />
-        </Field>
-
-        <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
-          <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">Cancel</button>
-          <button
-            type="submit"
-            disabled={mutation.isPending}
-            className="px-5 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
-          >
-            {mutation.isPending && <Loader2 size={14} className="animate-spin" />}
-            Create Group
-          </button>
-        </div>
-      </form>
-    </Modal>
-  )
-}
-
 // ─── Accounts Tab ──────────────────────────────────────────────────────────
 
 function AccountsTab() {
@@ -3521,7 +3331,6 @@ function AccountsTab() {
   const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('active')
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
   const [expandedAccounts, setExpandedAccounts] = useState<Set<number>>(new Set())
-  const [newGroupType, setNewGroupType] = useState<string | null>(null)
 
   const allAccounts = data ?? []
 
@@ -3536,20 +3345,26 @@ function AccountsTab() {
     } as const
   }, [allAccounts])
 
+  const controlHeaderCodes = new Set(['1000', '2000', '3000', '4000', '5000'])
+  const isControlHeaderAccount = (a: Account) =>
+    a.is_system && a.parent === null && controlHeaderCodes.has(a.code)
+
+  const listAccounts = allAccounts.filter(a => !isControlHeaderAccount(a))
+
   const expandableAccountIds = useMemo(() => {
     const parentIds = new Set<number>()
-    for (const a of allAccounts) {
+    for (const a of listAccounts) {
       if (a.parent !== null) parentIds.add(a.parent)
     }
     return Array.from(parentIds)
-  }, [allAccounts])
+  }, [listAccounts])
 
   const allExpanded =
     expandableAccountIds.length > 0 &&
     expandableAccountIds.every(id => expandedAccounts.has(id))
 
   // ── Client-side search + filter ──────────────────────────────────────
-  const visibleAccounts = allAccounts.filter(a => {
+  const visibleAccounts = listAccounts.filter(a => {
     if (activeFilter === 'active'   && !a.is_active) return false
     if (activeFilter === 'inactive' &&  a.is_active) return false
     if (search) {
@@ -3590,6 +3405,7 @@ function AccountsTab() {
   function openChild(a: Account, depth: number) {
     setInlineAdd({
       parentId: a.id,
+      resolvedParentId: a.id,
       type: a.type,
       depth,
       suggestedCode: nextChildCode(a.id, a.code, allAccounts),
@@ -3597,14 +3413,16 @@ function AccountsTab() {
   }
 
   function openRoot(type: string) {
-    const parentId = defaultParentIdByType[type as keyof typeof defaultParentIdByType] ?? null
-    const parentCode = parentId ? (allAccounts.find(a => a.id === parentId)?.code ?? '') : ''
+    const resolvedParentId = defaultParentIdByType[type as keyof typeof defaultParentIdByType] ?? null
+    const parentCode = resolvedParentId ? (allAccounts.find(a => a.id === resolvedParentId)?.code ?? '') : ''
     setInlineAdd({
-      parentId,
+      // Keep root add row visible even when control parent (1000/2000/...) is hidden.
+      parentId: null,
+      resolvedParentId,
       type,
       depth: 0,
-      suggestedCode: parentId && parentCode
-        ? nextChildCode(parentId, parentCode, allAccounts)
+      suggestedCode: resolvedParentId && parentCode
+        ? nextChildCode(resolvedParentId, parentCode, allAccounts)
         : nextRootCode(type, allAccounts),
     })
   }
@@ -3652,14 +3470,15 @@ function AccountsTab() {
   // Build tree per type-section (using visibleAccounts for search, but tree needs parent hierarchy from allAccounts)
   function renderSection(type: string, label: string, sectionCls: string) {
     // When searching, show flat list; tree requires all parents to be visible
-    const sectionAll     = allAccounts.filter(a => a.type === type)
+    const sectionAll     = listAccounts.filter(a => a.type === type)
     const sectionVisible = visibleAccounts.filter(a => a.type === type)
     const childParentIds = new Set(sectionAll.filter(a => a.parent !== null).map(a => a.parent as number))
 
     const isHiddenByAncestor = (acct: Account, depth: number) => {
-      // Keep level-0/1 visible. For deeper nodes, visibility depends on
-      // the direct parent toggle so one-by-one expansion works predictably.
-      if (depth < 2) return false
+      // Keep root (depth 0) visible.
+      // All child levels are collapsed by default and revealed only when
+      // their direct parent is expanded.
+      if (depth < 1) return false
       const parentId = acct.parent
       if (!parentId) return false
       return !expandedAccounts.has(parentId)
@@ -3725,12 +3544,12 @@ function AccountsTab() {
             )}
 
             {treeItems.map(({ account: a, depth }) => {
-              if (!search && depth >= 2 && isHiddenByAncestor(a, depth)) return null
+              if (!search && isHiddenByAncestor(a, depth)) return null
               const isChildInline = inlineAdd?.parentId === a.id
               const isEditing     = editingId === a.id
               const canAddChild   = depth < 5
               const isProtectedCore = a.is_system && protectedCoreCodes.has(a.code)
-              const parentAcc     = allAccounts.find(p => p.id === a.parent)
+              const parentAcc     = listAccounts.find(p => p.id === a.parent)
               const hasChildren   = childParentIds.has(a.id)
               const isExpanded    = expandedAccounts.has(a.id)
               return (
@@ -3884,9 +3703,9 @@ function AccountsTab() {
     )
   }
 
-  const totalAccounts  = allAccounts.length
-  const activeCount    = allAccounts.filter(a =>  a.is_active).length
-  const inactiveCount  = allAccounts.filter(a => !a.is_active).length
+  const totalAccounts  = listAccounts.length
+  const activeCount    = listAccounts.filter(a =>  a.is_active).length
+  const inactiveCount  = listAccounts.filter(a => !a.is_active).length
 
   return (
     <div className="space-y-4">
@@ -3931,32 +3750,12 @@ function AccountsTab() {
           {allExpanded ? 'Collapse All' : 'Expand All'}
         </button>
 
-        {/* New Group / Heading */}
-        <div className="relative group">
-          <button
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition-colors">
-            <Plus size={13} /> New Group
-          </button>
-          {/* Dropdown: pick which type of group to create */}
-          <div className="absolute right-0 top-full mt-1 w-44 bg-white border border-gray-200 rounded-xl shadow-lg opacity-0 invisible group-focus-within:opacity-100 group-focus-within:visible group-hover:opacity-100 group-hover:visible transition-all z-20">
-            {typeOrder.map(([type, label, cls]) => (
-              <button
-                key={type}
-                type="button"
-                onClick={() => setNewGroupType(type)}
-                className={`w-full text-left px-4 py-2 text-xs font-medium hover:bg-gray-50 first:rounded-t-xl last:rounded-b-xl ${cls.split(' ')[0]}`}
-              >
-                {label} Group
-              </button>
-            ))}
-          </div>
-        </div>
       </div>
 
       {/* ── Legend ────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3 flex-wrap">
         {typeOrder.map(([type, label, cls]) => {
-          const col = allAccounts.filter(a => a.type === type)
+          const col = listAccounts.filter(a => a.type === type)
           return (
             <div key={type} className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-medium ${cls}`}>
               <span>{label}</span>
@@ -3982,12 +3781,6 @@ function AccountsTab() {
         </div>
       )}
 
-      {newGroupType && (
-        <AccountGroupCreateModal
-          defaultType={newGroupType}
-          onClose={() => setNewGroupType(null)}
-        />
-      )}
     </div>
   )
 }

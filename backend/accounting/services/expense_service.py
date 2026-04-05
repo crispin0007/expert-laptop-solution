@@ -210,6 +210,14 @@ class ExpenseService:
         if not credit_account:
             raise ValidationError('No payment account found. Set up your Chart of Accounts first.')
 
+        # Never post to the bank control ledger (1150). Expenses must credit
+        # a concrete cash/bank/liability ledger, not a control account.
+        if credit_account.code == '1150':
+            raise ValidationError(
+                'Cannot post expense to Bank Accounts control (1150). '
+                'Select a specific bank ledger account.'
+            )
+
         # Persist the chosen payment account on the expense record
         if credit_account.pk != expense.payment_account_id:
             expense.payment_account = credit_account

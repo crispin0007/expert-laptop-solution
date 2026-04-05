@@ -978,34 +978,6 @@ DEFAULT_ACCOUNTS = [
 ]
 
 
-def seed_account_groups(tenant, created_by=None):
-    """
-    Create the default AccountGroups for a tenant.
-    Safe to call multiple times — uses get_or_create.
-    Returns a dict of slug → AccountGroup.
-    """
-    from accounting.models import AccountGroup
-
-    group_map = {}
-    for slug, name, acct_type, report_section, affects_gp, normal_balance, order in DEFAULT_GROUPS:
-        group, _ = AccountGroup.objects.get_or_create(
-            tenant=tenant,
-            slug=slug,
-            defaults={
-                'name':                name,
-                'type':                acct_type,
-                'report_section':      report_section,
-                'affects_gross_profit': affects_gp,
-                'normal_balance':      normal_balance,
-                'order':               order,
-                'is_system':           True,
-                'created_by':          created_by,
-            },
-        )
-        group_map[slug] = group
-    return group_map
-
-
 def seed_chart_of_accounts(tenant, created_by=None):
     """
     Create the default Chart of Accounts for a tenant.

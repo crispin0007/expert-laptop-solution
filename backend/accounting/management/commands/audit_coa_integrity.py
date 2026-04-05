@@ -128,7 +128,7 @@ class Command(BaseCommand):
                 else:
                     stats['bank.control_ok'] += 1
 
-                bank_qs = BankAccount.objects.filter(tenant_id=tenant_id, linked_account__isnull=False).select_related('linked_account__group', 'linked_account__parent', 'tenant')
+                bank_qs = BankAccount.objects.filter(tenant_id=tenant_id).select_related('linked_account__group', 'linked_account__parent', 'tenant')
                 for bank in bank_qs:
                     acct = bank.linked_account
                     if acct is None:
