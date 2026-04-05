@@ -3,6 +3,7 @@ accounting/views.py — Full accounting module viewsets.
 """
 import logging
 from decimal import Decimal
+from django.db import IntegrityError
 from rest_framework import viewsets, permissions, status
 
 logger = logging.getLogger(__name__)
@@ -83,9 +84,51 @@ class AccountGroupViewSet(NexusViewSet):
 
     def create(self, request, *args, **kwargs):
         self.ensure_tenant()
+        from accounting.services.journal_service import seed_account_groups
+
+        # Ensure system group roots exist before creating custom groups.
+        group_map = seed_account_groups(self.tenant)
+
         serializer = self.get_serializer(data=request.data, context=self.get_serializer_context())
         serializer.is_valid(raise_exception=True)
-        group = serializer.save(tenant=self.tenant, created_by=request.user, is_system=False)
+
+        slug = serializer.validated_data.get('slug')
+        if slug and AccountGroup.objects.filter(tenant=self.tenant, slug=slug).exists():
+            raise ConflictError(f"Account group slug '{slug}' already exists.")
+
+        group_type = serializer.validated_data.get('type')
+        root_slug_by_type = {
+            'asset': 'assets_root',
+            'liability': 'liabilities_root',
+            'equity': 'equity_root',
+            'revenue': 'revenue_root',
+            'expense': 'expense_root',
+        }
+        target_parent = group_map.get(root_slug_by_type.get(group_type, ''))
+
+        # Fallback for older tenants if root is unexpectedly missing.
+        if target_parent is None:
+            target_parent = (
+                AccountGroup.objects.filter(
+                    tenant=self.tenant,
+                    type=group_type,
+                    is_system=True,
+                    is_active=True,
+                    parent__isnull=True,
+                )
+                .order_by('order', 'id')
+                .first()
+            )
+
+        try:
+            group = serializer.save(
+                tenant=self.tenant,
+                created_by=request.user,
+                is_system=False,
+                parent=target_parent,
+            )
+        except IntegrityError:
+            raise ConflictError('Account group with this slug already exists.')
         return ApiResponse.created(data=AccountGroupSerializer(group).data)
 
     def update(self, request, *args, **kwargs):

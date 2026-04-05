@@ -3319,7 +3319,6 @@ function AccountGroupCreateModal({
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
   const [description, setDescription] = useState('')
-  const [parent, setParent] = useState<number | ''>('')
   const [affectsGrossProfit, setAffectsGrossProfit] = useState(false)
   const [order, setOrder] = useState('0')
 
@@ -3341,16 +3340,8 @@ function AccountGroupCreateModal({
   const [reportSection, setReportSection] = useState(defaultReportSectionByType[defaultType] ?? 'bs_current_assets')
   const [normalBalance, setNormalBalance] = useState(defaultNormalBalanceByType[defaultType] ?? 'debit')
 
-  const { data: parentGroups = [] } = useQuery<AccountGroup[]>({
-    queryKey: ['account-groups', 'create-modal', type],
-    queryFn: () => apiClient.get(ACCOUNTING.ACCOUNT_GROUPS + `?type=${type}`).then(r =>
-      Array.isArray(r.data) ? r.data : (r.data?.data ?? r.data?.results ?? []),
-    ),
-  })
-
   function onTypeChange(nextType: string) {
     setType(nextType)
-    setParent('')
     setReportSection(defaultReportSectionByType[nextType] ?? 'bs_current_assets')
     setNormalBalance(defaultNormalBalanceByType[nextType] ?? 'debit')
     setAffectsGrossProfit(false)
@@ -3396,7 +3387,6 @@ function AccountGroupCreateModal({
       slug: resolvedSlug,
       type,
       description: description.trim(),
-      parent: parent || null,
       report_section: reportSection,
       normal_balance: normalBalance,
       affects_gross_profit: affectsGrossProfit,
@@ -3419,18 +3409,9 @@ function AccountGroupCreateModal({
             </select>
           </Field>
 
-          <Field label="Parent Group">
-            <select
-              value={parent}
-              onChange={e => setParent(e.target.value ? Number(e.target.value) : '')}
-              className={selectCls}
-            >
-              <option value="">No Parent (Top Group)</option>
-              {parentGroups.map(g => (
-                <option key={g.id} value={g.id}>{g.name}</option>
-              ))}
-            </select>
-          </Field>
+          <div className="text-xs text-gray-500 flex items-center mt-7">
+            Parent is auto-assigned to the selected type root.
+          </div>
 
           <Field label="Group Name *">
             <input
