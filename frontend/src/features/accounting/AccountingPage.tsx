@@ -8280,8 +8280,54 @@ function LedgerTab() {
     queryKey: ['ledger-drill-journal', selectedTxn?.entry_id],
     queryFn: async () => {
       if (!selectedTxn?.entry_id) return null
-      const r = await apiClient.get(ACCOUNTING.JOURNAL_DETAIL(selectedTxn.entry_id))
-      return (r.data?.data ?? r.data) as JournalEntry
+      const r = await apiClient.get(`${ACCOUNTING.REPORT_DRILL}?node_type=journal_entry&node_id=${selectedTxn.entry_id}`)
+      const data = (r.data?.data ?? r.data) as {
+        node_id?: number
+        entry_number?: string
+        date?: string
+        description?: string
+        reference_type?: string
+        reference_id?: number | null
+        lines?: Array<{
+          line_id?: number
+          account_id?: number
+          account_code?: string
+          account_name?: string
+          description?: string
+          debit?: string
+          credit?: string
+        }>
+      }
+
+      return {
+        id: Number(data.node_id ?? selectedTxn.entry_id),
+        entry_number: data.entry_number ?? selectedTxn.entry_number,
+        date: data.date ?? selectedTxn.date,
+        description: data.description ?? selectedTxn.description,
+        reference_type: data.reference_type ?? selectedTxn.reference_type ?? '',
+        reference_id: data.reference_id ?? selectedTxn.reference_id ?? null,
+        purpose: selectedTxn.purpose ?? '',
+        is_posted: true,
+        total_debit: '0',
+        total_credit: '0',
+        reversal_date: null,
+        is_reversal: false,
+        reversed_by_id: null,
+        reversal_reason: '',
+        reversed_by_user_name: '',
+        reversal_timestamp: null,
+        created_by_name: '',
+        created_at: '',
+        lines: (data.lines ?? []).map(line => ({
+          id: Number(line.line_id ?? 0),
+          account: Number(line.account_id ?? 0),
+          account_code: String(line.account_code ?? ''),
+          account_name: String(line.account_name ?? ''),
+          description: String(line.description ?? ''),
+          debit: String(line.debit ?? '0'),
+          credit: String(line.credit ?? '0'),
+        })),
+      } as JournalEntry
     },
     enabled: !!selectedTxn?.entry_id,
   })
@@ -8557,7 +8603,17 @@ function LedgerTab() {
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {filteredTransactions.map((row, i) => (
-                    <tr key={`${row.entry_id ?? row.entry_number}-${row.line_id ?? i}`} className="hover:bg-indigo-50/40 transition-colors cursor-pointer" onClick={() => setSelectedTxn(row)}>
+                    <tr
+                      key={`${row.entry_id ?? row.entry_number}-${row.line_id ?? i}`}
+                      className="hover:bg-indigo-50/40 transition-colors cursor-pointer"
+                      onClick={() => {
+                        if (!row.entry_id) {
+                          toast.error('Voucher details are not linked for this row.')
+                          return
+                        }
+                        setSelectedTxn(row)
+                      }}
+                    >
                       <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmt(row.date)}</td>
                       <td className="px-4 py-3 font-mono text-xs text-indigo-700 underline underline-offset-2">{row.entry_number}</td>
                       <td className="px-4 py-3 text-gray-700">{row.description || '—'}</td>
