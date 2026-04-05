@@ -110,16 +110,19 @@ if ! ${NO_BACKUP}; then
   log "Creating DB and config backups..."
   mkdir -p "${BACKUP_DIR}"
 
-  # shellcheck disable=SC1091
-  set -a; source .env; set +a
-  : "${POSTGRES_USER:?POSTGRES_USER is required in .env}"
-  : "${POSTGRES_DB:?POSTGRES_DB is required in .env}"
-
   DB_BACKUP_FILE="${BACKUP_DIR}/db_${TS}.sql"
-  ${COMPOSE} exec -T db pg_dump -U "${POSTGRES_USER}" "${POSTGRES_DB}" > "${DB_BACKUP_FILE}"
+
+  # Read DB credentials from container env to avoid shell-parsing issues in .env
+  DB_PGUSER="$(${COMPOSE} exec -T db sh -lc 'printf "%s" "$POSTGRES_USER"')"
+  DB_PGDB="$(${COMPOSE} exec -T db sh -lc 'printf "%s" "$POSTGRES_DB"')"
+
+  [[ -n "${DB_PGUSER}" ]] || die "Could not read POSTGRES_USER from db container environment."
+  [[ -n "${DB_PGDB}" ]] || die "Could not read POSTGRES_DB from db container environment."
+
+  ${COMPOSE} exec -T db sh -lc 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "${DB_BACKUP_FILE}"
   cp .env "${BACKUP_DIR}/.env_${TS}"
   cp "${COMPOSE_FILE}" "${BACKUP_DIR}/${COMPOSE_FILE}_${TS}"
-  ok "Backup complete: ${DB_BACKUP_FILE}"
+  ok "Backup complete: ${DB_BACKUP_FILE} (db=${DB_PGDB}, user=${DB_PGUSER})"
 fi
 
 if ! ${SKIP_PULL}; then
