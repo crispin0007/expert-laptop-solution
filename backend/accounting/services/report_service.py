@@ -1207,7 +1207,10 @@ def report_drill_node(tenant, node_type, node_id, date_from=None, date_to=None):
             raise ValueError('Journal entry not found for drill-down.')
 
         source_ref = None
-        if je.reference_type and je.reference_id:
+        supported_source_refs = {
+            'invoice', 'bill', 'payment', 'credit_note', 'debit_note', 'customer', 'supplier',
+        }
+        if je.reference_type in supported_source_refs and je.reference_id:
             source_ref = {
                 'node_type': je.reference_type,
                 'node_id': je.reference_id,
@@ -1338,6 +1341,7 @@ def report_drill_node(tenant, node_type, node_id, date_from=None, date_to=None):
             dn = DebitNote.objects.select_related('bill').get(tenant=tenant, pk=node_id)
         except DebitNote.DoesNotExist:
             raise ValueError('Debit note not found for drill-down.')
+        bill_label = dn.bill.bill_number if dn.bill_id and dn.bill else f'Bill #{dn.bill_id}'
         return {
             'node_type': 'debit_note',
             'node_id': dn.id,
@@ -1350,7 +1354,7 @@ def report_drill_node(tenant, node_type, node_id, date_from=None, date_to=None):
                 {
                     'node_type': 'bill',
                     'node_id': dn.bill_id,
-                    'label': dn.bill_number,
+                    'label': bill_label,
                 }
             ] if dn.bill_id else [],
         }

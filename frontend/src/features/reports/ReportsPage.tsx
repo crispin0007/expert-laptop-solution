@@ -25,6 +25,23 @@ import {
 } from '../../utils/nepaliDate'
 import { resolveReportRowDrill, type DrillNodeType, type DrillSeed } from './drillResolver'
 
+const SUPPORTED_DRILL_NODE_TYPES: DrillNodeType[] = [
+  'account',
+  'journal_entry',
+  'invoice',
+  'bill',
+  'payment',
+  'credit_note',
+  'debit_note',
+  'customer',
+  'supplier',
+]
+
+function asSupportedDrillNodeType(value: unknown): DrillNodeType | null {
+  const candidate = String(value || '') as DrillNodeType
+  return SUPPORTED_DRILL_NODE_TYPES.includes(candidate) ? candidate : null
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function fmt(d: string | null) {
@@ -305,6 +322,7 @@ function ReportDrillModal({ seed, onClose }: { seed: DrillSeed; onClose: () => v
   const lines = (data?.lines as Array<Record<string, unknown>>) ?? []
   const nextRefs = (data?.next_refs as Array<Record<string, unknown>>) ?? []
   const sourceRef = data?.source_ref as Record<string, unknown> | undefined
+  const sourceRefNodeType = asSupportedDrillNodeType(sourceRef?.node_type)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
@@ -411,11 +429,11 @@ function ReportDrillModal({ seed, onClose }: { seed: DrillSeed; onClose: () => v
                   ))}
                 </tbody>
               </table>
-              {sourceRef && (
+              {sourceRef && sourceRefNodeType && (
                 <div className="flex items-center justify-end">
                   <button
                     onClick={() => openNext({
-                      nodeType: String(sourceRef.node_type) as DrillNodeType,
+                      nodeType: sourceRefNodeType,
                       nodeId: Number(sourceRef.node_id),
                       nodeLabel: String(sourceRef.label ?? ''),
                       dateFrom: seed.dateFrom,

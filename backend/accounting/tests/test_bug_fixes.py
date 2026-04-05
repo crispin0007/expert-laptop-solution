@@ -2685,3 +2685,72 @@ class TestN7CashBookTenantSafety:
         assert matched[0].get('voucher_number') == '', (
             'N7 FAIL: cash-book resolved invoice number from another tenant.'
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# N8 — Journal drill should not emit unsupported source_ref node types
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestN8ReportDrillSourceRefValidation:
+
+    @pytest.mark.django_db
+    def test_journal_entry_with_manual_reference_has_no_source_ref(self, tenant, admin_user, coa_accounts):
+        from accounting.models import JournalEntry, JournalLine, Account
+        from accounting.services.report_service import report_drill_node
+
+        cash_account = coa_accounts.get('1100')
+        revenue_account = Account.objects.filter(tenant=tenant, type='revenue', is_active=True).first()
+        if cash_account is None or revenue_account is None:
+            pytest.skip('Required cash/revenue accounts not available')
+
+        entry = JournalEntry.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            date=datetime.date(2026, 4, 5),
+            description='Manual adjustment',
+            reference_type='manual',
+            reference_id=1,
+        )
+        JournalLine.objects.create(entry=entry, account=cash_account, debit=Decimal('50.00'), credit=Decimal('0.00'))
+        JournalLine.objects.create(entry=entry, account=revenue_account, debit=Decimal('0.00'), credit=Decimal('50.00'))
+        entry.post()
+
+        payload = report_drill_node(tenant, node_type='journal_entry', node_id=entry.pk)
+        assert payload.get('source_ref') is None, (
+            'N8 FAIL: journal drill exposed unsupported source_ref for reference_type="manual".'
+        )
+
+    @pytest.mark.django_db
+    def test_debit_note_drill_uses_related_bill_number_label(self, tenant, admin_user):
+        from accounting.models import Bill, DebitNote
+        from accounting.services.report_service import report_drill_node
+
+        bill = Bill.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            date=datetime.date(2026, 4, 5),
+            supplier_name='Vendor DN',
+            line_items=[{'description': 'Item', 'qty': 1, 'unit_price': '100.00'}],
+            subtotal=Decimal('100.00'),
+            vat_rate=Decimal('0.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('100.00'),
+            status=Bill.STATUS_APPROVED,
+        )
+        dn = DebitNote.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            bill=bill,
+            line_items=[{'description': 'Return', 'qty': 1, 'unit_price': '20.00'}],
+            subtotal=Decimal('20.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('20.00'),
+            status=DebitNote.STATUS_DRAFT,
+        )
+
+        payload = report_drill_node(tenant, node_type='debit_note', node_id=dn.pk)
+        next_refs = payload.get('next_refs', [])
+        assert next_refs, 'N8 FAIL: expected debit-note drill to include related bill next_ref.'
+        assert next_refs[0].get('label') == bill.bill_number, (
+            'N8 FAIL: debit-note drill did not use related bill_number label.'
+        )
