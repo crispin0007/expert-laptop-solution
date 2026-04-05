@@ -59,7 +59,8 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --branch)
-      BRANCH="${2:-}"; shift 2 ;;
+      [[ $# -ge 2 && -n "${2:-}" && "${2:0:1}" != "-" ]] || die "--branch requires a value (example: --branch main)"
+      BRANCH="$2"; shift 2 ;;
     --skip-build)
       SKIP_BUILD=true; shift ;;
     --force-build)
@@ -69,7 +70,8 @@ while [[ $# -gt 0 ]]; do
     --skip-pull)
       SKIP_PULL=true; shift ;;
     --health-url)
-      HEALTH_URL="${2:-}"; shift 2 ;;
+      [[ $# -ge 2 && -n "${2:-}" && "${2:0:1}" != "-" ]] || die "--health-url requires a URL value (example: --health-url https://example.com/health/)"
+      HEALTH_URL="$2"; shift 2 ;;
     --help)
       usage; exit 0 ;;
     *)
