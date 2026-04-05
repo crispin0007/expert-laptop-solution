@@ -3056,7 +3056,7 @@ def cash_book(tenant, date_from, date_to, bank_account_id=None):
     If bank_account_id is supplied, filters to that specific bank account only.
     If None, shows all Cash and Bank activity combined.
     """
-    from accounting.models import Account, BankAccount, JournalLine
+    from accounting.models import Account, BankAccount, JournalLine, Invoice, Bill, Payment
 
     # Determine which GL account(s) to include
     if bank_account_id:
@@ -3133,20 +3133,17 @@ def cash_book(tenant, date_from, date_to, bank_account_id=None):
         voucher_number = ''
         if ref == 'invoice' and rid:
             try:
-                from accounting.models import Invoice
-                voucher_number = Invoice.objects.filter(pk=rid).values_list('invoice_number', flat=True).first() or ''
+                voucher_number = Invoice.objects.filter(tenant=tenant, pk=rid).values_list('invoice_number', flat=True).first() or ''
             except Exception:
                 pass
         elif ref == 'bill' and rid:
             try:
-                from accounting.models import Bill
-                voucher_number = Bill.objects.filter(pk=rid).values_list('bill_number', flat=True).first() or ''
+                voucher_number = Bill.objects.filter(tenant=tenant, pk=rid).values_list('bill_number', flat=True).first() or ''
             except Exception:
                 pass
         elif ref == 'payment' and rid:
             try:
-                from accounting.models import Payment
-                voucher_number = Payment.objects.filter(pk=rid).values_list('payment_number', flat=True).first() or ''
+                voucher_number = Payment.objects.filter(tenant=tenant, pk=rid).values_list('payment_number', flat=True).first() or ''
             except Exception:
                 pass
 

@@ -407,6 +407,7 @@ class PaymentSerializer(NepaliModelSerializer):
         invoice = attrs.get('invoice', getattr(self.instance, 'invoice', None))
         bill = attrs.get('bill', getattr(self.instance, 'bill', None))
         bank_account = attrs.get('bank_account', getattr(self.instance, 'bank_account', None))
+        payment_type = attrs.get('type', getattr(self.instance, 'type', None))
 
         _ensure_same_tenant(invoice, tenant, 'invoice')
         _ensure_same_tenant(bill, tenant, 'bill')
@@ -414,6 +415,16 @@ class PaymentSerializer(NepaliModelSerializer):
 
         if invoice is not None and bill is not None:
             raise serializers.ValidationError({'non_field_errors': ['Payment cannot be linked to both invoice and bill.']})
+
+        if invoice is not None and payment_type and payment_type != Payment.TYPE_INCOMING:
+            raise serializers.ValidationError({
+                'type': 'Invoice-linked payments must use type="incoming".'
+            })
+
+        if bill is not None and payment_type and payment_type != Payment.TYPE_OUTGOING:
+            raise serializers.ValidationError({
+                'type': 'Bill-linked payments must use type="outgoing".'
+            })
 
         return attrs
 

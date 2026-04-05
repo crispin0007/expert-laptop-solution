@@ -2473,3 +2473,215 @@ class TestN4PaymentAllocationSave:
         )
         alloc.save()   # must NOT raise
         assert alloc.pk is not None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# N5 — Payment direction invariants (incoming/invoice, outgoing/bill)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestN5PaymentDirectionValidation:
+
+    @pytest.fixture
+    def invoice_and_bill(self, tenant, admin_user):
+        from accounting.models import Invoice, Bill
+
+        invoice = Invoice.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            date=datetime.date(2026, 4, 1),
+            line_items=[{'description': 'Service', 'qty': 1, 'unit_price': '100.00'}],
+            subtotal=Decimal('100.00'),
+            discount=Decimal('0.00'),
+            vat_rate=Decimal('0.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('100.00'),
+            status=Invoice.STATUS_ISSUED,
+        )
+        bill = Bill.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            date=datetime.date(2026, 4, 1),
+            supplier_name='Vendor A',
+            line_items=[{'description': 'Purchase', 'qty': 1, 'unit_price': '80.00'}],
+            subtotal=Decimal('80.00'),
+            vat_rate=Decimal('0.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('80.00'),
+            status=Bill.STATUS_APPROVED,
+        )
+        return invoice, bill
+
+    @pytest.mark.django_db
+    def test_service_rejects_outgoing_invoice_payment(self, tenant, admin_user, invoice_and_bill):
+        from accounting.models import Payment
+        from accounting.services.payment_service import record_payment
+
+        invoice, _bill = invoice_and_bill
+        with pytest.raises(ValueError, match='incoming'):
+            record_payment(
+                tenant=tenant,
+                created_by=admin_user,
+                payment_type=Payment.TYPE_OUTGOING,
+                method=Payment.METHOD_CASH,
+                amount=Decimal('10.00'),
+                invoice=invoice,
+            )
+
+    @pytest.mark.django_db
+    def test_service_rejects_incoming_bill_payment(self, tenant, admin_user, invoice_and_bill):
+        from accounting.models import Payment
+        from accounting.services.payment_service import record_payment
+
+        _invoice, bill = invoice_and_bill
+        with pytest.raises(ValueError, match='outgoing'):
+            record_payment(
+                tenant=tenant,
+                created_by=admin_user,
+                payment_type=Payment.TYPE_INCOMING,
+                method=Payment.METHOD_CASH,
+                amount=Decimal('10.00'),
+                bill=bill,
+            )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# N6 — Bank reconciliation match integrity checks
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestN6BankReconciliationMatching:
+
+    @pytest.mark.django_db
+    def test_match_line_rejects_payment_from_different_bank_account(self, tenant, admin_user, coa_accounts):
+        from accounting.models import BankAccount, Payment, BankReconciliation, BankReconciliationLine
+        from accounting.views import BankReconciliationViewSet
+        from core.exceptions import ValidationError as AppValidationError
+        from rest_framework.test import APIRequestFactory
+        from rest_framework.request import Request as DrfRequest
+        from rest_framework.parsers import JSONParser
+
+        bank_a = BankAccount.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            name='Bank A',
+            bank_name='A',
+            account_number='A-001',
+        )
+        bank_b = BankAccount.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            name='Bank B',
+            bank_name='B',
+            account_number='B-001',
+        )
+
+        payment = Payment.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            date=datetime.date(2026, 4, 2),
+            type=Payment.TYPE_INCOMING,
+            method=Payment.METHOD_BANK,
+            amount=Decimal('50.00'),
+            bank_account=bank_a,
+        )
+
+        rec = BankReconciliation.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            bank_account=bank_b,
+            statement_date=datetime.date(2026, 4, 2),
+            opening_balance=Decimal('0.00'),
+            closing_balance=Decimal('0.00'),
+        )
+        line = BankReconciliationLine.objects.create(
+            reconciliation=rec,
+            date=datetime.date(2026, 4, 2),
+            description='Incoming',
+            amount=Decimal('50.00'),
+        )
+
+        factory = APIRequestFactory()
+        raw = factory.post(
+            f'/api/v1/accounting/bank-reconciliations/{rec.pk}/match-line/',
+            {'line_id': line.pk, 'payment_id': payment.pk},
+            format='json',
+        )
+        req = DrfRequest(raw, parsers=[JSONParser()])
+        req.user = admin_user
+        req.tenant = tenant
+
+        view = BankReconciliationViewSet()
+        view.request = req
+        view.tenant = tenant
+        view.action = 'match_line'
+        view.kwargs = {'pk': str(rec.pk)}
+        view.format_kwarg = None
+
+        with pytest.raises(AppValidationError, match='does not match'):
+            view.match_line(req, pk=str(rec.pk))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# N7 — Cash book voucher lookup must be tenant-scoped
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestN7CashBookTenantSafety:
+
+    @pytest.mark.django_db
+    def test_cash_book_does_not_resolve_foreign_tenant_voucher_number(self, tenant, admin_user, coa_accounts):
+        from tenants.models import Tenant
+        from accounting.models import Invoice, JournalEntry, JournalLine, Account
+        from accounting.services.report_service import cash_book
+
+        other_tenant = Tenant.objects.create(name='Other Tenant', slug='other-tenant-n7')
+        foreign_invoice = Invoice.objects.create(
+            tenant=other_tenant,
+            created_by=admin_user,
+            date=datetime.date(2026, 4, 3),
+            line_items=[{'description': 'Foreign', 'qty': 1, 'unit_price': '10.00'}],
+            subtotal=Decimal('10.00'),
+            discount=Decimal('0.00'),
+            vat_rate=Decimal('0.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('10.00'),
+            status=Invoice.STATUS_ISSUED,
+            invoice_number='INV-FOREIGN-N7',
+        )
+
+        cash_account = coa_accounts.get('1100')
+        revenue_account = Account.objects.filter(tenant=tenant, type='revenue', is_active=True).first()
+        if cash_account is None or revenue_account is None:
+            pytest.skip('Required cash/revenue accounts not available')
+
+        entry = JournalEntry.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            date=datetime.date(2026, 4, 3),
+            description='N7 test entry',
+            reference_type='invoice',
+            reference_id=foreign_invoice.pk,
+        )
+        JournalLine.objects.create(
+            entry=entry,
+            account=cash_account,
+            debit=Decimal('10.00'),
+            credit=Decimal('0.00'),
+            description='Cash in',
+        )
+        JournalLine.objects.create(
+            entry=entry,
+            account=revenue_account,
+            debit=Decimal('0.00'),
+            credit=Decimal('10.00'),
+            description='Revenue',
+        )
+        entry.post()
+
+        result = cash_book(tenant, datetime.date(2026, 4, 3), datetime.date(2026, 4, 3))
+        matched = [
+            row for row in result['transactions']
+            if row.get('reference_type') == 'invoice' and row.get('reference_id') == foreign_invoice.pk
+        ]
+        assert matched, 'N7 setup failed: expected at least one invoice-referenced cash-book row.'
+        assert matched[0].get('voucher_number') == '', (
+            'N7 FAIL: cash-book resolved invoice number from another tenant.'
+        )

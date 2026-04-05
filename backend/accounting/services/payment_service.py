@@ -126,6 +126,12 @@ def record_payment(
     if invoice and bill:
         raise ValueError("Payment can be linked to either an invoice or a bill, not both.")
 
+    if invoice and payment_type != Payment.TYPE_INCOMING:
+        raise ValueError('Invoice-linked payments must use type="incoming".')
+
+    if bill and payment_type != Payment.TYPE_OUTGOING:
+        raise ValueError('Bill-linked payments must use type="outgoing".')
+
     if invoice and getattr(invoice, 'tenant_id', None) != tenant.id:
         raise ValueError('Invoice does not belong to this workspace.')
 

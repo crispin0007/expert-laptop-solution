@@ -2494,11 +2494,24 @@ class BankReconciliationViewSet(NexusViewSet):
     def match_line(self, request, pk=None):
         """Body: {"line_id": int, "payment_id": int}"""
         rec = self.get_object()
+        if rec.status == BankReconciliation.STATUS_RECONCILED:
+            raise ConflictError('Reconciliation is locked.')
         try:
             line    = rec.lines.get(pk=request.data['line_id'])
             payment = Payment.objects.get(pk=request.data['payment_id'], tenant=self.tenant)
         except (BankReconciliationLine.DoesNotExist, Payment.DoesNotExist, KeyError):
             raise AppValidationError('Line or payment not found.')
+
+        if payment.bank_account_id != rec.bank_account_id:
+            raise AppValidationError('Payment bank account does not match this reconciliation bank account.')
+
+        already_matched_elsewhere = BankReconciliationLine.objects.filter(
+            payment=payment,
+            is_matched=True,
+        ).exclude(pk=line.pk).exists()
+        if already_matched_elsewhere:
+            raise ConflictError('Payment is already matched to another reconciliation line.')
+
         line.is_matched = True
         line.payment    = payment
         line.save(update_fields=['is_matched', 'payment'])
