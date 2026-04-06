@@ -3225,6 +3225,7 @@ function InlineAddRow({
   const [description, setDescription] = useState('')
   const [openingBal,  setOpeningBal]  = useState('0')
   const [groupId,     setGroupId]     = useState<number | ''>('')
+  const [showGroupSelector, setShowGroupSelector] = useState(false)
   const parentAccount = useMemo(
     () => (state.resolvedParentId ? _allAccounts.find(a => a.id === state.resolvedParentId) ?? null : null),
     [state.resolvedParentId, _allAccounts],
@@ -3261,21 +3262,24 @@ function InlineAddRow({
       toast.error(e?.response?.data?.detail ?? e?.response?.data?.group?.[0] ?? e?.response?.data?.code?.[0] ?? 'Failed to create account'),
   })
 
+  const autoGroupId = useMemo<number | ''>(() => {
+    if (shouldInheritParentGroup && parentAccount?.group) {
+      return parentAccount.group
+    }
+    return groups[0]?.id ?? ''
+  }, [groups, parentAccount, shouldInheritParentGroup])
+
   useEffect(() => {
     if (groupId) return
-    if (shouldInheritParentGroup && parentAccount?.group) {
-      setGroupId(parentAccount.group)
-      return
+    if (autoGroupId) {
+      setGroupId(autoGroupId)
     }
-    if (groups.length > 0) {
-      setGroupId(groups[0].id)
-    }
-  }, [groupId, groups, parentAccount, shouldInheritParentGroup])
+  }, [autoGroupId, groupId])
 
   function submit(e?: React.FormEvent) {
     e?.preventDefault()
     if (!name.trim()) { nameRef.current?.focus(); return }
-    const resolvedGroup = groupId || parentAccount?.group || groups[0]?.id || ''
+    const resolvedGroup = groupId || autoGroupId || ''
     if (!resolvedGroup) { toast.error('Please select an account group.'); return }
     mutation.mutate({
       code: code.trim(), name: name.trim(), type: state.type, parent: state.resolvedParentId,
@@ -3312,23 +3316,42 @@ function InlineAddRow({
               {state.type}
             </span>
           </div>
-          {shouldInheritParentGroup && parentAccount?.group ? (
-            <div className="w-full text-xs border border-indigo-100 rounded px-2 py-1 bg-indigo-50 text-indigo-700">
-              Group inherited from parent: {parentAccount.group_name ?? `#${parentAccount.group}`}
+          {showGroupSelector ? (
+            <div className="space-y-1">
+              <label className="block text-[11px] font-medium text-gray-500">Account Group</label>
+              <select
+                value={groupId}
+                onChange={e => setGroupId(e.target.value ? Number(e.target.value) : '')}
+                className={`w-full text-xs border rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400 ${
+                  !groupId ? 'border-indigo-300 text-gray-400' : 'border-indigo-200 text-gray-700'
+                }`}
+              >
+                <option value="">Select account group</option>
+                {groups.map(g => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  setGroupId(autoGroupId)
+                  setShowGroupSelector(false)
+                }}
+                className="text-[11px] text-gray-500 hover:text-gray-700"
+              >
+                Use default group
+              </button>
             </div>
           ) : (
-            <select
-              value={groupId}
-              onChange={e => setGroupId(e.target.value ? Number(e.target.value) : '')}
-              className={`w-full text-xs border rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400 ${
-                !groupId ? 'border-indigo-300 text-gray-400' : 'border-indigo-200 text-gray-700'
-              }`}
-            >
-              <option value="">— Auto-select group —</option>
-              {groups.map(g => (
-                <option key={g.id} value={g.id}>{g.name}</option>
-              ))}
-            </select>
+            <div className="pt-0.5">
+              <button
+                type="button"
+                onClick={() => setShowGroupSelector(true)}
+                className="text-[11px] text-indigo-600 hover:text-indigo-800"
+              >
+                Assign different group
+              </button>
+            </div>
           )}
           <input data-lpignore="true"
             value={description} onChange={e => setDescription(e.target.value)}
@@ -3635,14 +3658,8 @@ function AccountsTab() {
                       <td className="px-3 py-2" style={{ paddingLeft: `${8 + depth * 4}px` }}>
                         <div className="flex items-center gap-1.5">
                           <span className={a.is_active ? 'text-gray-700' : 'text-gray-400 line-through'}>{a.name}</span>
-                          {a.is_system && (
-                            <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">system</span>
-                          )}
                           {!a.is_active && (
                             <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">inactive</span>
-                          )}
-                          {a.group_name && (
-                            <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200 px-1.5 py-0.5 rounded hidden xl:inline">{a.group_name}</span>
                           )}
                         </div>
                         {a.description && (
