@@ -77,6 +77,35 @@ def _get_account_by_group(tenant, group_slug, fallback_code=None):
     )
 
 
+def _get_or_create_customer_tds_receivable(tenant, created_by=None):
+    """
+    Return dedicated Customer TDS Receivable account (1210).
+    Creates it if missing so incoming TDS entries never net against AR control.
+    """
+    from accounting.models import Account
+    try:
+        return Account.objects.get(tenant=tenant, code='1210')
+    except Account.DoesNotExist:
+        parent = Account.objects.filter(tenant=tenant, code='1000').first()
+        group = None
+        try:
+            from accounting.models import AccountGroup
+            group = AccountGroup.objects.filter(tenant=tenant, slug='sundry_debtors').first()
+        except Exception:
+            group = None
+        return Account.objects.create(
+            tenant=tenant,
+            code='1210',
+            name='TDS Receivable (Customer)',
+            type='asset',
+            parent=parent,
+            group=group,
+            is_system=False,
+            is_active=True,
+            created_by=created_by,
+        )
+
+
 def _get_party_account_or_fallback(*, tenant, party, group_slug, fallback_code):
     """Return party sub-ledger account when valid, else control/group fallback."""
     if party is not None and getattr(party, 'account_id', None):
@@ -396,13 +425,13 @@ def create_payment_journal(payment, created_by=None):
       Dr  Accounts Payable     (amount)
       Cr  Cash / Bank Account  (amount)
 
-    Outgoing payment — salary / direct expense (no bill linked):
-      Dr  Salary Expense 5200  (amount)
-      Cr  Cash / Bank Account  (amount)
+        Outgoing payment — salary settlement (reference='PAYSLIP-*', party linked):
+            Dr  Staff Payable (party sub-ledger)
+            Cr  Cash / Bank Account
 
-      Salary goes directly to Salary Expense — there is no AP accrual step
-      for payroll in this system.  Using AP for salary would incorrectly inflate
-      Accounts Payable (a supplier-debt account) with unrelated staff costs.
+        Outgoing payment — direct expense (no bill linked):
+            Dr  Explicit account or fallback expense account
+            Cr  Cash / Bank Account
     """
     tenant = payment.tenant
 
@@ -413,10 +442,26 @@ def create_payment_journal(payment, created_by=None):
         cash_acc = _get_account_by_group(tenant, 'cash_in_hand', '1100')  # fallback: Cash
 
     if payment.type == 'incoming':
+        gross_settlement = payment.amount + (getattr(payment, 'tds_withheld_amount', Decimal('0')) or Decimal('0'))
         if payment.account_id:
             # Standalone receipt: Dr Cash/Bank → Cr named ledger (e.g. Other Income 4300)
             contra_acc = payment.account
             cr_desc = f"Receipt – {payment.payment_number} ({contra_acc.name})"
+        elif getattr(payment, 'tds_withheld_amount', Decimal('0')) and payment.invoice_id:
+            # Customer deducted TDS at source: debit net cash + TDS receivable, credit gross AR
+            contra_acc = _incoming_contra_account(payment, tenant)
+            tds_recv = _get_or_create_customer_tds_receivable(tenant, created_by=created_by)
+            lines = [
+                (cash_acc, payment.amount, Decimal('0'), f"Receipt (net) – {payment.payment_number}"),
+                (tds_recv, payment.tds_withheld_amount, Decimal('0'), f"TDS receivable – {payment.payment_number}"),
+                (contra_acc, Decimal('0'), gross_settlement, f"Clear AR (gross) – {payment.payment_number}"),
+            ]
+            desc = f"Receipt with TDS {payment.payment_number}"
+            return _make_entry(
+                tenant, created_by, payment.date,
+                desc, 'payment', payment.pk, lines,
+                purpose='payment',
+            )
         else:
             # Standard: Dr Cash/Bank → Cr Accounts Receivable (clears invoice)
             contra_acc = _incoming_contra_account(payment, tenant)
@@ -427,17 +472,33 @@ def create_payment_journal(payment, created_by=None):
         ]
         desc = f"Receipt {payment.payment_number}"
     elif payment.bill_id:
-        # Outgoing: supplier bill payment — clears Accounts Payable
+        # Outgoing: supplier bill payment — clears Accounts Payable.
+        # If TDS is withheld, split credits into Cash (net disbursed) + TDS Payable.
         ap = _bill_clear_account(payment, tenant)
+        tds_withheld = getattr(payment, 'tds_withheld_amount', Decimal('0')) or Decimal('0')
+        net_disbursed = (payment.amount - tds_withheld).quantize(Decimal('0.01'))
+
         lines = [
-            (ap,       payment.amount, Decimal('0'), f"Clear AP – {payment.payment_number}"),
-            (cash_acc, Decimal('0'),   payment.amount, f"Payment – {payment.payment_number}"),
+            (ap, payment.amount, Decimal('0'), f"Clear AP – {payment.payment_number}"),
         ]
+        if tds_withheld > Decimal('0'):
+            tds_payable = _get_account_by_group(tenant, 'duties_taxes_tds', '2300')
+            lines.append(
+                (tds_payable, Decimal('0'), tds_withheld, f"Supplier TDS withheld – {payment.payment_number}")
+            )
+        lines.append(
+            (cash_acc, Decimal('0'), net_disbursed, f"Payment – {payment.payment_number}")
+        )
         desc = f"Bill payment {payment.payment_number}"
     else:
         # Outgoing: direct payment (standalone)
-        # Use explicitly assigned account if set; fall back to Other Expenses 5300.
-        if payment.account_id:
+        is_payslip_settlement = (payment.reference or '').startswith('PAYSLIP-')
+
+        # Payslip settlement clears staff payable (party sub-ledger) from accrual.
+        if is_payslip_settlement and getattr(payment, 'party_id', None) and getattr(payment.party, 'account_id', None):
+            dr_acc = payment.party.account
+        # Use explicitly assigned account if set; else fall back to expense.
+        elif payment.account_id:
             dr_acc = payment.account
         else:
             dr_acc = _get_account_by_group(tenant, 'indirect_expense', '5300')
@@ -748,6 +809,180 @@ def create_payslip_journal(payslip, created_by=None):
     )
 
 
+def create_payslip_accrual_journal(payslip, created_by=None):
+    """Post payroll accrual journal at payslip issue time.
+
+    Contract:
+        Dr Salary Expense (gross)
+        Cr Staff Payable (staff party sub-ledger when available)
+        Cr TDS Payable (tds_amount)
+        Cr Deduction accounts (when deduction_breakdown/deductions are present)
+
+    Settlement happens later via Payment journal:
+        Dr Staff Payable / Cr Cash-Bank
+    """
+    from django.core.exceptions import ValidationError
+    from accounts.models import TenantMembership
+
+    tenant = payslip.tenant
+    salary = _get_account_by_group(tenant, 'indirect_expense', '5200')
+    tds_acc = _get_account_by_group(tenant, 'duties_taxes_tds', '2300')
+
+    membership = (
+        TenantMembership.objects
+        .select_related('party__account')
+        .filter(tenant=tenant, user_id=payslip.staff_id, is_active=True)
+        .first()
+    )
+    party = getattr(membership, 'party', None)
+    staff_payable = _get_party_account_or_fallback(
+        tenant=tenant,
+        party=party,
+        group_slug='current_liabilities',
+        fallback_code='2400',
+    )
+
+    tds_amnt = payslip.tds_amount or Decimal('0')
+    base_salary = getattr(payslip, 'base_salary', None) or Decimal('0')
+    bonus = getattr(payslip, 'bonus', None) or Decimal('0')
+    gross_amount = getattr(payslip, 'gross_amount', None) or Decimal('0')
+    deductions = getattr(payslip, 'deductions', None) or Decimal('0')
+
+    if base_salary > Decimal('0') or gross_amount > Decimal('0'):
+        gross = base_salary + bonus + gross_amount
+    else:
+        gross = (payslip.net_pay or Decimal('0')) + tds_amnt + deductions
+
+    if gross <= Decimal('0'):
+        return None
+
+    deduction_lines = []
+    deduction_breakdown = getattr(payslip, 'deduction_breakdown', None) or []
+
+    if deduction_breakdown:
+        loans_fallback = None
+        for item in deduction_breakdown:
+            raw_amount = item.get('amount', '0')
+            try:
+                item_amount = Decimal(str(raw_amount))
+            except Exception:
+                raise ValidationError(
+                    f"Payslip {payslip.pk}: deduction_breakdown item has invalid amount "
+                    f"'{raw_amount}' — must be a numeric string."
+                )
+            if item_amount <= Decimal('0'):
+                continue
+            item_label = item.get('label') or 'Salary deduction'
+            item_code = item.get('account_code', '')
+            if item_code:
+                try:
+                    ded_acc = _get_account(tenant, item_code)
+                except ValueError:
+                    if loans_fallback is None:
+                        loans_fallback = _get_account_by_group(tenant, 'loans_advances_asset', '1400')
+                    ded_acc = loans_fallback
+            else:
+                if loans_fallback is None:
+                    loans_fallback = _get_account_by_group(tenant, 'loans_advances_asset', '1400')
+                ded_acc = loans_fallback
+            deduction_lines.append(
+                (ded_acc, Decimal('0'), item_amount,
+                 f"{item_label} – {payslip.staff} {payslip.period_start}")
+            )
+    elif deductions > Decimal('0'):
+        loans_acc = _get_account_by_group(tenant, 'loans_advances_asset', '1400')
+        deduction_lines.append(
+            (loans_acc, Decimal('0'), deductions,
+             f"Salary deduction – {payslip.staff} {payslip.period_start}")
+        )
+
+    total_deduction_credits = sum(line[2] for line in deduction_lines)
+    payable_credit = gross - tds_amnt - total_deduction_credits
+    if payable_credit < Decimal('0'):
+        raise ValidationError(
+            f"Payslip {payslip.pk}: TDS + deductions ({tds_amnt + total_deduction_credits}) exceed gross ({gross})."
+        )
+
+    lines = [
+        (salary, gross, Decimal('0'), f"Salary accrual – {payslip.staff} {payslip.period_start}"),
+    ]
+    if tds_amnt > Decimal('0'):
+        lines.append(
+            (tds_acc, Decimal('0'), tds_amnt, f"Salary TDS payable – {payslip.staff} {payslip.period_start}")
+        )
+    lines.extend(deduction_lines)
+    if payable_credit > Decimal('0'):
+        lines.append(
+            (staff_payable, Decimal('0'), payable_credit,
+             f"Salary payable – {payslip.staff} {payslip.period_start}")
+        )
+
+    return _make_entry(
+        tenant, created_by, timezone.localdate(),
+        f"Payslip accrual – {payslip.staff} {payslip.period_start}→{payslip.period_end}",
+        'payslip', payslip.pk, lines,
+        purpose='accrual',
+    )
+
+
+def reverse_posted_entry(entry, *, reason: str, reversed_by_user=None, reversal_date=None,
+                         reference_type=None, reference_id=None, description_prefix='Reversal'):
+    """Create an exact reversing entry for a posted journal entry.
+
+    The function is idempotent through `_make_entry` on `(reference_type, reference_id, purpose='reversal')`.
+    """
+    from django.db import transaction
+
+    if not getattr(entry, 'is_posted', False):
+        raise ValueError('Only posted journal entries can be reversed.')
+
+    reversal_date = reversal_date or timezone.localdate()
+    ref_type = reference_type or entry.reference_type
+    ref_id = reference_id if reference_id is not None else entry.reference_id
+
+    lines = []
+    for line in entry.lines.select_related('account').all():
+        lines.append(
+            (
+                line.account,
+                line.credit,
+                line.debit,
+                f"REV {line.description or entry.entry_number}",
+            )
+        )
+
+    reversal_entry = _make_entry(
+        entry.tenant,
+        reversed_by_user,
+        reversal_date,
+        f"{description_prefix}: {entry.entry_number}. Reason: {reason}",
+        ref_type,
+        ref_id,
+        lines,
+        purpose='reversal',
+        reversal_reason=reason,
+        reversed_by_user=reversed_by_user,
+        reversal_timestamp=timezone.now(),
+    )
+
+    with transaction.atomic():
+        entry.reversed_by = reversal_entry
+        entry.reversal_date = reversal_date
+        entry.reversal_reason = reason
+        entry.reversed_by_user = reversed_by_user
+        entry.reversal_timestamp = timezone.now()
+        entry.save(update_fields=[
+            'reversed_by',
+            'reversal_date',
+            'reversal_reason',
+            'reversed_by_user',
+            'reversal_timestamp',
+            'updated_at',
+        ])
+
+    return reversal_entry
+
+
 def create_cogs_journal(invoice, created_by=None):
     """
     Record Cost of Goods Sold for product lines on an issued invoice.
@@ -873,7 +1108,15 @@ def record_vat_remittance(tenant, amount, period, created_by=None):
     )
 
 
-def record_tds_remittance(tenant, amount, period, created_by=None):
+def record_tds_remittance(
+    tenant,
+    amount,
+    period,
+    created_by=None,
+    *,
+    enforce_period_uniqueness=True,
+    reference_id=0,
+):
     """
     Record TDS deposit to IRD — clears TDS Payable:
 
@@ -882,9 +1125,12 @@ def record_tds_remittance(tenant, amount, period, created_by=None):
 
     Call when tenant deposits withheld TDS (salary or supplier) to IRD.
 
-    N2 fix — Period-based idempotency guard: raises ConflictError if a TDS
-    deposit entry for this period already exists so the view returns a
-    meaningful error rather than silently double-posting.
+    N2 fix — Period-based idempotency guard: by default raises ConflictError
+    if a TDS deposit entry for this period already exists so manual posting
+    cannot accidentally double-post.
+
+    For per-entry deposit workflows (e.g. TDSEntry.mark_deposited), callers
+    should pass enforce_period_uniqueness=False with a unique reference_id.
     """
     from accounting.models import JournalEntry
     from core.exceptions import ConflictError
@@ -892,26 +1138,27 @@ def record_tds_remittance(tenant, amount, period, created_by=None):
     if not amount or amount <= Decimal('0'):
         raise ValueError('TDS remittance amount must be > 0.')
 
-    # N2 fix: block double-remittance for the same period.
     period_str = str(period)
-    duplicate = JournalEntry.objects.filter(
-        tenant=tenant,
-        reference_type=JournalEntry.REF_TDS_REM,
-        description__icontains=period_str,
-        is_posted=True,
-    ).first()
-    if duplicate:
-        raise ConflictError(
-            f'TDS deposit for period "{period_str}" already recorded '
-            f'(entry {duplicate.entry_number}).'
-        )
+    if enforce_period_uniqueness:
+        # N2 fix: block double-remittance for the same period in manual flow.
+        duplicate = JournalEntry.objects.filter(
+            tenant=tenant,
+            reference_type=JournalEntry.REF_TDS_REM,
+            description__icontains=period_str,
+            is_posted=True,
+        ).first()
+        if duplicate:
+            raise ConflictError(
+                f'TDS deposit for period "{period_str}" already recorded '
+                f'(entry {duplicate.entry_number}).'
+            )
 
     tds_acc  = _get_account_by_group(tenant, 'duties_taxes_tds', '2300')
     cash_acc = _get_account_by_group(tenant, 'cash_in_hand',      '1100')
     return _make_entry(
         tenant, created_by, timezone.localdate(),
         f"TDS deposit to IRD – {period}",
-        'tds_remittance', 0,
+        'tds_remittance', reference_id,
         [
             (tds_acc,  amount,         Decimal('0'), f"TDS Payable cleared – {period}"),
             (cash_acc, Decimal('0'),   amount,       f"IRD payment – {period}"),

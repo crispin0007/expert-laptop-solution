@@ -1,6 +1,7 @@
 import uuid
 from decimal import Decimal
 from django.db import models
+from django.db.models import F
 from core.models import TenantModel
 from django.conf import settings
 
@@ -552,11 +553,13 @@ class Payslip(TenantModel):
     STATUS_DRAFT = 'draft'
     STATUS_ISSUED = 'issued'
     STATUS_PAID = 'paid'
+    STATUS_VOID = 'void'
 
     STATUS_CHOICES = [
         (STATUS_DRAFT, 'Draft'),
         (STATUS_ISSUED, 'Issued'),
         (STATUS_PAID, 'Paid'),
+        (STATUS_VOID, 'Void'),
     ]
 
     staff = models.ForeignKey(
@@ -602,6 +605,44 @@ class Payslip(TenantModel):
                              max_digits=14, decimal_places=2, default=0,
                              help_text='Amount deducted for absent/late days per AttendancePolicy.',
                            )
+    salary_snapshot_json = models.JSONField(
+                                                         default=dict,
+                                                         help_text='Immutable salary input snapshot captured at payroll generation.',
+                                                     )
+    attendance_snapshot_json = models.JSONField(
+                                                                 default=dict,
+                                                                 help_text='Immutable attendance input snapshot captured at payroll generation.',
+                                                             )
+    leave_snapshot_json = models.JSONField(
+                                                        default=dict,
+                                                        help_text='Immutable leave input snapshot captured at payroll generation.',
+                                                    )
+    calculation_trace_json = models.JSONField(
+                                                             default=dict,
+                                                             help_text='Calculation trace and derived values captured at payroll generation.',
+                                                         )
+    formula_version = models.CharField(
+                                                max_length=32,
+                                                default='v1',
+                                                help_text='Payroll formula version used to compute this payslip.',
+                                            )
+    revision = models.PositiveIntegerField(
+        default=1,
+        help_text='Monotonic revision number for correction cycles. 1 = original issue.',
+    )
+    supersedes = models.ForeignKey(
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='corrections',
+        help_text='Original payslip this correction supersedes, if any.',
+    )
+    void_reason = models.TextField(
+        blank=True,
+        help_text='Reason captured when this payslip is reversed/voided.',
+    )
+    voided_at = models.DateTimeField(null=True, blank=True)
     status       = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_DRAFT)
     approved_by  = models.ForeignKey(
                      settings.AUTH_USER_MODEL,
@@ -626,7 +667,7 @@ class Payslip(TenantModel):
 
     class Meta:
         ordering = ['-period_end']
-        unique_together = ('tenant', 'staff', 'period_start', 'period_end')
+        unique_together = ('tenant', 'staff', 'period_start', 'period_end', 'revision')
 
     def __str__(self):
         return f"Payslip {self.staff} {self.period_start}–{self.period_end}"
@@ -758,8 +799,17 @@ class Invoice(TenantModel):
         ann = getattr(self, 'amount_paid_sum', None)
         if ann is not None:
             return ann
-        from django.db.models import Sum
-        return self.payments.aggregate(t=Sum('amount'))['t'] or Decimal('0')
+        from django.db.models import Sum, Value
+        from django.db.models.functions import Coalesce
+        # Gross settlement for customer receipts = net cash amount + customer-withheld TDS
+        return self.payments.aggregate(
+            t=Coalesce(
+                Sum(
+                    F('amount') + Coalesce(F('tds_withheld_amount'), Value(Decimal('0')))
+                ),
+                Value(Decimal('0')),
+            )
+        )['t'] or Decimal('0')
 
     @property
     def amount_due(self):
@@ -995,6 +1045,32 @@ class Payment(TenantModel):
         max_length=200, blank=True,
         help_text='Payee name (outgoing) or payer/drawer name (incoming). Used for cheque tracking.',
     )
+
+    # Customer withholding TDS (incoming receipts only)
+    tds_rate = models.DecimalField(
+        max_digits=6,
+        decimal_places=4,
+        default=0,
+        help_text='Customer withholding TDS rate (e.g. 0.10 = 10%). Incoming receipts only.',
+    )
+    tds_withheld_amount = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=0,
+        help_text='Amount withheld by customer as TDS for this receipt.',
+    )
+    net_receipt_amount = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=0,
+        help_text='Net cash received after TDS withholding.',
+    )
+    tds_reference = models.CharField(
+        max_length=64,
+        blank=True,
+        help_text='Customer TDS reference (certificate/challan/reference number).',
+    )
+
     cheque_status = models.CharField(
         max_length=16, blank=True,
         choices=CHEQUE_STATUS_CHOICES,

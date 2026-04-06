@@ -12,6 +12,7 @@ Run inside Docker:
 import pytest
 from decimal import Decimal
 import datetime
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 
 # ─── Shared fixtures ─────────────────────────────────────────────────────────
@@ -2317,6 +2318,562 @@ class TestN2RemittanceDedup:
 
         with pytest.raises(ConflictError, match="2081-09"):
             record_tds_remittance(tenant, Decimal("2000"), "2081-09", created_by=admin_user)
+
+    @pytest.mark.django_db
+    def test_tds_remittance_allows_per_entry_mode_same_period(self, tenant, admin_user):
+        """
+        Per-entry remittance mode must allow multiple remittance journals in the
+        same period when period-level uniqueness is disabled.
+        """
+        from accounting.services.journal_service import record_tds_remittance
+        from accounting.models import JournalEntry
+
+        record_tds_remittance(
+            tenant,
+            Decimal("1200"),
+            "2081-09",
+            created_by=admin_user,
+            enforce_period_uniqueness=False,
+            reference_id=101,
+        )
+        record_tds_remittance(
+            tenant,
+            Decimal("800"),
+            "2081-09",
+            created_by=admin_user,
+            enforce_period_uniqueness=False,
+            reference_id=102,
+        )
+
+        count = JournalEntry.objects.filter(
+            tenant=tenant,
+            reference_type='tds_remittance',
+            is_posted=True,
+            description__icontains='2081-09',
+        ).count()
+        assert count == 2, f"N2 FAIL: expected 2 per-entry TDS remittances, got {count}"
+
+
+class TestN2MonthlyPayslipTask:
+
+    @pytest.mark.django_db
+    def test_monthly_payslip_task_handles_generate_tuple(self, tenant, admin_user):
+        """Task must unpack PayslipService.generate() return tuple without errors."""
+        from accounting.models import StaffSalaryProfile
+        from accounting.tasks import task_generate_monthly_payslips
+
+        StaffSalaryProfile.objects.create(
+            tenant=tenant,
+            staff=admin_user,
+            base_salary=Decimal('30000.00'),
+            tds_rate=Decimal('0.1000'),
+            bonus_default=Decimal('0.00'),
+            effective_from=datetime.date(2026, 1, 1),
+        )
+
+        summary = task_generate_monthly_payslips.run()
+        assert 'created=1' in summary, f"Expected one payslip created, got summary: {summary}"
+        assert 'errors=0' in summary, f"Expected zero errors, got summary: {summary}"
+
+
+class TestN2StaffOnboardingPayrollDefaults:
+
+    @pytest.mark.django_db
+    def test_staff_created_auto_creates_salary_profile(self, tenant):
+        """staff.created event should initialize StaffSalaryProfile for payroll automation."""
+        from accounts.services import invite_staff
+        from accounting.models import StaffSalaryProfile
+
+        user = invite_staff(
+            tenant=tenant,
+            data={
+                'email': 'new.staff@nexus.test',
+                'full_name': 'New Staff',
+                'role': 'staff',
+            },
+        )
+
+        profile = StaffSalaryProfile.objects.filter(tenant=tenant, staff=user).first()
+        assert profile is not None, 'Expected StaffSalaryProfile to be auto-created on staff.created.'
+        assert profile.base_salary == Decimal('0.00')
+        assert profile.tds_rate == Decimal('0.1000')
+
+
+class TestN2TDSReconciliationEndpoint:
+
+    @pytest.mark.django_db
+    def test_reconciliation_reports_pending_vs_ledger(self, tenant, admin_user):
+        """TDS reconciliation endpoint should return pending totals and GL parity flag."""
+        from accounting.models import TDSEntry
+        from accounting.views import TDSEntryViewSet
+        from rest_framework.request import Request as DrfRequest
+
+        TDSEntry.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            supplier_name='Supplier A',
+            supplier_pan='123456789',
+            taxable_amount=Decimal('10000.00'),
+            tds_rate=Decimal('0.10'),
+            period_month=9,
+            period_year=2081,
+        )
+        TDSEntry.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            supplier_name='Supplier B',
+            supplier_pan='987654321',
+            taxable_amount=Decimal('5000.00'),
+            tds_rate=Decimal('0.10'),
+            period_month=9,
+            period_year=2081,
+            status=TDSEntry.STATUS_DEPOSITED,
+        )
+
+        factory = APIRequestFactory()
+        raw_request = factory.get('/api/v1/tds/reconciliation/?year=2081&month=9')
+        force_authenticate(raw_request, user=admin_user)
+        request = DrfRequest(raw_request)
+        request.tenant = tenant
+        request.user = admin_user
+
+        view = TDSEntryViewSet()
+        view.request = request
+        view.tenant = tenant
+        view.action = 'reconciliation'
+        view.kwargs = {}
+        response = view.reconciliation(request)
+
+        assert response.status_code == 200
+        payload = response.data
+        assert payload['success'] is True
+        data = payload['data']
+        assert data['tds_entries']['pending'] == '1000.00'
+        assert data['tds_entries']['deposited'] == '500.00'
+        assert data['ledger']['account_code'] == '2300'
+
+
+class TestN2SupplierTDSPayments:
+
+    @pytest.mark.django_db
+    def test_outgoing_bill_payment_with_tds_posts_tds_payable(self, tenant, admin_user):
+        """Outgoing bill payment with TDS should split cash and credit TDS payable."""
+        from accounting.models import Bill, JournalEntry
+        from accounting.services.payment_service import record_payment
+
+        bill = Bill.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            supplier_name='Supplier TDS',
+            line_items=[],
+            subtotal=Decimal('10000.00'),
+            discount=Decimal('0.00'),
+            vat_rate=Decimal('0.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('10000.00'),
+            status=Bill.STATUS_APPROVED,
+            tds_rate=Decimal('0.1000'),
+        )
+
+        payment = record_payment(
+            tenant=tenant,
+            created_by=admin_user,
+            payment_type='outgoing',
+            method='bank_transfer',
+            amount=Decimal('10000.00'),  # gross AP settlement
+            bill=bill,
+            tds_rate=Decimal('0.1000'),
+            tds_reference='IRD-TEST-001',
+        )
+
+        assert payment.tds_withheld_amount == Decimal('1000.00')
+        assert payment.net_receipt_amount == Decimal('9000.00')
+
+        entry = JournalEntry.objects.get(
+            tenant=tenant,
+            reference_type='payment',
+            reference_id=payment.pk,
+            is_posted=True,
+        )
+        lines = list(entry.lines.select_related('account').all())
+
+        ap_debit = sum(l.debit for l in lines if l.account.code == '2100')
+        cash_credit = sum(l.credit for l in lines if l.account.code == '1100')
+        tds_credit = sum(l.credit for l in lines if l.account.code == '2300')
+
+        assert ap_debit == Decimal('10000.00')
+        assert cash_credit == Decimal('9000.00')
+        assert tds_credit == Decimal('1000.00')
+
+    @pytest.mark.django_db
+    def test_outgoing_bill_payment_rejects_tds_rate_mismatch(self, tenant, admin_user):
+        """Payment must reject TDS rate different from bill.tds_rate when bill has one."""
+        from accounting.models import Bill
+        from accounting.services.payment_service import record_payment
+
+        bill = Bill.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            supplier_name='Supplier TDS Mismatch',
+            line_items=[],
+            subtotal=Decimal('5000.00'),
+            discount=Decimal('0.00'),
+            vat_rate=Decimal('0.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('5000.00'),
+            status=Bill.STATUS_APPROVED,
+            tds_rate=Decimal('0.1000'),
+        )
+
+        with pytest.raises(ValueError, match='TDS rate mismatch'):
+            record_payment(
+                tenant=tenant,
+                created_by=admin_user,
+                payment_type='outgoing',
+                method='bank_transfer',
+                amount=Decimal('5000.00'),
+                bill=bill,
+                tds_rate=Decimal('0.0500'),
+            )
+
+    @pytest.mark.django_db
+    def test_outgoing_bill_payment_requires_tds_when_bill_configured(self, tenant, admin_user):
+        """Payment must not allow tds_rate=0 when bill has configured tds_rate > 0."""
+        from accounting.models import Bill
+        from accounting.services.payment_service import record_payment
+
+        bill = Bill.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            supplier_name='Supplier TDS Required',
+            line_items=[],
+            subtotal=Decimal('6000.00'),
+            discount=Decimal('0.00'),
+            vat_rate=Decimal('0.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('6000.00'),
+            status=Bill.STATUS_APPROVED,
+            tds_rate=Decimal('0.1000'),
+        )
+
+        with pytest.raises(ValueError, match='Bill requires TDS'):
+            record_payment(
+                tenant=tenant,
+                created_by=admin_user,
+                payment_type='outgoing',
+                method='bank_transfer',
+                amount=Decimal('6000.00'),
+                bill=bill,
+                tds_rate=Decimal('0.0000'),
+            )
+
+
+class TestN3PayrollAccrualSettlementSplit:
+
+    @pytest.mark.django_db
+    def test_issue_posts_accrual_to_staff_payable(self, tenant, admin_user):
+        from django.contrib.auth import get_user_model
+        from accounts.models import TenantMembership
+        from accounting.models import StaffSalaryProfile, JournalEntry
+        from accounting.services.payslip_service import PayslipService
+        from parties.services import resolve_or_create_staff_party
+
+        user_model = get_user_model()
+        staff = user_model.objects.create_user(
+            username='payroll_staff_accrual',
+            email='payroll.accrual@test.com',
+            password='testpassword',
+        )
+        membership = TenantMembership.objects.create(
+            user=staff,
+            tenant=tenant,
+            role='staff',
+            is_active=True,
+            pan_number='123456789',
+        )
+        resolve_or_create_staff_party(membership)
+        membership.refresh_from_db()
+        assert membership.party_id is not None
+        assert membership.party.account_id is not None
+
+        StaffSalaryProfile.objects.create(
+            tenant=tenant,
+            staff=staff,
+            base_salary=Decimal('30000.00'),
+            tds_rate=Decimal('0.1000'),
+            bonus_default=Decimal('0.00'),
+            effective_from=datetime.date(2026, 1, 1),
+        )
+
+        svc = PayslipService(tenant=tenant, user=admin_user)
+        payslip, _ = svc.generate(
+            staff_id=staff.id,
+            period_start=datetime.date(2026, 2, 1),
+            period_end=datetime.date(2026, 2, 28),
+        )
+        svc.issue(payslip)
+
+        entry = JournalEntry.objects.get(
+            tenant=tenant,
+            reference_type='payslip',
+            reference_id=payslip.pk,
+            purpose='accrual',
+            is_posted=True,
+        )
+        lines = list(entry.lines.select_related('account').all())
+
+        salary_dr = sum(l.debit for l in lines if l.account.code == '5200')
+        tds_cr = sum(l.credit for l in lines if l.account.code == '2300')
+        staff_payable_cr = sum(
+            l.credit for l in lines if l.account_id == membership.party.account_id
+        )
+        cash_cr = sum(l.credit for l in lines if l.account.code == '1100')
+
+        assert salary_dr == Decimal('30000.00')
+        assert tds_cr == Decimal('3000.00')
+        assert staff_payable_cr == Decimal('27000.00')
+        assert cash_cr == Decimal('0.00')
+
+    @pytest.mark.django_db
+    def test_mark_paid_posts_settlement_from_staff_payable(self, tenant, admin_user):
+        from django.contrib.auth import get_user_model
+        from accounts.models import TenantMembership
+        from accounting.models import StaffSalaryProfile, JournalEntry
+        from accounting.services.payslip_service import PayslipService
+        from parties.services import resolve_or_create_staff_party
+
+        user_model = get_user_model()
+        staff = user_model.objects.create_user(
+            username='payroll_staff_settle',
+            email='payroll.settle@test.com',
+            password='testpassword',
+        )
+        membership = TenantMembership.objects.create(
+            user=staff,
+            tenant=tenant,
+            role='staff',
+            is_active=True,
+            pan_number='123456780',
+        )
+        resolve_or_create_staff_party(membership)
+        membership.refresh_from_db()
+        assert membership.party_id is not None
+        assert membership.party.account_id is not None
+
+        StaffSalaryProfile.objects.create(
+            tenant=tenant,
+            staff=staff,
+            base_salary=Decimal('20000.00'),
+            tds_rate=Decimal('0.1000'),
+            bonus_default=Decimal('0.00'),
+            effective_from=datetime.date(2026, 1, 1),
+        )
+
+        svc = PayslipService(tenant=tenant, user=admin_user)
+        payslip, _ = svc.generate(
+            staff_id=staff.id,
+            period_start=datetime.date(2026, 3, 1),
+            period_end=datetime.date(2026, 3, 31),
+        )
+        payslip = svc.issue(payslip)
+        payslip, payment = svc.mark_paid(payslip, payment_method='cash')
+
+        assert payment is not None
+        settle_entry = JournalEntry.objects.get(
+            tenant=tenant,
+            reference_type='payment',
+            reference_id=payment.pk,
+            purpose='payment',
+            is_posted=True,
+        )
+        lines = list(settle_entry.lines.select_related('account').all())
+
+        staff_payable_dr = sum(
+            l.debit for l in lines if l.account_id == membership.party.account_id
+        )
+        cash_cr = sum(l.credit for l in lines if l.account.code == '1100')
+        salary_dr = sum(l.debit for l in lines if l.account.code == '5200')
+
+        # Net pay = 20000 - 2000 TDS
+        assert staff_payable_dr == Decimal('18000.00')
+        assert cash_cr == Decimal('18000.00')
+        assert salary_dr == Decimal('0.00')
+
+
+class TestN4PayrollSnapshots:
+
+    @pytest.mark.django_db
+    def test_generate_persists_payroll_snapshots(self, tenant, admin_user):
+        from django.contrib.auth import get_user_model
+        from accounts.models import TenantMembership
+        from accounting.models import StaffSalaryProfile
+        from accounting.services.payslip_service import PayslipService
+
+        user_model = get_user_model()
+        staff = user_model.objects.create_user(
+            username='payroll_snapshot_staff',
+            email='payroll.snapshot@test.com',
+            password='testpassword',
+        )
+        TenantMembership.objects.create(
+            user=staff,
+            tenant=tenant,
+            role='staff',
+            is_active=True,
+            pan_number='111222333',
+        )
+        profile = StaffSalaryProfile.objects.create(
+            tenant=tenant,
+            staff=staff,
+            base_salary=Decimal('25000.00'),
+            tds_rate=Decimal('0.1000'),
+            bonus_default=Decimal('500.00'),
+            effective_from=datetime.date(2026, 1, 1),
+        )
+
+        svc = PayslipService(tenant=tenant, user=admin_user)
+        payslip, _ = svc.generate(
+            staff_id=staff.id,
+            period_start=datetime.date(2026, 4, 1),
+            period_end=datetime.date(2026, 4, 30),
+        )
+
+        assert payslip.formula_version == 'v1'
+        assert payslip.salary_snapshot_json.get('base_salary') == '25000.00'
+        assert payslip.salary_snapshot_json.get('bonus') == '500.00'
+        assert payslip.salary_snapshot_json.get('staff_salary_profile_id') == profile.id
+        assert payslip.attendance_snapshot_json.get('period_start') == '2026-04-01'
+        assert payslip.leave_snapshot_json.get('period_end') == '2026-04-30'
+        assert payslip.calculation_trace_json.get('net_pay') == str(payslip.net_pay)
+
+
+class TestN5PayrollCorrectionWorkflow:
+
+    @pytest.mark.django_db
+    def test_reverse_issued_payslip_marks_void_and_posts_reversal(self, tenant, admin_user):
+        from django.contrib.auth import get_user_model
+        from accounts.models import TenantMembership
+        from accounting.models import StaffSalaryProfile, JournalEntry, Payslip
+        from accounting.services.payslip_service import PayslipService
+        from parties.services import resolve_or_create_staff_party
+
+        user_model = get_user_model()
+        staff = user_model.objects.create_user(
+            username='payroll_reverse_staff',
+            email='payroll.reverse@test.com',
+            password='testpassword',
+        )
+        membership = TenantMembership.objects.create(
+            user=staff,
+            tenant=tenant,
+            role='staff',
+            is_active=True,
+            pan_number='333444555',
+        )
+        resolve_or_create_staff_party(membership)
+
+        StaffSalaryProfile.objects.create(
+            tenant=tenant,
+            staff=staff,
+            base_salary=Decimal('18000.00'),
+            tds_rate=Decimal('0.1000'),
+            bonus_default=Decimal('0.00'),
+            effective_from=datetime.date(2026, 1, 1),
+        )
+
+        svc = PayslipService(tenant=tenant, user=admin_user)
+        payslip, _ = svc.generate(
+            staff_id=staff.id,
+            period_start=datetime.date(2026, 5, 1),
+            period_end=datetime.date(2026, 5, 31),
+        )
+        payslip = svc.issue(payslip)
+        payslip = svc.reverse(payslip, reason='Correction required for payroll inputs')
+
+        payslip.refresh_from_db()
+        assert payslip.status == Payslip.STATUS_VOID
+        assert payslip.void_reason == 'Correction required for payroll inputs'
+        assert payslip.voided_at is not None
+
+        accrual_entry = JournalEntry.objects.get(
+            tenant=tenant,
+            reference_type='payslip',
+            reference_id=payslip.pk,
+            purpose='accrual',
+            is_posted=True,
+        )
+        reversal_entry = JournalEntry.objects.get(
+            tenant=tenant,
+            reference_type='payslip',
+            reference_id=payslip.pk,
+            purpose='reversal',
+            is_posted=True,
+        )
+        assert accrual_entry.total_debit == reversal_entry.total_credit
+        assert accrual_entry.total_credit == reversal_entry.total_debit
+
+    @pytest.mark.django_db
+    def test_regenerate_from_snapshot_creates_revision_two(self, tenant, admin_user):
+        from django.contrib.auth import get_user_model
+        from accounts.models import TenantMembership
+        from accounting.models import StaffSalaryProfile, Payslip
+        from accounting.services.payslip_service import PayslipService
+        from parties.services import resolve_or_create_staff_party
+
+        user_model = get_user_model()
+        staff = user_model.objects.create_user(
+            username='payroll_regen_staff',
+            email='payroll.regen@test.com',
+            password='testpassword',
+        )
+        membership = TenantMembership.objects.create(
+            user=staff,
+            tenant=tenant,
+            role='staff',
+            is_active=True,
+            pan_number='888777666',
+        )
+        resolve_or_create_staff_party(membership)
+
+        StaffSalaryProfile.objects.create(
+            tenant=tenant,
+            staff=staff,
+            base_salary=Decimal('22000.00'),
+            tds_rate=Decimal('0.1000'),
+            bonus_default=Decimal('1000.00'),
+            effective_from=datetime.date(2026, 1, 1),
+        )
+
+        svc = PayslipService(tenant=tenant, user=admin_user)
+        original, _ = svc.generate(
+            staff_id=staff.id,
+            period_start=datetime.date(2026, 6, 1),
+            period_end=datetime.date(2026, 6, 30),
+        )
+        original = svc.issue(original)
+
+        corrected = svc.regenerate_from_snapshot(
+            original,
+            reason='Wrong deduction breakdown applied in revision 1',
+        )
+
+        original.refresh_from_db()
+        assert original.status == Payslip.STATUS_VOID
+        assert corrected.status == Payslip.STATUS_DRAFT
+        assert corrected.revision == 2
+        assert corrected.supersedes_id == original.id
+        assert corrected.period_start == original.period_start
+        assert corrected.period_end == original.period_end
+        assert corrected.salary_snapshot_json.get('base_salary') == '22000.00'
+        assert corrected.salary_snapshot_json.get('bonus') == '1000.00'
+
+        same_period = Payslip.objects.filter(
+            tenant=tenant,
+            staff=staff,
+            period_start=datetime.date(2026, 6, 1),
+            period_end=datetime.date(2026, 6, 30),
+        )
+        assert same_period.count() == 2
 
 
 # ─────────────────────────────────────────────────────────────────────────────

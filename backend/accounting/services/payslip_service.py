@@ -15,7 +15,7 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Max, Sum
 from django.utils import timezone
 
 from core.exceptions import NotFoundError, ValidationError, ForbiddenError, ConflictError
@@ -102,6 +102,7 @@ class PayslipService:
         tds_rate=None,
         deductions=None,
         employee_pan: str = '',
+        revision: int = 1,
     ):
         """
         Auto-generate (or refresh) a payslip for a staff member by aggregating
@@ -217,11 +218,43 @@ class PayslipService:
 
         net = base + bon + gross - tds_amount - other_ded - leave_deduction - attendance_deduction
 
+        formula_version = 'v1'
+        salary_snapshot = {
+            'base_salary': str(base),
+            'bonus': str(bon),
+            'tds_rate': str(tds_rate_dec),
+            'coin_to_money_rate': str(rate),
+            'employee_pan': employee_pan,
+            'staff_salary_profile_id': profile.pk if profile else None,
+        }
+        attendance_snapshot = {
+            'period_start': str(ps),
+            'period_end': str(pe),
+            'attendance_deduction': str(attendance_deduction),
+            'working_days_per_month': str(getattr(self.tenant, 'working_days_per_month', 26) or 26),
+        }
+        leave_snapshot = {
+            'period_start': str(ps),
+            'period_end': str(pe),
+            'unpaid_leave_days': str(unpaid_leave_days),
+            'leave_deduction': str(leave_deduction),
+        }
+        calculation_trace = {
+            'coins_total': str(coins),
+            'coin_gross_amount': str(gross),
+            'tds_amount': str(tds_amount),
+            'other_deductions': str(other_ded),
+            'leave_deduction': str(leave_deduction),
+            'attendance_deduction': str(attendance_deduction),
+            'net_pay': str(net),
+        }
+
         payslip, created = Payslip.objects.get_or_create(
             tenant=self.tenant,
             staff=staff,
             period_start=ps,
             period_end=pe,
+            revision=revision,
             defaults={
                 'total_coins':        coins,
                 'coin_to_money_rate': rate,
@@ -235,6 +268,11 @@ class PayslipService:
                 'unpaid_leave_days':  unpaid_leave_days,
                 'leave_deduction':    leave_deduction,
                 'attendance_deduction': attendance_deduction,
+                'salary_snapshot_json': salary_snapshot,
+                'attendance_snapshot_json': attendance_snapshot,
+                'leave_snapshot_json': leave_snapshot,
+                'calculation_trace_json': calculation_trace,
+                'formula_version': formula_version,
             },
         )
         if not created:
@@ -255,6 +293,11 @@ class PayslipService:
             payslip.unpaid_leave_days  = unpaid_leave_days
             payslip.leave_deduction    = leave_deduction
             payslip.attendance_deduction = attendance_deduction
+            payslip.salary_snapshot_json = salary_snapshot
+            payslip.attendance_snapshot_json = attendance_snapshot
+            payslip.leave_snapshot_json = leave_snapshot
+            payslip.calculation_trace_json = calculation_trace
+            payslip.formula_version = formula_version
             payslip.save()
 
         # ── Auto-create / replace TDSEntry for this salary ────────────────────
@@ -302,12 +345,140 @@ class PayslipService:
             logger.warning('EventBus.publish payroll.payslip.generated failed for payslip %s: %s', payslip.pk, exc, exc_info=True)
         return payslip, created
 
+    def _next_revision(self, *, staff_id: int, period_start, period_end) -> int:
+        from accounting.models import Payslip
+
+        max_revision = (
+            Payslip.objects
+            .filter(
+                tenant=self.tenant,
+                staff_id=staff_id,
+                period_start=period_start,
+                period_end=period_end,
+            )
+            .aggregate(max_revision=Max('revision'))
+            .get('max_revision')
+            or 0
+        )
+        return int(max_revision) + 1
+
+    @transaction.atomic
+    def reverse(self, payslip, *, reason: str):
+        """Reverse journals tied to a payslip and mark it void without deleting history."""
+        from accounting.models import JournalEntry, Payment, Payslip
+        from accounting.services.journal_service import reverse_posted_entry
+
+        payslip = Payslip.objects.select_for_update().get(pk=payslip.pk)
+        if payslip.status == Payslip.STATUS_VOID:
+            raise ConflictError('Payslip is already void.')
+        if payslip.status == Payslip.STATUS_DRAFT:
+            raise ConflictError('Draft payslip has no posted financial history to reverse.')
+
+        accrual_entry = (
+            JournalEntry.objects
+            .filter(
+                tenant=self.tenant,
+                reference_type='payslip',
+                reference_id=payslip.pk,
+                purpose='accrual',
+                is_posted=True,
+            )
+            .order_by('-id')
+            .first()
+        )
+        if accrual_entry is None:
+            raise ConflictError('No posted accrual journal found for this payslip.')
+
+        reverse_posted_entry(
+            accrual_entry,
+            reason=reason,
+            reversed_by_user=self.user,
+            reversal_date=timezone.localdate(),
+            reference_type='payslip',
+            reference_id=payslip.pk,
+            description_prefix='Payslip accrual reversal',
+        )
+
+        if payslip.status == Payslip.STATUS_PAID:
+            payment = (
+                Payment.objects
+                .filter(tenant=self.tenant, reference=f'PAYSLIP-{payslip.pk}')
+                .order_by('-id')
+                .first()
+            )
+            if payment is None:
+                raise ConflictError('Salary settlement payment record not found for this paid payslip.')
+
+            settlement_entry = (
+                JournalEntry.objects
+                .filter(
+                    tenant=self.tenant,
+                    reference_type='payment',
+                    reference_id=payment.pk,
+                    purpose='payment',
+                    is_posted=True,
+                )
+                .order_by('-id')
+                .first()
+            )
+            if settlement_entry is None:
+                raise ConflictError('Salary settlement journal not found for this paid payslip.')
+
+            reverse_posted_entry(
+                settlement_entry,
+                reason=reason,
+                reversed_by_user=self.user,
+                reversal_date=timezone.localdate(),
+                reference_type='payment',
+                reference_id=payment.pk,
+                description_prefix='Payslip settlement reversal',
+            )
+
+        payslip.status = Payslip.STATUS_VOID
+        payslip.void_reason = reason
+        payslip.voided_at = timezone.now()
+        payslip.save(update_fields=['status', 'void_reason', 'voided_at', 'updated_at'])
+        return payslip
+
+    @transaction.atomic
+    def regenerate_from_snapshot(self, payslip, *, reason: str):
+        """Reverse an issued/paid payslip and create the next draft revision from its immutable snapshots."""
+        from accounting.models import Payslip
+
+        original = Payslip.objects.select_for_update().get(pk=payslip.pk)
+        self.reverse(original, reason=reason)
+
+        salary_snapshot = original.salary_snapshot_json or {}
+        calc_trace = original.calculation_trace_json or {}
+
+        next_revision = self._next_revision(
+            staff_id=original.staff_id,
+            period_start=original.period_start,
+            period_end=original.period_end,
+        )
+
+        corrected, _created = self.generate(
+            staff_id=original.staff_id,
+            period_start=original.period_start,
+            period_end=original.period_end,
+            base_salary=salary_snapshot.get('base_salary', original.base_salary),
+            bonus=salary_snapshot.get('bonus', original.bonus),
+            tds_rate=salary_snapshot.get('tds_rate', None),
+            deductions=calc_trace.get('other_deductions', original.deductions),
+            employee_pan=salary_snapshot.get('employee_pan', ''),
+            revision=next_revision,
+        )
+        corrected.supersedes = original
+        corrected.save(update_fields=['supersedes', 'updated_at'])
+        return corrected
+
     # ── State transitions ─────────────────────────────────────────────────────
 
     @transaction.atomic
     def issue(self, payslip):
         """Move a draft payslip to issued. Raises ConflictError if not draft."""
         from accounting.models import Payslip
+        from accounting.services.journal_service import create_payslip_accrual_journal
         # Re-fetch with row lock to prevent concurrent double-issue.
         payslip = Payslip.objects.select_for_update().get(pk=payslip.pk)
         if payslip.status != Payslip.STATUS_DRAFT:
@@ -315,6 +486,9 @@ class PayslipService:
         payslip.status    = Payslip.STATUS_ISSUED
         payslip.issued_at = timezone.now()
         payslip.save(update_fields=['status', 'issued_at', 'updated_at'])
+
+        # Explicit financial posting: accrual at issue time.
+        create_payslip_accrual_journal(payslip, created_by=self.user)
         return payslip
 
     @transaction.atomic
@@ -326,6 +500,8 @@ class PayslipService:
         """
         from accounting.models import BankAccount, Payslip
         from accounting.services.payment_service import record_payment
+
+        from accounts.models import TenantMembership
 
         # Re-fetch with row lock to prevent concurrent double-payment.
         payslip = Payslip.objects.select_for_update().get(pk=payslip.pk)
@@ -350,6 +526,13 @@ class PayslipService:
 
         payment = None
         if payslip.net_pay > Decimal('0'):
+            membership = (
+                TenantMembership.objects
+                .select_related('party')
+                .filter(tenant=self.tenant, user_id=payslip.staff_id, is_active=True)
+                .first()
+            )
+            staff_party = getattr(membership, 'party', None)
             staff_label  = getattr(payslip.staff, 'full_name', '') or payslip.staff.email
             period_label = f"{payslip.period_start}–{payslip.period_end}"
             payment = record_payment(
@@ -360,6 +543,7 @@ class PayslipService:
                 amount=payslip.net_pay,
                 date=timezone.localdate(),
                 bank_account=bank_account,
+                party=staff_party,
                 reference=f'PAYSLIP-{payslip.pk}',
                 notes=f'Salary payment to {staff_label} for {period_label}',
             )

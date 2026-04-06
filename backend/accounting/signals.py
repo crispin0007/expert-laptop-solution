@@ -119,17 +119,8 @@ def handle_bill_status_change(sender, instance, created, **kwargs):
 @receiver(post_save, sender='accounting.Payment')
 def handle_payment_created(sender, instance, created, **kwargs):
     """New payment → create cash movement journal entry.
-
-    SKIP salary payments (reference='PAYSLIP-…'): those are journalised by
-    handle_payslip_paid instead, with the correct gross-salary / TDS split.
-    The Payment record is still created for cash-flow / bank-reconciliation
-    purposes — we just don't want a duplicate (and incorrect) journal here.
     """
     if not created:
-        return
-
-    # Salary payments: journal is posted by handle_payslip_paid signal
-    if (instance.reference or '').startswith('PAYSLIP-'):
         return
 
     # Credit note application: no cash changes hands — the credit note's own
@@ -190,35 +181,13 @@ def handle_credit_note_issued(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender='accounting.Payslip')
 def handle_payslip_paid(sender, instance, created, **kwargs):
-    """
-    Paid → create salary expense journal entry with correct gross/TDS split:
+        """Legacy hook retained for backward compatibility.
 
-      Dr  Salary Expense  5200   gross (net_pay + tds_amount)
-      Cr  TDS Payable     2300   tds_amount   ← liability to IRD
-      Cr  Cash / Bank            net_pay      ← actually paid to employee
-
-    IMPORTANT: The Payment record created by mark_paid (reference='PAYSLIP-…')
-    intentionally skips its own journal in handle_payment_created so that only
-    THIS handler posts the double-entry.  Recording it here gives us the full
-    gross-salary debit and the TDS liability credit — neither of which the
-    Payment-side journal could supply.
-    """
-    if created:
+        Payroll journals are now posted explicitly from service layer:
+            - PayslipService.issue()   -> accrual journal
+            - Payment post_save signal -> settlement journal
+        """
         return
-
-    from accounting.models import JournalEntry
-    from accounting.services.journal_service import create_payslip_journal
-
-    already_posted = JournalEntry.objects.filter(
-        tenant=instance.tenant,
-        reference_type='payslip',
-        reference_id=instance.pk,
-        is_posted=True,
-    ).exists()
-
-    if instance.status == 'paid' and not already_posted:
-        # Critical: re-raise so payslip status is rolled back if journal fails.
-        create_payslip_journal(instance, created_by=instance.created_by)
 
 
 # ─── Tenant created: seed Chart of Accounts ──────────────────────────────────

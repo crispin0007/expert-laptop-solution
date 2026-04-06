@@ -4,6 +4,7 @@ accounting/views.py — Full accounting module viewsets.
 import logging
 from decimal import Decimal
 from rest_framework import viewsets, permissions, status
+from django.db import transaction
 
 logger = logging.getLogger(__name__)
 from rest_framework.decorators import action
@@ -62,13 +63,13 @@ class AccountGroupViewSet(NexusViewSet):
     """
     AccountGroup management for the current tenant.
     - list/retrieve: manager+
-    - create/update/delete: disabled (read-only endpoint)
+    - create/update/delete: admin only
     """
 
     queryset         = AccountGroup.objects.all()
     serializer_class = AccountGroupSerializer
     required_module  = 'accounting'
-    http_method_names = ['get', 'head', 'options']
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
@@ -76,7 +77,10 @@ class AccountGroupViewSet(NexusViewSet):
                 permissions.IsAuthenticated(),
                 make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')(),
             ]
-        return [permissions.IsAuthenticated()]
+        return [
+            permissions.IsAuthenticated(),
+            make_role_permission(*ADMIN_ROLES, permission_key='accounting.manage_invoices')(),
+        ]
 
     def get_queryset(self):
         self.ensure_tenant()
@@ -86,6 +90,78 @@ class AccountGroupViewSet(NexusViewSet):
             if types:
                 qs = qs.filter(type__in=types) if len(types) > 1 else qs.filter(type=types[0])
         return qs
+
+    def create(self, request, *args, **kwargs):
+        self.ensure_tenant()
+        required = ('slug', 'name', 'type')
+        for key in required:
+            if not request.data.get(key):
+                raise AppValidationError(f'{key} is required.')
+
+        payload = {
+            'tenant': self.tenant,
+            'created_by': request.user,
+            'slug': str(request.data.get('slug')).strip(),
+            'name': str(request.data.get('name')).strip(),
+            'description': request.data.get('description', ''),
+            'type': request.data.get('type'),
+            'report_section': request.data.get('report_section', ''),
+            'affects_gross_profit': bool(request.data.get('affects_gross_profit', False)),
+            'normal_balance': request.data.get('normal_balance', AccountGroup.NORMAL_DEBIT),
+            'parent_id': request.data.get('parent') or None,
+            'order': int(request.data.get('order') or 0),
+            'is_system': False,
+            'is_active': bool(request.data.get('is_active', True)),
+        }
+
+        group = AccountGroup.objects.create(**payload)
+        return ApiResponse.created(data=AccountGroupSerializer(group).data)
+
+    def update(self, request, *args, **kwargs):
+        self.ensure_tenant()
+        partial = kwargs.pop('partial', False)
+        group = self.get_object()
+
+        if group.is_system:
+            raise ConflictError('System account groups cannot be modified.')
+
+        updatable_fields = (
+            'slug', 'name', 'description', 'type', 'report_section',
+            'affects_gross_profit', 'normal_balance', 'parent', 'order', 'is_active',
+        )
+        if not partial:
+            missing = [f for f in ('slug', 'name', 'type') if f not in request.data]
+            if missing:
+                raise AppValidationError(f'Missing required fields: {", ".join(missing)}')
+
+        for field in updatable_fields:
+            if field not in request.data:
+                continue
+            value = request.data.get(field)
+            if field in ('slug', 'name') and value is not None:
+                value = str(value).strip()
+            if field == 'parent':
+                field = 'parent_id'
+                value = value or None
+            if field == 'order':
+                value = int(value or 0)
+            setattr(group, field, value)
+
+        group.save()
+        return ApiResponse.success(data=AccountGroupSerializer(group).data)
+
+    def destroy(self, request, *args, **kwargs):
+        self.ensure_tenant()
+        group = self.get_object()
+
+        if group.is_system:
+            raise ConflictError('System account groups cannot be deleted.')
+        if group.accounts.filter(is_active=True).exists():
+            raise ConflictError('Account group with active accounts cannot be deleted.')
+
+        group.is_active = False
+        group.save(update_fields=['is_active', 'updated_at'])
+        return ApiResponse.no_content()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Chart of Accounts
@@ -704,6 +780,8 @@ class PaymentViewSet(NexusViewSet):
             bank_account=v.get('bank_account'),
             reference=v.get('reference', ''),
             notes=v.get('notes', ''),
+            tds_rate=v.get('tds_rate', Decimal('0')),
+            tds_reference=v.get('tds_reference', ''),
             party_name=v.get('party_name', ''),
             cheque_status=v.get('cheque_status', ''),
         )
@@ -1155,10 +1233,23 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
 
     @action(detail=False, methods=['get'], url_path='day-book')
     def day_book(self, request):
-        """GET ?date=YYYY-MM-DD (defaults to today)"""
-        from .services.report_service import day_book
+        """GET ?date=YYYY-MM-DD or ?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD."""
+        from .services.report_service import day_book, day_book_range
         from datetime import date
         self.ensure_tenant()
+        raw_from = request.query_params.get('date_from')
+        raw_to = request.query_params.get('date_to')
+
+        if raw_from or raw_to:
+            if not raw_from or not raw_to:
+                raise AppValidationError('Both date_from and date_to are required for range filter.')
+            try:
+                date_from = date.fromisoformat(raw_from)
+                date_to = date.fromisoformat(raw_to)
+            except ValueError as exc:
+                raise AppValidationError(str(exc))
+            return ApiResponse.success(data=day_book_range(self.tenant, date_from, date_to))
+
         raw = request.query_params.get('date', str(date.today()))
         try:
             d = date.fromisoformat(raw)
@@ -1875,6 +1966,8 @@ class PayslipViewSet(NexusViewSet):
     POST /payslips/generate/       auto-generate from approved coins + salary profile
     POST /payslips/{id}/issue/     mark as issued
     POST /payslips/{id}/mark-paid/ mark as paid, record salary outflow in cash flow
+    POST /payslips/{id}/reverse/   reverse posted payroll journals and void payslip
+    POST /payslips/{id}/regenerate-from-snapshot/ reverse + create corrected draft revision
     """
 
     required_module  = 'accounting'
@@ -1967,6 +2060,26 @@ class PayslipViewSet(NexusViewSet):
             'payslip': PayslipSerializer(p).data,
             'payment': PaymentSerializer(payment).data if payment else None,
         })
+
+    @action(detail=True, methods=['post'], url_path='reverse')
+    def reverse(self, request, pk=None):
+        """POST /payslips/{id}/reverse/ — reverse payroll journals and mark payslip void."""
+        reason = (request.data.get('reason') or '').strip()
+        if not reason:
+            raise AppValidationError('reason is required.')
+        p = self.get_object()
+        p = self.get_service().reverse(p, reason=reason)
+        return ApiResponse.success(data=PayslipSerializer(p).data)
+
+    @action(detail=True, methods=['post'], url_path='regenerate-from-snapshot')
+    def regenerate_from_snapshot(self, request, pk=None):
+        """POST /payslips/{id}/regenerate-from-snapshot/ — create corrected draft revision."""
+        reason = (request.data.get('reason') or '').strip()
+        if not reason:
+            raise AppValidationError('reason is required.')
+        p = self.get_object()
+        corrected = self.get_service().regenerate_from_snapshot(p, reason=reason)
+        return ApiResponse.success(data=PayslipSerializer(corrected).data)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2418,7 +2531,7 @@ class TDSEntryViewSet(NexusViewSet):
     required_module  = 'accounting'
 
     def get_permissions(self):
-        if self.action in ('list', 'retrieve', 'summary'):
+        if self.action in ('list', 'retrieve', 'summary', 'reconciliation'):
             return [permissions.IsAuthenticated(), make_role_permission(*MANAGER_ROLES, permission_key='accounting.view_invoices')()]
         if self.action in ('update', 'partial_update'):
             # Allow admins to correct TDS entries (supplier name, PAN, rate, period)
@@ -2446,25 +2559,29 @@ class TDSEntryViewSet(NexusViewSet):
 
     @action(detail=True, methods=['post'], url_path='mark-deposited')
     def mark_deposited(self, request, pk=None):
-        entry = self.get_object()
-        if entry.status == TDSEntry.STATUS_DEPOSITED:
-            raise ConflictError('Already deposited.')
-        entry.status            = TDSEntry.STATUS_DEPOSITED
-        entry.deposited_at      = timezone.now()
-        entry.deposit_reference = request.data.get('deposit_reference', '')
-        entry.save(update_fields=['status', 'deposited_at', 'deposit_reference'])
-        # Bug 2 fix: auto-journal Dr TDS Payable 2300 / Cr Cash 1100 to clear GL liability
-        try:
+        self.ensure_tenant()
+        with transaction.atomic():
+            entry = TDSEntry.objects.select_for_update().get(pk=pk, tenant=self.tenant)
+            if entry.status == TDSEntry.STATUS_DEPOSITED:
+                raise ConflictError('Already deposited.')
+
+            # Post the liability-clearance journal first. If this fails, do not
+            # mark the TDS entry as deposited.
             from accounting.services.journal_service import record_tds_remittance
-            import logging as _log
             period = f"{entry.period_year}-{entry.period_month:02d}"
             record_tds_remittance(
-                self.tenant, entry.tds_amount, period, created_by=request.user
+                self.tenant,
+                entry.tds_amount,
+                period,
+                created_by=request.user,
+                enforce_period_uniqueness=False,
+                reference_id=entry.pk,
             )
-        except Exception as exc:
-            _log.getLogger(__name__).warning(
-                "TDS GL journal failed for entry %s: %s", entry.pk, exc, exc_info=True
-            )
+
+            entry.status            = TDSEntry.STATUS_DEPOSITED
+            entry.deposited_at      = timezone.now()
+            entry.deposit_reference = request.data.get('deposit_reference', '')
+            entry.save(update_fields=['status', 'deposited_at', 'deposit_reference'])
         return ApiResponse.success(data=TDSEntrySerializer(entry).data)
 
     @action(detail=False, methods=['get'], url_path='summary')
@@ -2482,6 +2599,87 @@ class TDSEntryViewSet(NexusViewSet):
             .order_by('period_year', 'period_month')
         )
         return ApiResponse.success(data=list(rows))
+
+    @action(detail=False, methods=['get'], url_path='reconciliation')
+    def reconciliation(self, request):
+        """Compare TDS entry totals against GL TDS Payable (2300) balance.
+
+        Optional filters:
+        - ?year=2081
+        - ?month=9
+        """
+        from django.db.models import Sum
+
+        self.ensure_tenant()
+        year = request.query_params.get('year')
+        month = request.query_params.get('month')
+
+        qs = TDSEntry.objects.filter(tenant=self.tenant)
+        if year:
+            qs = qs.filter(period_year=year)
+        if month:
+            qs = qs.filter(period_month=month)
+
+        pending_total = qs.filter(status=TDSEntry.STATUS_PENDING).aggregate(t=Sum('tds_amount'))['t'] or Decimal('0')
+        deposited_total = qs.filter(status=TDSEntry.STATUS_DEPOSITED).aggregate(t=Sum('tds_amount'))['t'] or Decimal('0')
+        total_tds = qs.aggregate(t=Sum('tds_amount'))['t'] or Decimal('0')
+
+        # Period-level view for finance reconciliation dashboards.
+        period_summary = []
+        grouped = qs.values('period_year', 'period_month').order_by('period_year', 'period_month')
+        seen = set()
+        for row in grouped:
+            key = (row['period_year'], row['period_month'])
+            if key in seen:
+                continue
+            seen.add(key)
+
+            period_qs = qs.filter(period_year=row['period_year'], period_month=row['period_month'])
+            period_pending = period_qs.filter(status=TDSEntry.STATUS_PENDING).aggregate(t=Sum('tds_amount'))['t'] or Decimal('0')
+            period_deposited = period_qs.filter(status=TDSEntry.STATUS_DEPOSITED).aggregate(t=Sum('tds_amount'))['t'] or Decimal('0')
+            period_total = period_qs.aggregate(t=Sum('tds_amount'))['t'] or Decimal('0')
+
+            period_key = f"{row['period_year']}-{int(row['period_month']):02d}"
+            period_summary.append({
+                'period': period_key,
+                'pending': str(period_pending),
+                'deposited': str(period_deposited),
+                'total': str(period_total),
+                'delta_deposited_minus_total': str((period_deposited - period_total).quantize(Decimal('0.01'))),
+                'drill': {
+                    'tds_entries': f"/api/v1/tds/?year={row['period_year']}&status=pending",
+                    'tds_remittance_journals': "/api/v1/journals/?reference_type=tds_remittance",
+                },
+            })
+
+        tds_account = (
+            Account.objects.filter(tenant=self.tenant, code='2300', is_active=True).first()
+            or Account.objects.filter(tenant=self.tenant, group__slug='duties_taxes_tds', is_active=True).order_by('code').first()
+        )
+        ledger_balance = tds_account.balance if tds_account else Decimal('0')
+
+        return ApiResponse.success(data={
+            'filters': {
+                'year': year,
+                'month': month,
+            },
+            'tds_entries': {
+                'pending': str(pending_total),
+                'deposited': str(deposited_total),
+                'total': str(total_tds),
+            },
+            'ledger': {
+                'account_code': tds_account.code if tds_account else None,
+                'account_name': tds_account.name if tds_account else None,
+                'tds_payable_balance': str(ledger_balance),
+            },
+            'reconciliation': {
+                # Positive means GL shows more payable than pending TDS entries.
+                'ledger_minus_pending': str((ledger_balance - pending_total).quantize(Decimal('0.01'))),
+                'is_matched': (ledger_balance - pending_total).quantize(Decimal('0.01')) == Decimal('0.00'),
+            },
+            'periods': period_summary,
+        })
 
 
 # ─────────────────────────────────────────────────────────────────────────────

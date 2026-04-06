@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from decimal import Decimal
 from core.serializers import NepaliModelSerializer
 from .models import (
     AccountGroup, CoinTransaction, Payslip, Invoice,
@@ -361,10 +362,11 @@ class PaymentSerializer(NepaliModelSerializer):
             'bill', 'bill_number',
             'account', 'account_name',
             'reference', 'notes',
+            'tds_rate', 'tds_withheld_amount', 'net_receipt_amount', 'tds_reference',
             'party_name', 'cheque_status',
             'created_by_name', 'created_at',
         )
-        read_only_fields = ('payment_number', 'created_at')
+        read_only_fields = ('payment_number', 'created_at', 'tds_withheld_amount', 'net_receipt_amount')
 
     def validate(self, attrs):
         tenant = _tenant_from_context(self)
@@ -389,6 +391,28 @@ class PaymentSerializer(NepaliModelSerializer):
             raise serializers.ValidationError({
                 'type': 'Bill-linked payments must use type="outgoing".'
             })
+
+        tds_rate = attrs.get('tds_rate', getattr(self.instance, 'tds_rate', Decimal('0')))
+        bill_tds_rate = getattr(bill, 'tds_rate', None)
+        if payment_type == Payment.TYPE_OUTGOING and bill is not None and bill_tds_rate is not None:
+            try:
+                bill_tds_rate = Decimal(str(bill_tds_rate))
+            except Exception:
+                bill_tds_rate = Decimal('0')
+            if bill_tds_rate > Decimal('0') and (not tds_rate or Decimal(str(tds_rate)) <= Decimal('0')):
+                raise serializers.ValidationError({
+                    'tds_rate': f'Bill requires TDS at {bill_tds_rate}. Provide tds_rate in payment.'
+                })
+
+        if tds_rate and tds_rate > Decimal('0'):
+            if payment_type == Payment.TYPE_INCOMING and invoice is None:
+                raise serializers.ValidationError({'invoice': 'Incoming payment with TDS must be linked to an invoice.'})
+            if payment_type == Payment.TYPE_OUTGOING and bill is None:
+                raise serializers.ValidationError({'bill': 'Outgoing payment with TDS must be linked to a bill.'})
+            if payment_type not in (Payment.TYPE_INCOMING, Payment.TYPE_OUTGOING):
+                raise serializers.ValidationError({'tds_rate': 'TDS is only supported for incoming or outgoing payments.'})
+            if tds_rate >= Decimal('1'):
+                raise serializers.ValidationError({'tds_rate': 'tds_rate must be less than 1 (e.g. 0.10 for 10%).'})
 
         return attrs
 
@@ -584,16 +608,22 @@ class PayslipSerializer(NepaliModelSerializer):
         model  = Payslip
         fields = (
             'id', 'staff', 'staff_name', 'period_start', 'period_end',
+            'revision', 'supersedes', 'void_reason', 'voided_at',
             'total_coins', 'coin_to_money_rate', 'gross_amount',
             'base_salary', 'bonus', 'tds_amount', 'deductions', 'deduction_breakdown',
+            'salary_snapshot_json', 'attendance_snapshot_json', 'leave_snapshot_json',
+            'calculation_trace_json', 'formula_version',
             'net_pay', 'cash_credit',
             'status', 'issued_at', 'paid_at',
             'payment_method', 'bank_account', 'bank_account_name',
             'created_at',
         )
         read_only_fields = (
+            'revision', 'supersedes', 'void_reason', 'voided_at',
             'total_coins', 'coin_to_money_rate', 'gross_amount', 'net_pay',
             'tds_amount', 'cash_credit',
+            'salary_snapshot_json', 'attendance_snapshot_json', 'leave_snapshot_json',
+            'calculation_trace_json', 'formula_version',
             'issued_at', 'paid_at', 'payment_method', 'bank_account',
             'bank_account_name', 'created_at',
         )
