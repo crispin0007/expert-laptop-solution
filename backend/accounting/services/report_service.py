@@ -49,6 +49,11 @@ def _voucher_date_filter(start, end):
     )
 
 
+def _voucher_date_value(obj):
+    """Return voucher date, falling back to created_at for legacy rows."""
+    return obj.date or obj.created_at.date()
+
+
 def _account_balance(tenant, account_code, date_from=None, date_to=None):
     """
     Net balance for a single account code within a date range, including
@@ -1989,7 +1994,7 @@ def bill_age_detail(tenant, as_of_date):
         .filter(Q(date__lte=as_of_date) | Q(date__isnull=True, created_at__date__lte=as_of_date))
         .select_related('supplier')
         .annotate(paid_sum=Coalesce(DSum('payments__amount'), Value(_zero()), output_field=DecimalField()))
-        .order_by('due_date', 'created_at')
+        .order_by('due_date', 'date', 'created_at')
     )
 
     rows = []
@@ -2015,7 +2020,7 @@ def bill_age_detail(tenant, as_of_date):
             'bill_number': bill.bill_number,
             'supplier_id':  bill.supplier_id,
             'supplier':    sname,
-            'date':        str(bill.created_at.date()),
+            'date':        str(_voucher_date_value(bill)),
             'due_date':    str(due) if due else None,
             'days_overdue': max(days, 0),
             'total':       bill.total,
@@ -2061,7 +2066,9 @@ def supplier_statement(tenant, supplier_id, date_from, date_to):
     dn_before = DebitNote.objects.filter(
         tenant=tenant, bill__supplier=supplier,
         status__in=[DebitNote.STATUS_ISSUED, DebitNote.STATUS_APPLIED],
-        created_at__date__lt=date_from,
+    ).filter(
+        Q(issued_at__date__lt=date_from)
+        | Q(issued_at__isnull=True, created_at__date__lt=date_from)
     ).aggregate(t=DSum('total'))['t'] or _zero()
 
     opening_balance = bill_before - pay_before - dn_before
@@ -2102,12 +2109,15 @@ def supplier_statement(tenant, supplier_id, date_from, date_to):
     for dn in DebitNote.objects.filter(
         tenant=tenant, bill__supplier=supplier,
         status__in=[DebitNote.STATUS_ISSUED, DebitNote.STATUS_APPLIED],
-        created_at__date__gte=date_from, created_at__date__lte=date_to,
-    ).select_related('bill').order_by('created_at'):
+    ).filter(
+        Q(issued_at__date__gte=date_from, issued_at__date__lte=date_to)
+        | Q(issued_at__isnull=True, created_at__date__gte=date_from, created_at__date__lte=date_to)
+    ).select_related('bill').order_by('issued_at', 'created_at'):
+        voucher_date = dn.issued_at.date() if dn.issued_at else dn.created_at.date()
         bill_ref = f" — Bill {dn.bill.bill_number}" if dn.bill else ''
         txns.append({
-            'sort_key':    dn.created_at.isoformat(),
-            'date':        str(dn.created_at.date()),
+            'sort_key':    f"{voucher_date.isoformat()}-{dn.pk:010d}",
+            'date':        str(voucher_date),
             'type':        'debit_note',
             'reference':   dn.debit_note_number,
             'description': f"Debit Note {dn.debit_note_number}{bill_ref}",
@@ -2402,9 +2412,7 @@ def _active_bills(tenant, date_from, date_to):
     return Bill.objects.filter(
         tenant=tenant,
         status__in=[Bill.STATUS_APPROVED, Bill.STATUS_PAID],
-        created_at__date__gte=date_from,
-        created_at__date__lte=date_to,
-    )
+    ).filter(_voucher_date_filter(date_from, date_to))
 
 
 def purchase_by_supplier(tenant, date_from, date_to):
@@ -2491,7 +2499,8 @@ def purchase_by_supplier_monthly(tenant, date_from, date_to):
 
     for bill in qs:
         sname = bill.supplier.name if bill.supplier else bill.supplier_name or '(No Supplier)'
-        m = f"{bill.created_at.year}-{bill.created_at.month:02d}"
+        voucher_date = _voucher_date_value(bill)
+        m = f"{voucher_date.year}-{voucher_date.month:02d}"
         data[sname][m] += bill.total
         months_set.add(m)
 
@@ -2523,7 +2532,8 @@ def purchase_by_item_monthly(tenant, date_from, date_to):
     months_set: set = set()
 
     for bill in _active_bills(tenant, date_from, date_to):
-        m = f"{bill.created_at.year}-{bill.created_at.month:02d}"
+        voucher_date = _voucher_date_value(bill)
+        m = f"{voucher_date.year}-{voucher_date.month:02d}"
         for line in (bill.line_items or []):
             key = line.get('product_name') or line.get('description') or 'Unspecified'
             amt = Decimal(str(line.get('amount') or 0))
@@ -2555,16 +2565,17 @@ def purchase_master(tenant, date_from, date_to):
     qs = (
         _active_bills(tenant, date_from, date_to)
         .select_related('supplier')
-        .order_by('created_at')
+        .order_by('date', 'created_at')
     )
 
     rows = []
     for bill in qs:
+        voucher_date = _voucher_date_value(bill)
         rows.append({
             'bill_id':     bill.pk,
             'bill_number': bill.bill_number,
             'supplier_id': bill.supplier_id,
-            'date':        str(bill.created_at.date()),
+            'date':        str(voucher_date),
             'supplier':    bill.supplier.name if bill.supplier else bill.supplier_name,
             'subtotal':    bill.subtotal,
             'discount':    bill.discount,
@@ -2688,15 +2699,16 @@ def purchase_register(tenant, date_from, date_to):
     qs = (
         _active_bills(tenant, date_from, date_to)
         .select_related('supplier')
-        .order_by('created_at')
+        .order_by('date', 'created_at')
     )
 
     rows = []
     for i, bill in enumerate(qs, start=1):
-        bs_info = date_to_bs_display(bill.created_at.date())
+        voucher_date = _voucher_date_value(bill)
+        bs_info = date_to_bs_display(voucher_date)
         rows.append({
             'sno':         i,
-            'date_ad':     str(bill.created_at.date()),
+            'date_ad':     str(voucher_date),
             'date_bs':     bs_info.get('bs') if bs_info else None,
             'bill_number': bill.bill_number,
             'supplier':    bill.supplier.name if bill.supplier else bill.supplier_name,
@@ -2728,20 +2740,23 @@ def purchase_return_register(tenant, date_from, date_to):
     qs = (
         DebitNote.objects
         .filter(tenant=tenant,
-                status__in=[DebitNote.STATUS_ISSUED, DebitNote.STATUS_APPLIED],
-                created_at__date__gte=date_from,
-                created_at__date__lte=date_to)
+                status__in=[DebitNote.STATUS_ISSUED, DebitNote.STATUS_APPLIED])
+        .filter(
+            Q(issued_at__date__gte=date_from, issued_at__date__lte=date_to)
+            | Q(issued_at__isnull=True, created_at__date__gte=date_from, created_at__date__lte=date_to)
+        )
         .select_related('bill__supplier')
-        .order_by('created_at')
+        .order_by('issued_at', 'created_at')
     )
 
     rows = []
     for i, dn in enumerate(qs, start=1):
         supplier = dn.bill.supplier if dn.bill else None
-        bs_info  = date_to_bs_display(dn.created_at.date())
+        voucher_date = dn.issued_at.date() if dn.issued_at else dn.created_at.date()
+        bs_info  = date_to_bs_display(voucher_date)
         rows.append({
             'sno':           i,
-            'date_ad':       str(dn.created_at.date()),
+            'date_ad':       str(voucher_date),
             'date_bs':       bs_info.get('bs') if bs_info else None,
             'debit_note_no': dn.debit_note_number,
             'original_bill': dn.bill.bill_number if dn.bill else '',

@@ -60,7 +60,7 @@ class BillService:
                     created_at__date__gte=fiscal_year_start,
                     created_at__date__lte=fiscal_year_end)
             )
-        return qs.order_by('-created_at')
+        return qs.order_by('-date', '-created_at')
 
     # ── Create / update / delete ──────────────────────────────────────────────
 
@@ -72,6 +72,10 @@ class BillService:
         line_items = validated_data.get('line_items', [])
         discount   = validated_data.get('discount', Decimal('0'))
         totals     = self._compute_totals(line_items, discount, apply_vat=apply_vat)
+
+        # Voucher date is the accounting source-of-truth; default to today when omitted.
+        if validated_data.get('date') is None:
+            validated_data['date'] = timezone.localdate()
 
         party_id = validated_data.get('party_id')
         if party_id is None and validated_data.get('party') is not None:

@@ -1430,6 +1430,7 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
   const [supplierId,   setSupplierId]   = useState<number | null>(null)
   const [supplierName, setSupplierName] = useState('')
+  const [date,         setDate]         = useState(new Date().toISOString().slice(0, 10))
   const [dueDate,      setDueDate]      = useState('')
   const [vatEnabled,   setVatEnabled]   = useState(true)
   const [lines, setLines] = useState<LineItemDraft[]>([emptyLine()])
@@ -1513,6 +1514,7 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
     mutation.mutate({
       supplier: supplierId || null,
       supplier_name: supplierName,
+      date,
       due_date: dueDate || null,
       apply_vat: vatEnabled,
       line_items: lines
@@ -1554,6 +1556,9 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
               <input data-lpignore="true" value={supplierName} onChange={e => setSupplierName(e.target.value)}
                 placeholder="Supplier / vendor name" className={inputCls} required />
             )}
+          </Field>
+          <Field label="Bill Date">
+            <NepaliDatePicker value={date} onChange={setDate} />
           </Field>
           <Field label="Due Date">
             <NepaliDatePicker value={dueDate} onChange={setDueDate} />
@@ -1697,6 +1702,7 @@ function BillEditModal({ bill, onClose }: { bill: Bill; onClose: () => void }) {
   const qc = useQueryClient()
   const [supplierId, setSupplierId] = useState<string>(bill.supplier ? String(bill.supplier) : '__custom__')
   const [supplierName, setSupplierName] = useState(bill.supplier_name ?? '')
+  const [date, setDate]                 = useState(bill.date ?? new Date().toISOString().slice(0, 10))
   const [dueDate, setDueDate]           = useState(bill.due_date ?? '')
   const [lines, setLines]               = useState<LineItemDraft[]>(() =>
     (bill.line_items as Record<string, unknown>[]).length > 0
@@ -1739,6 +1745,7 @@ function BillEditModal({ bill, onClose }: { bill: Bill; onClose: () => void }) {
     mutation.mutate({
       supplier: supplierId !== '__custom__' ? Number(supplierId) : null,
       supplier_name: resolvedName,
+      date,
       due_date: dueDate || null,
       line_items: lines
         .filter(l => l.description && l.unit_price)
@@ -1775,6 +1782,9 @@ function BillEditModal({ bill, onClose }: { bill: Bill; onClose: () => void }) {
                 placeholder="Supplier / vendor name" className={inputCls} required />
             </Field>
           )}
+          <Field label="Bill Date">
+            <NepaliDatePicker value={date} onChange={setDate} />
+          </Field>
           <Field label="Due Date">
             <NepaliDatePicker value={dueDate} onChange={setDueDate} />
           </Field>
