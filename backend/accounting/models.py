@@ -1,8 +1,11 @@
 import uuid
+import datetime
 from decimal import Decimal
 from django.db import models
 from django.db.models import F
+from django.utils import timezone
 from core.models import TenantModel
+from core.nepali_date import fiscal_year_of
 from django.conf import settings
 
 PARTY_MODEL = 'parties.Party'
@@ -407,7 +410,16 @@ class JournalEntry(TenantModel):
     def save(self, *args, **kwargs):
         if not self.entry_number and self.tenant_id:
             from core.models import next_seq
-            self.entry_number = f"JE-{next_seq(self.tenant_id, 'journal_entry', JournalEntry, 'entry_number'):05d}"
+            fy = fiscal_year_of(self.date or datetime.date.today()).bs_year
+            seq = next_seq(
+                self.tenant_id,
+                'journal_entry',
+                JournalEntry,
+                'entry_number',
+                fiscal_year=fy,
+                date_field='date',
+            )
+            self.entry_number = f"JE-{fy}-{seq:05d}"
         super().save(*args, **kwargs)
 
     def post(self):
@@ -834,7 +846,16 @@ class Invoice(TenantModel):
     def save(self, *args, **kwargs):
         if not self.invoice_number and self.tenant_id:
             from core.models import next_seq
-            self.invoice_number = f"INV-{next_seq(self.tenant_id, 'invoice', Invoice, 'invoice_number'):05d}"
+            fy = fiscal_year_of(self.date or datetime.date.today()).bs_year
+            seq = next_seq(
+                self.tenant_id,
+                'invoice',
+                Invoice,
+                'invoice_number',
+                fiscal_year=fy,
+                date_field='date',
+            )
+            self.invoice_number = f"INV-{fy}-{seq:05d}"
         super().save(*args, **kwargs)
 
 
@@ -932,7 +953,16 @@ class Bill(TenantModel):
     def save(self, *args, **kwargs):
         if not self.bill_number and self.tenant_id:
             from core.models import next_seq
-            self.bill_number = f"BILL-{next_seq(self.tenant_id, 'bill', Bill, 'bill_number'):05d}"
+            fy = fiscal_year_of(self.date or datetime.date.today()).bs_year
+            seq = next_seq(
+                self.tenant_id,
+                'bill',
+                Bill,
+                'bill_number',
+                fiscal_year=fy,
+                date_field='date',
+            )
+            self.bill_number = f"BILL-{fy}-{seq:05d}"
         super().save(*args, **kwargs)
 
     @property
@@ -1086,7 +1116,16 @@ class Payment(TenantModel):
     def save(self, *args, **kwargs):
         if not self.payment_number and self.tenant_id:
             from core.models import next_seq
-            self.payment_number = f"PAY-{next_seq(self.tenant_id, 'payment', Payment, 'payment_number'):05d}"
+            fy = fiscal_year_of(self.date or datetime.date.today()).bs_year
+            seq = next_seq(
+                self.tenant_id,
+                'payment',
+                Payment,
+                'payment_number',
+                fiscal_year=fy,
+                date_field='date',
+            )
+            self.payment_number = f"PAY-{fy}-{seq:05d}"
         super().save(*args, **kwargs)
 
 
@@ -1138,9 +1177,20 @@ class CreditNote(TenantModel):
         return f"CN {self.credit_note_number or self.pk}"
 
     def save(self, *args, **kwargs):
-        if not self.credit_note_number and self.tenant_id:
+        if not self.credit_note_number and self.tenant_id and self.status == self.STATUS_ISSUED:
             from core.models import next_seq
-            self.credit_note_number = f"CN-{next_seq(self.tenant_id, 'credit_note', CreditNote, 'credit_note_number'):05d}"
+            issue_date = self.issued_at.date() if self.issued_at else timezone.localdate()
+            fy = fiscal_year_of(issue_date).bs_year
+            seq = next_seq(
+                self.tenant_id,
+                'credit_note',
+                CreditNote,
+                'credit_note_number',
+                fiscal_year=fy,
+                date_field='issued_at',
+                fallback_date_field='created_at',
+            )
+            self.credit_note_number = f"CN-{fy}-{seq:05d}"
         super().save(*args, **kwargs)
 
 
@@ -1214,7 +1264,19 @@ class Quotation(TenantModel):
     def save(self, *args, **kwargs):
         if not self.quotation_number and self.tenant_id:
             from core.models import next_seq
-            self.quotation_number = f"QUO-{next_seq(self.tenant_id, 'quotation', Quotation, 'quotation_number'):05d}"
+            quote_date = self.accepted_at or self.sent_at or timezone.localdate()
+            if isinstance(quote_date, datetime.datetime):
+                quote_date = quote_date.date()
+            fy = fiscal_year_of(quote_date).bs_year
+            seq = next_seq(
+                self.tenant_id,
+                'quotation',
+                Quotation,
+                'quotation_number',
+                fiscal_year=fy,
+                date_field='created_at',
+            )
+            self.quotation_number = f"QUO-{fy}-{seq:05d}"
         super().save(*args, **kwargs)
 
 
@@ -1260,9 +1322,20 @@ class DebitNote(TenantModel):
         return f"DN {self.debit_note_number or self.pk}"
 
     def save(self, *args, **kwargs):
-        if not self.debit_note_number and self.tenant_id:
+        if not self.debit_note_number and self.tenant_id and self.status == self.STATUS_ISSUED:
             from core.models import next_seq
-            self.debit_note_number = f"DN-{next_seq(self.tenant_id, 'debit_note', DebitNote, 'debit_note_number'):05d}"
+            issue_date = self.issued_at.date() if self.issued_at else timezone.localdate()
+            fy = fiscal_year_of(issue_date).bs_year
+            seq = next_seq(
+                self.tenant_id,
+                'debit_note',
+                DebitNote,
+                'debit_note_number',
+                fiscal_year=fy,
+                date_field='issued_at',
+                fallback_date_field='created_at',
+            )
+            self.debit_note_number = f"DN-{fy}-{seq:05d}"
         super().save(*args, **kwargs)
 
 

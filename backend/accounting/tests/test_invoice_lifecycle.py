@@ -11,8 +11,11 @@ Integration tests for the full Invoice lifecycle:
 Run inside Docker:
   docker exec nexusbms-web-1 python -m pytest accounting/tests/test_invoice_lifecycle.py -v
 """
+import datetime
 import pytest
 from decimal import Decimal
+from django.utils import timezone
+from core.nepali_date import current_fiscal_year, fiscal_year_of, fiscal_year_date_range
 
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -94,6 +97,237 @@ class TestInvoiceLifecycle:
         assert inv.status == Invoice.STATUS_DRAFT
         assert inv.invoice_number.startswith("INV-")
         assert inv.total > 0
+
+    @pytest.mark.django_db
+    def test_invoice_number_uses_fiscal_year_prefix(self, tenant, admin_user):
+        from accounting.models import Invoice
+
+        fy_date = current_fiscal_year()
+        start_ad, _ = fiscal_year_date_range(fy_date)
+        invoice_date = start_ad + datetime.timedelta(days=1)
+        fy = fiscal_year_of(invoice_date).bs_year
+
+        inv = Invoice.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            line_items=[
+                {"description": "Service work", "qty": 1, "unit_price": "1000.00", "discount": "0", "line_type": "service"},
+            ],
+            subtotal=Decimal("1000.00"),
+            vat_rate=tenant.vat_rate,
+            vat_amount=Decimal("130.00"),
+            total=Decimal("1130.00"),
+            status=Invoice.STATUS_DRAFT,
+            date=invoice_date,
+        )
+
+        assert inv.invoice_number.startswith(f"INV-{fy}-"), (
+            f"Expected fiscal year prefix INV-{fy}-, got {inv.invoice_number}"
+        )
+        assert inv.invoice_number.endswith("-00001")
+
+    @pytest.mark.django_db
+    def test_invoice_number_resets_for_new_fiscal_year(self, tenant, admin_user):
+        from accounting.models import Invoice
+
+        fy_date = current_fiscal_year()
+        start_ad, _ = fiscal_year_date_range(fy_date)
+        prev_date = start_ad - datetime.timedelta(days=1)
+        next_date = start_ad
+
+        prev_fy = fiscal_year_of(prev_date).bs_year
+        next_fy = fiscal_year_of(next_date).bs_year
+        assert prev_fy != next_fy
+
+        inv1 = Invoice.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            line_items=[
+                {"description": "Service work", "qty": 1, "unit_price": "1000.00", "discount": "0", "line_type": "service"},
+            ],
+            subtotal=Decimal("1000.00"),
+            vat_rate=tenant.vat_rate,
+            vat_amount=Decimal("130.00"),
+            total=Decimal("1130.00"),
+            status=Invoice.STATUS_DRAFT,
+            date=prev_date,
+        )
+        inv2 = Invoice.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            line_items=[
+                {"description": "Service work", "qty": 1, "unit_price": "1000.00", "discount": "0", "line_type": "service"},
+            ],
+            subtotal=Decimal("1000.00"),
+            vat_rate=tenant.vat_rate,
+            vat_amount=Decimal("130.00"),
+            total=Decimal("1130.00"),
+            status=Invoice.STATUS_DRAFT,
+            date=next_date,
+        )
+
+        assert inv1.invoice_number.startswith(f"INV-{prev_fy}-")
+        assert inv2.invoice_number.startswith(f"INV-{next_fy}-")
+        assert inv2.invoice_number.endswith("-00001")
+
+    @pytest.mark.django_db
+    def test_bill_number_uses_fiscal_year_prefix(self, tenant, admin_user):
+        from accounting.models import Bill
+
+        fy_date = current_fiscal_year()
+        start_ad, _ = fiscal_year_date_range(fy_date)
+        bill_date = start_ad + datetime.timedelta(days=2)
+        fy = fiscal_year_of(bill_date).bs_year
+
+        bill = Bill.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            supplier_name="Acme Supplies",
+            line_items=[{"description": "Widgets", "qty": 10, "unit_price": "100.00", "discount": "0", "line_type": "product"}],
+            subtotal=Decimal("1000.00"),
+            vat_rate=tenant.vat_rate,
+            vat_amount=Decimal("130.00"),
+            total=Decimal("1130.00"),
+            status=Bill.STATUS_DRAFT,
+            date=bill_date,
+        )
+
+        assert bill.bill_number.startswith(f"BILL-{fy}-"), (
+            f"Expected fiscal year prefix BILL-{fy}-, got {bill.bill_number}"
+        )
+        assert bill.bill_number.endswith("-00001")
+
+    @pytest.mark.django_db
+    def test_invoice_sequence_seeds_legacy_numbers_in_same_fiscal_year(self, tenant, admin_user):
+        from accounting.models import Invoice
+
+        fy_date = current_fiscal_year()
+        start_ad, _ = fiscal_year_date_range(fy_date)
+        invoice_date = start_ad + datetime.timedelta(days=2)
+        fy = fiscal_year_of(invoice_date).bs_year
+
+        Invoice.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            line_items=[{"description": "Test", "qty": 1, "unit_price": "100.00", "discount": "0", "line_type": "service"}],
+            subtotal=Decimal("100.00"),
+            vat_rate=tenant.vat_rate,
+            vat_amount=Decimal("13.00"),
+            total=Decimal("113.00"),
+            status=Invoice.STATUS_DRAFT,
+            date=invoice_date,
+            invoice_number="INV-00003",
+        )
+
+        inv = Invoice.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            line_items=[{"description": "Test", "qty": 1, "unit_price": "100.00", "discount": "0", "line_type": "service"}],
+            subtotal=Decimal("100.00"),
+            vat_rate=tenant.vat_rate,
+            vat_amount=Decimal("13.00"),
+            total=Decimal("113.00"),
+            status=Invoice.STATUS_DRAFT,
+            date=invoice_date,
+        )
+
+        assert inv.invoice_number == f"INV-{fy}-00004"
+
+    @pytest.mark.django_db
+    def test_credit_note_number_assigned_on_issue_uses_issued_at_fiscal_year(self, tenant, admin_user):
+        from accounting.models import CreditNote, Invoice
+        from accounting.services.credit_note_service import CreditNoteService
+
+        invoice = Invoice.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            date=timezone.localdate(),
+            line_items=[],
+            subtotal=Decimal("100.00"),
+            discount=Decimal("0.00"),
+            vat_rate=Decimal("0.00"),
+            vat_amount=Decimal("0.00"),
+            total=Decimal("100.00"),
+            status=Invoice.STATUS_DRAFT,
+        )
+
+        cn = CreditNote.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            invoice=invoice,
+            line_items=[],
+            subtotal=Decimal("10.00"),
+            vat_amount=Decimal("0.00"),
+            total=Decimal("10.00"),
+            status=CreditNote.STATUS_DRAFT,
+        )
+
+        service = CreditNoteService(tenant=tenant, user=admin_user)
+        cn = service.issue(cn)
+
+        assert cn.credit_note_number.startswith(
+            f"CN-{fiscal_year_of(cn.issued_at.date()).bs_year}-"
+        )
+
+    @pytest.mark.django_db
+    def test_debit_note_number_assigned_on_issue_uses_issued_at_fiscal_year(self, tenant, admin_user):
+        from accounting.models import DebitNote, Bill
+
+        fy_date = current_fiscal_year()
+        start_ad, _ = fiscal_year_date_range(fy_date)
+        bill_date = start_ad + datetime.timedelta(days=2)
+        bill = Bill.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            supplier_name='Supplier',
+            line_items=[],
+            subtotal=Decimal("100.00"),
+            vat_rate=tenant.vat_rate,
+            vat_amount=Decimal("0.00"),
+            total=Decimal("100.00"),
+            status=Bill.STATUS_DRAFT,
+            date=bill_date,
+        )
+
+        dn = DebitNote.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            bill=bill,
+            line_items=[],
+            subtotal=Decimal("10.00"),
+            vat_amount=Decimal("0.00"),
+            total=Decimal("10.00"),
+            status=DebitNote.STATUS_DRAFT,
+        )
+
+        issue_date = timezone.now()
+        dn.status = DebitNote.STATUS_ISSUED
+        dn.issued_at = issue_date
+        dn.save(update_fields=['status', 'issued_at', 'debit_note_number'])
+
+        assert dn.debit_note_number.startswith(f"DN-{fiscal_year_of(issue_date.date()).bs_year}-")
+
+    @pytest.mark.django_db
+    def test_quotation_number_uses_accept_sent_or_creation_date_for_fiscal_year(self, tenant, admin_user):
+        from accounting.models import Quotation
+
+        accepted_at = datetime.datetime(2024, 11, 12, 12, 0, 0, tzinfo=timezone.get_current_timezone())
+        q = Quotation.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            line_items=[],
+            subtotal=Decimal("10.00"),
+            discount=Decimal("0.00"),
+            vat_rate=Decimal("0.00"),
+            vat_amount=Decimal("0.00"),
+            total=Decimal("10.00"),
+            status=Quotation.STATUS_ACCEPTED,
+            accepted_at=accepted_at,
+        )
+
+        assert q.quotation_number.startswith(
+            f"QUO-{fiscal_year_of(accepted_at.date()).bs_year}-"
+        )
 
     # ── 3. Issue → journal created ───────────────────────────────────────────
     @pytest.mark.django_db

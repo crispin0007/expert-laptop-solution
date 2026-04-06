@@ -2500,7 +2500,7 @@ class DebitNoteViewSet(NexusViewSet):
             raise ConflictError('Only draft debit notes can be issued.')
         dn.status    = DebitNote.STATUS_ISSUED
         dn.issued_at = timezone.now()
-        dn.save(update_fields=['status', 'issued_at'])
+        dn.save(update_fields=['status', 'issued_at', 'debit_note_number'])
         # Signal in signals.py will create the reversal journal entry
         return ApiResponse.success(data=DebitNoteSerializer(dn).data)
 

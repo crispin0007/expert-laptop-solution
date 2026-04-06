@@ -100,7 +100,7 @@ class CreditNoteService:
             raise ConflictError('Only draft credit notes can be issued.')
         credit_note.status    = CreditNote.STATUS_ISSUED
         credit_note.issued_at = timezone.now()
-        credit_note.save(update_fields=['status', 'issued_at'])
+        credit_note.save(update_fields=['status', 'issued_at', 'credit_note_number'])
         return credit_note
 
     @transaction.atomic

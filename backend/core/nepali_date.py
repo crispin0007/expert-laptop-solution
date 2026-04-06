@@ -229,8 +229,18 @@ def _total_days_in_bs_year(year: int) -> int:
     return sum(months)
 
 
-def ad_to_bs(ad_date: datetime.date) -> NepaliDate:
+def ad_to_bs(ad_date: datetime.date | str) -> NepaliDate:
     """Convert a Gregorian date to a Bikram Sambat NepaliDate."""
+    if isinstance(ad_date, str):
+        parsed_date = datetime.date.fromisoformat(ad_date)
+        # Many accounting inputs use Nepali BS dates formatted as YYYY-MM-DD.
+        # Our AD conversion range only supports dates up to 2049, so treat any
+        # string year beyond that as a BS date and convert it to AD first.
+        if parsed_date.year > 2049:
+            bs_year, bs_month, bs_day = map(int, ad_date.split('-'))
+            ad_date = bs_to_ad(bs_year, bs_month, bs_day)
+        else:
+            ad_date = parsed_date
     if isinstance(ad_date, datetime.datetime):
         ad_date = ad_date.date()
 
