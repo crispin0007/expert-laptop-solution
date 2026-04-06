@@ -4,7 +4,7 @@
  *
  * Layout: left category sidebar + right content panel (report grid ▶ params ▶ output).
  */
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, Fragment } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import apiClient from '../../api/client'
 import { ACCOUNTING, INVENTORY, CUSTOMERS } from '../../api/endpoints'
@@ -258,7 +258,17 @@ const REPORTS: ReportMeta[] = [
 
 // ─── Typed data shapes ────────────────────────────────────────────────────────
 
-interface RptAccount { id?: number; code: string; name: string; balance: string | number }
+interface RptAccount {
+  id?: number
+  code: string
+  name: string
+  balance: string | number
+  group_name?: string
+  parent_id?: number | null
+  parent_code?: string
+  parent_name?: string
+  level?: number
+}
 // New Tally-style P&L with Gross Profit section
 interface PLReport {
   date_from: string; date_to: string
@@ -292,7 +302,8 @@ interface BSReport {
   balanced: boolean
 }
 interface TBRow      {
-  id?: number; code: string; name: string; type: string; group_name: string
+  id?: number; code: string; name: string; type?: string; group_name?: string
+  parent_id?: number | null; parent_code?: string; parent_name?: string; level?: number
   opening_dr: string|number; opening_cr: string|number
   period_dr: string|number;  period_cr: string|number
   closing_dr: string|number; closing_cr: string|number
@@ -627,10 +638,13 @@ function ReportDrillModal({ seed, onClose }: { seed: DrillSeed; onClose: () => v
 function DrillableRow({
   account, indent = false, dateFrom, dateTo, onDrill,
 }: {
-  account: RptAccount; indent?: boolean; dateFrom?: string; dateTo?: string
+  account: RptAccount; indent?: boolean | number; dateFrom?: string; dateTo?: string
   onDrill?: (seed: DrillSeed) => void
 }) {
   const canDrill = !!account.id && !!dateFrom && !!dateTo && !!onDrill
+  const indentPx = typeof indent === 'number'
+    ? 16 + Math.max(0, indent) * 14
+    : (indent ? 32 : 16)
 
   const rowContent = (
     <div className="flex items-center justify-between w-full">
@@ -648,7 +662,8 @@ function DrillableRow({
       {canDrill ? (
         <button
           type="button"
-          className={`w-full flex items-center justify-between px-4 py-1.5 border-b border-gray-100 last:border-0 text-left group cursor-pointer hover:bg-indigo-50 ${indent ? 'pl-8' : ''}`}
+          className="w-full flex items-center justify-between pr-4 py-1.5 border-b border-gray-100 last:border-0 text-left group cursor-pointer hover:bg-indigo-50"
+          style={{ paddingLeft: `${indentPx}px` }}
           onClick={() => onDrill?.({
             nodeType: 'account',
             nodeId: Number(account.id),
@@ -661,7 +676,10 @@ function DrillableRow({
           {rowContent}
         </button>
       ) : (
-        <div className={`flex items-center justify-between px-4 py-1.5 border-b border-gray-100 last:border-0 hover:bg-gray-50 ${indent ? 'pl-8' : ''}`}>
+        <div
+          className="flex items-center justify-between pr-4 py-1.5 border-b border-gray-100 last:border-0 hover:bg-gray-50"
+          style={{ paddingLeft: `${indentPx}px` }}
+        >
           {rowContent}
         </div>
       )}
@@ -799,61 +817,49 @@ function BSReportView({ data, asOf, onDrill }: { data: BSReport; asOf?: string; 
   }
   function accountRows(items: RptAccount[]) {
     // Balance sheet accounts use as_of_date as both from and to for the ledger drill-down.
-    return items?.map(r => <DrillableRow key={r.code} account={r} indent dateFrom={asOf} dateTo={asOf} onDrill={onDrill} />)
+    return items?.map(r => (
+      <DrillableRow
+        key={r.code}
+        account={r}
+        indent={Math.max(0, Number(r.level ?? 0))}
+        dateFrom={asOf}
+        dateTo={asOf}
+        onDrill={onDrill}
+      />
+    ))
   }
 
+  const sections = [
+    { title: 'Fixed Assets', rows: data.fixed_assets ?? [], total: data.total_fixed_assets },
+    { title: 'Investments', rows: data.investments ?? [], total: data.total_investments },
+    { title: 'Current Assets', rows: data.current_assets ?? [], total: data.total_current_assets },
+    { title: 'Capital Account', rows: data.capital ?? [], total: data.total_capital },
+    { title: 'Loans & Borrowings', rows: [...(data.bank_od ?? []), ...(data.loans ?? [])], total: data.total_loans },
+    { title: 'Current Liabilities', rows: data.current_liabilities ?? [], total: data.total_current_liabilities },
+  ]
+
   return (
-    <div>
+    <div className="space-y-3">
       {data.balanced === false && (
         <div className="mx-4 mt-4 px-4 py-2 bg-gray-50 border border-gray-300 rounded flex items-center gap-2 text-sm text-gray-700">
           <AlertCircle size={14} className="shrink-0" /> Out of balance — Assets ≠ Capital + Liabilities. Check posted journal entries.
         </div>
       )}
-      <div className="grid grid-cols-2 divide-x divide-gray-200 mt-4">
-
-        {/* ── LEFT — Capital & Liabilities ─────────────────────────── */}
-        <div className="space-y-2">
-          <CollapsibleGroup title="Capital Account" total={data.total_capital}>
-            {data.capital?.length ? accountRows(data.capital) : emptyNote('None')}
+      <div className="space-y-2 mt-2">
+        {sections.map((section) => (
+          <CollapsibleGroup key={section.title} title={section.title} total={section.total} defaultOpen={false}>
+            {section.rows?.length ? accountRows(section.rows) : emptyNote('None')}
           </CollapsibleGroup>
+        ))}
+      </div>
 
-          {((data.bank_od?.length ?? 0) + (data.loans?.length ?? 0)) > 0 && (
-            <CollapsibleGroup title="Loans &amp; Borrowings" total={data.total_loans}>
-              {accountRows(data.bank_od)}
-              {accountRows(data.loans)}
-            </CollapsibleGroup>
-          )}
-
-          <CollapsibleGroup title="Current Liabilities" total={data.total_current_liabilities}>
-            {data.current_liabilities?.length ? accountRows(data.current_liabilities) : emptyNote('None')}
-          </CollapsibleGroup>
-
-          <RptGrandTotal
-            label="Total Capital + Liabilities"
-            amount={data.total_equity_and_liabilities}
-            note={data.balanced ? '(Balanced ✓)' : undefined}
-          />
-        </div>
-
-        {/* ── RIGHT — Assets ───────────────────────────────────────── */}
-        <div className="space-y-2">
-          {data.fixed_assets?.length > 0 && (
-            <CollapsibleGroup title="Fixed Assets" total={data.total_fixed_assets}>
-              {accountRows(data.fixed_assets)}
-            </CollapsibleGroup>
-          )}
-          {data.investments?.length > 0 && (
-            <CollapsibleGroup title="Investments" total={data.total_investments}>
-              {accountRows(data.investments)}
-            </CollapsibleGroup>
-          )}
-          <CollapsibleGroup title="Current Assets" total={data.total_current_assets}>
-            {data.current_assets?.length ? accountRows(data.current_assets) : emptyNote('None')}
-          </CollapsibleGroup>
-
-          <RptGrandTotal label="Total Assets" amount={data.total_assets} />
-        </div>
-
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+        <RptGrandTotal label="Total Assets" amount={data.total_assets} />
+        <RptGrandTotal
+          label="Total Capital + Liabilities"
+          amount={data.total_equity_and_liabilities}
+          note={data.balanced ? '(Balanced ✓)' : undefined}
+        />
       </div>
     </div>
   )
@@ -862,45 +868,32 @@ function BSReportView({ data, asOf, onDrill }: { data: BSReport; asOf?: string; 
 // ─── Trial Balance ────────────────────────────────────────────────────────────
 
 function TBReportView({ data, dateFrom, dateTo, onDrill }: { data: TBReport; dateFrom?: string; dateTo?: string; onDrill?: (seed: DrillSeed) => void }) {
+  const [openTypes, setOpenTypes] = useState<Record<string, boolean>>({})
   const n = (v: string|number) => Number.parseFloat(String(v))
   const dash = <span className="text-gray-200">—</span>
 
-  // Group accounts by group_name for collapsible sections
-  const groups = data.accounts?.reduce<Record<string, TBRow[]>>((acc, row) => {
-    const g = row.group_name || row.type || 'Other'
-    if (!acc[g]) acc[g] = []
-    acc[g].push(row)
-    return acc
-  }, {})
+  const groupedByType = new Map<string, TBRow[]>()
+  ;(data.accounts ?? []).forEach((row) => {
+    const typeKey = row.type ? row.type.replace(/_/g, ' ') : 'Other'
+    if (!groupedByType.has(typeKey)) groupedByType.set(typeKey, [])
+    groupedByType.get(typeKey)!.push(row)
+  })
 
-  function TBAccountRow({ row }: { row: TBRow }) {
-    return (
-      <tr
-        key={row.code}
-        className={`border-b border-gray-100 ${row.id && dateFrom ? 'cursor-pointer hover:bg-indigo-50 group' : 'hover:bg-gray-50'}`}
-        onClick={row.id && dateFrom && dateTo ? () => onDrill?.({
-          nodeType: 'account',
-          nodeId: Number(row.id),
-          nodeLabel: `${row.code} — ${row.name}`,
-          dateFrom,
-          dateTo,
-        }) : undefined}
-        title={row.id && dateFrom ? 'Click to view vouchers' : undefined}
-      >
-        <td className="px-4 py-2 font-mono text-xs text-gray-400">{row.code}</td>
-        <td className="px-4 py-2 text-gray-700 group-hover:text-indigo-700">
-          {row.name}
-          {(row.id != null) && dateFrom && <span className="ml-1 text-gray-300 group-hover:text-indigo-400 text-xs">&#8599;</span>}
-        </td>
-        <td className="px-4 py-2 text-right tabular-nums text-gray-600">{n(row.opening_dr) ? npr(row.opening_dr) : dash}</td>
-        <td className="px-4 py-2 text-right tabular-nums text-gray-600">{n(row.opening_cr) ? npr(row.opening_cr) : dash}</td>
-        <td className="px-4 py-2 text-right tabular-nums text-blue-700">{n(row.period_dr) ? npr(row.period_dr) : dash}</td>
-        <td className="px-4 py-2 text-right tabular-nums text-blue-700">{n(row.period_cr) ? npr(row.period_cr) : dash}</td>
-        <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-900">{n(row.closing_dr) ? npr(row.closing_dr) : dash}</td>
-        <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-900">{n(row.closing_cr) ? npr(row.closing_cr) : dash}</td>
-      </tr>
-    )
-  }
+  const typeRows = Array.from(groupedByType.entries()).map(([type, rows]) => {
+    const groupedByCoa = new Map<string, TBRow[]>()
+    rows.forEach((r) => {
+      const group = r.group_name || 'Ungrouped'
+      if (!groupedByCoa.has(group)) groupedByCoa.set(group, [])
+      groupedByCoa.get(group)!.push(r)
+    })
+    return {
+      type,
+      groups: Array.from(groupedByCoa.entries()).map(([group, groupRows]) => ({
+        group,
+        rows: groupRows.sort((a, b) => String(a.code).localeCompare(String(b.code))),
+      })),
+    }
+  })
 
   return (
     <div>
@@ -924,15 +917,59 @@ function TBReportView({ data, dateFrom, dateTo, onDrill }: { data: TBReport; dat
           </tr>
         </thead>
         <tbody>
-          {Object.entries(groups ?? {}).map(([groupName, rows]) => (
-            <>
-              <tr key={`g-${groupName}`} className="bg-gray-100">
-                <td colSpan={8} className="px-4 py-1.5">
-                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">{groupName}</span>
+          {typeRows.map((typeBlock) => (
+            <Fragment key={`type-${typeBlock.type}`}>
+              <tr key={`t-${typeBlock.type}`} className="bg-gray-50 border-t border-gray-200">
+                <td colSpan={8} className="px-3 py-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setOpenTypes((prev) => ({ ...prev, [typeBlock.type]: !prev[typeBlock.type] }))}
+                    className="w-full flex items-center justify-between"
+                  >
+                    <span className="text-xs font-semibold text-gray-600 uppercase tracking-widest">{typeBlock.type}</span>
+                    <span className={`text-gray-400 transition-transform ${openTypes[typeBlock.type] ? 'rotate-90' : ''}`} style={{ display: 'inline-block' }}>&#9654;</span>
+                  </button>
                 </td>
               </tr>
-              {rows.map(row => <TBAccountRow key={row.code} row={row} />)}
-            </>
+              {openTypes[typeBlock.type] && typeBlock.groups.map((groupBlock) => (
+                <Fragment key={`group-${typeBlock.type}-${groupBlock.group}`}>
+                  <tr key={`g-${typeBlock.type}-${groupBlock.group}`} className="bg-gray-100">
+                    <td colSpan={8} className="px-4 py-1.5">
+                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">{groupBlock.group}</span>
+                    </td>
+                  </tr>
+                  {groupBlock.rows.map((row) => {
+                    const level = Math.max(0, Number(row.level ?? 0))
+                    return (
+                      <tr
+                        key={`${typeBlock.type}-${row.code}`}
+                        className={`border-b border-gray-100 ${row.id && dateFrom ? 'cursor-pointer hover:bg-indigo-50 group' : 'hover:bg-gray-50'}`}
+                        onClick={row.id && dateFrom && dateTo ? () => onDrill?.({
+                          nodeType: 'account',
+                          nodeId: Number(row.id),
+                          nodeLabel: `${row.code} — ${row.name}`,
+                          dateFrom,
+                          dateTo,
+                        }) : undefined}
+                        title={row.id && dateFrom ? 'Click to view vouchers' : undefined}
+                      >
+                        <td className="px-4 py-2 font-mono text-xs text-gray-400">{row.code}</td>
+                        <td className="px-4 py-2 text-gray-700 group-hover:text-indigo-700" style={{ paddingLeft: `${16 + level * 14}px` }}>
+                          {row.name}
+                          {(row.id != null) && dateFrom && <span className="ml-1 text-gray-300 group-hover:text-indigo-400 text-xs">&#8599;</span>}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular-nums text-gray-600">{n(row.opening_dr) ? npr(row.opening_dr) : dash}</td>
+                        <td className="px-4 py-2 text-right tabular-nums text-gray-600">{n(row.opening_cr) ? npr(row.opening_cr) : dash}</td>
+                        <td className="px-4 py-2 text-right tabular-nums text-blue-700">{n(row.period_dr) ? npr(row.period_dr) : dash}</td>
+                        <td className="px-4 py-2 text-right tabular-nums text-blue-700">{n(row.period_cr) ? npr(row.period_cr) : dash}</td>
+                        <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-900">{n(row.closing_dr) ? npr(row.closing_dr) : dash}</td>
+                        <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-900">{n(row.closing_cr) ? npr(row.closing_cr) : dash}</td>
+                      </tr>
+                    )
+                  })}
+                </Fragment>
+              ))}
+            </Fragment>
           ))}
         </tbody>
         <tfoot className="bg-gray-800 text-white">

@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   {# ── IRD Nepal Tax Invoice Template ────────────────────────────────────── #}
   {# Required fields per VAT Act 2052 / CBMS directives:                     #}
   {#   - "कर बिल" / "Tax Invoice" label                                      #}
@@ -12,8 +13,9 @@
   {#   - Taxable amount + VAT (13%) shown separately                          #}
   {#   - Sequential invoice number (no gaps)                                  #}
   {#   - QR stub (CBMS integration — placeholder until credentials issued)    #}
+  <title>Tax Invoice {{ invoice.invoice_number }} — {{ tenant.name }}</title>
   <style>
-    /* ── Reset ────────────────────────────────────────────── */
+    /* ── Reset ─────────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
@@ -23,243 +25,402 @@
       background: #fff;
     }
 
-    /* ── Page layout ──────────────────────────────────────── */
+    /* ── Page layout ────────────────────────────────────────────────── */
     @page {
       size: A4;
-      margin: 18mm 18mm 22mm 18mm;
+      margin: 16mm 18mm 20mm 18mm;
       @bottom-center {
         content: "Page " counter(page) " of " counter(pages);
-        font-size: 8pt;
+        font-size: 7.5pt;
         color: #888;
       }
     }
 
     .page { padding: 0; }
 
-    /* ── Header ───────────────────────────────────────────── */
+    /* ── IRD Top Banner ─────────────────────────────────────────────── */
+    .ird-banner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border: 1px solid #b0b5bc;
+      border-radius: 3px;
+      padding: 7px 14px;
+      margin-bottom: 18px;
+    }
+    .ird-banner .tax-title {
+      font-size: 13pt;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      color: #111827;
+    }
+    .ird-banner .tax-title-np {
+      font-size: 10.5pt;
+      font-weight: 600;
+      color: #374151;
+      margin-left: 8px;
+    }
+    .ird-banner .fy {
+      font-size: 8pt;
+      color: #4b5563;
+      margin-top: 3px;
+    }
+    .ird-banner .inv-ref {
+      text-align: right;
+      font-size: 8pt;
+      color: #6b7280;
+    }
+    .ird-banner .inv-ref strong {
+      display: block;
+      font-size: 11pt;
+      font-weight: 700;
+      color: #111827;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.3px;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────── */
     .header {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      border-bottom: 2px solid #2563eb;
-      padding-bottom: 12px;
-      margin-bottom: 20px;
+      border-bottom: 1px solid #d1d5db;
+      padding-bottom: 14px;
+      margin-bottom: 16px;
     }
 
+    .logo-area .logo-mark {
+      height: 48px;
+      width: auto;
+      margin-bottom: 5px;
+      object-fit: contain;
+    }
     .logo-area h1 {
-      font-size: 18pt;
-      font-weight: 800;
-      color: #2563eb;
-      letter-spacing: -0.5px;
+      font-size: 15pt;
+      font-weight: 700;
+      color: #111827;
+      letter-spacing: -0.2px;
     }
     .logo-area .tagline {
       font-size: 8pt;
       color: #6b7280;
-      margin-top: 2px;
+      margin-top: 3px;
+      line-height: 1.5;
     }
 
     .invoice-meta { text-align: right; }
-    .invoice-meta .invoice-label {
-      font-size: 16pt;
-      font-weight: 700;
-      color: #111827;
-      letter-spacing: 2px;
-      text-transform: uppercase;
+    .invoice-meta table {
+      margin-left: auto;
+      border-collapse: collapse;
     }
-    .invoice-meta table { margin-top: 6px; margin-left: auto; }
-    .invoice-meta td { padding: 1px 0 1px 12px; font-size: 8pt; }
-    .invoice-meta td:first-child { color: #6b7280; text-align: left; }
-    .invoice-meta td:last-child  { font-weight: 600; text-align: right; }
+    .invoice-meta td {
+      padding: 2px 0 2px 18px;
+      font-size: 8pt;
+      vertical-align: top;
+    }
+    .invoice-meta td:first-child {
+      color: #6b7280;
+      text-align: left;
+      white-space: nowrap;
+    }
+    .invoice-meta td:last-child {
+      font-weight: 600;
+      color: #111827;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
 
-    /* ── Status badge ─────────────────────────────────────── */
+    /* ── Status badge ────────────────────────────────────────────────── */
     .status-badge {
       display: inline-block;
-      padding: 2px 10px;
-      border-radius: 4px;
-      font-size: 8pt;
+      padding: 1px 7px;
+      border: 1px solid #d1d5db;
+      border-radius: 3px;
+      font-size: 7.5pt;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.5px;
+      color: #374151;
+      background: #f9fafb;
     }
-    .status-draft    { background: #fef3c7; color: #92400e; }
-    .status-issued   { background: #dbeafe; color: #1e40af; }
-    .status-paid     { background: #d1fae5; color: #065f46; }
-    .status-void     { background: #fee2e2; color: #991b1b; }
 
-    /* ── Addresses ────────────────────────────────────────── */
-    .addresses {
+    /* ── PAN / VAT Reg Strip ─────────────────────────────────────────── */
+    .reg-strip {
       display: flex;
-      gap: 24px;
-      margin-bottom: 20px;
-    }
-
-    .address-box {
-      flex: 1;
+      flex-wrap: wrap;
+      gap: 6px 18px;
       background: #f9fafb;
       border: 1px solid #e5e7eb;
-      border-radius: 6px;
-      padding: 10px 14px;
+      border-radius: 3px;
+      padding: 5px 14px;
+      margin-bottom: 14px;
+      font-size: 8pt;
+    }
+    .reg-strip span { color: #6b7280; }
+    .reg-strip strong {
+      color: #111827;
+      font-weight: 700;
+      margin-left: 3px;
+      font-variant-numeric: tabular-nums;
+    }
+    .reg-sep { color: #d1d5db; }
+
+    /* ── Addresses ───────────────────────────────────────────────────── */
+    .addresses {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .address-box {
+      flex: 1;
+      border: 1px solid #e5e7eb;
+      border-radius: 3px;
+      padding: 9px 14px;
     }
     .address-box .label {
       font-size: 7pt;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 1px;
-      color: #6b7280;
+      color: #9ca3af;
       margin-bottom: 6px;
     }
-    .address-box p { line-height: 1.55; font-size: 9pt; }
-    .address-box .name { font-weight: 700; font-size: 10pt; }
+    .address-box .name {
+      font-size: 10pt;
+      font-weight: 700;
+      color: #111827;
+      margin-bottom: 3px;
+    }
+    .address-box p {
+      font-size: 8.5pt;
+      color: #4b5563;
+      line-height: 1.55;
+      margin: 0;
+    }
+    .address-box .pan-line {
+      font-size: 7.5pt;
+      color: #6b7280;
+      margin-top: 5px;
+      font-variant-numeric: tabular-nums;
+    }
 
-    /* ── Line-items table ────────────────────────────────── */
+    /* ── Line-items table ────────────────────────────────────────────── */
+    .items-wrap {
+      border: 1px solid #d1d5db;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 14px;
+    }
     .items-table {
       width: 100%;
       border-collapse: collapse;
-      margin-bottom: 16px;
       font-size: 8.5pt;
     }
     .items-table thead tr {
-      background: #2563eb;
-      color: #fff;
+      background: #f3f4f6;
+      border-bottom: 1px solid #d1d5db;
     }
     .items-table thead th {
-      padding: 7px 10px;
+      padding: 6px 10px;
       text-align: left;
-      font-weight: 600;
-      font-size: 8pt;
-      letter-spacing: 0.3px;
+      font-weight: 700;
+      font-size: 7.5pt;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #4b5563;
     }
-    .items-table thead th.right { text-align: right; }
+    .items-table thead th.r { text-align: right; }
 
-    .items-table tbody tr:nth-child(even) { background: #f9fafb; }
+    .items-table tbody tr:nth-child(even) { background: #fafafa; }
     .items-table tbody tr:nth-child(odd)  { background: #fff; }
     .items-table tbody td {
       padding: 6px 10px;
       border-bottom: 1px solid #e5e7eb;
       vertical-align: top;
+      color: #1a1a1a;
     }
-    .items-table tbody td.right { text-align: right; font-variant-numeric: tabular-nums; }
-    .items-table tbody td.desc  { color: #6b7280; font-size: 7.5pt; }
+    .items-table tbody td.r {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .items-table tbody .item-note {
+      font-size: 7.5pt;
+      color: #6b7280;
+      margin-top: 2px;
+    }
+    .items-table tbody tr:last-child td { border-bottom: none; }
 
-    /* ── Totals block ─────────────────────────────────────── */
+    /* ── Totals ──────────────────────────────────────────────────────── */
     .totals-wrap {
       display: flex;
       justify-content: flex-end;
-      margin-bottom: 20px;
+      margin-bottom: 14px;
     }
     .totals-table {
-      min-width: 240px;
+      min-width: 260px;
       border-collapse: collapse;
+      border: 1px solid #e5e7eb;
+      border-radius: 3px;
+      overflow: hidden;
       font-size: 8.5pt;
     }
     .totals-table td {
-      padding: 4px 10px;
+      padding: 5px 12px;
+      border-bottom: 1px solid #e5e7eb;
     }
     .totals-table td:first-child { color: #6b7280; }
-    .totals-table td:last-child  { text-align: right; font-variant-numeric: tabular-nums; }
-    .totals-table .divider td { border-top: 1px solid #e5e7eb; padding-top: 8px; }
-    .totals-table .grand-total td {
+    .totals-table td:last-child  {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      color: #111827;
+      font-weight: 600;
+    }
+    .totals-table .row-divider td {
+      border-top: 1px solid #d1d5db;
+    }
+    .totals-table .row-grand td {
+      border-top: 2px solid #111827;
       font-size: 11pt;
       font-weight: 700;
-      color: #1e40af;
-      border-top: 2px solid #2563eb;
-      padding-top: 6px;
+      color: #111827;
+      padding-top: 7px;
+      padding-bottom: 7px;
     }
-    .totals-table .balance-due td {
+    .totals-table .row-balance td {
       font-size: 10pt;
       font-weight: 700;
-      color: #dc2626;
+      color: #111827;
+      border-bottom: none;
     }
+    .totals-table tr:last-child td { border-bottom: none; }
 
-    /* ── Notes & Banking ─────────────────────────────────── */
-    .footer-section {
+    /* ── Amount in words ─────────────────────────────────────────────── */
+    .amount-words {
+      padding: 7px 12px;
+      border: 1px solid #e5e7eb;
+      background: #f9fafb;
+      border-radius: 3px;
+      font-size: 8pt;
+      color: #374151;
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+    .amount-words strong { color: #111827; }
+
+    /* ── Notes & Payment footer ──────────────────────────────────────── */
+    .footer-grid {
       display: flex;
-      gap: 16px;
-      margin-bottom: 20px;
+      gap: 12px;
+      margin-bottom: 18px;
     }
     .footer-box {
       flex: 1;
       border: 1px solid #e5e7eb;
-      border-radius: 6px;
-      padding: 10px 14px;
+      border-radius: 3px;
+      padding: 9px 14px;
     }
     .footer-box .label {
       font-size: 7pt;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 1px;
-      color: #6b7280;
-      margin-bottom: 6px;
+      color: #9ca3af;
+      margin-bottom: 5px;
     }
-    .footer-box p { font-size: 8.5pt; line-height: 1.6; color: #374151; }
-
-    /* ── IRD compliance banner ────────────────────────────── */
-    .ird-banner {
-      text-align: center;
-      border: 2px solid #1e40af;
-      border-radius: 6px;
-      padding: 6px 12px;
-      margin-bottom: 16px;
-      background: #eff6ff;
-    }
-    .ird-banner .tax-invoice-label {
-      font-size: 14pt;
-      font-weight: 800;
-      color: #1e40af;
-      letter-spacing: 1px;
-    }
-    .ird-banner .tax-invoice-np {
-      font-size: 11pt;
-      font-weight: 700;
-      color: #1e40af;
-      margin-left: 10px;
-    }
-    .ird-banner .fy-label {
-      font-size: 8pt;
+    .footer-box p {
+      font-size: 8.5pt;
       color: #374151;
-      margin-top: 2px;
+      line-height: 1.6;
+      margin: 0;
     }
 
-    /* ── PAN / Reg row ───────────────────────────────────── */
-    .reg-row {
+    /* ── Signature / Approval ────────────────────────────────────────── */
+    .sign-grid {
       display: flex;
       gap: 12px;
-      background: #f3f4f6;
+      margin-bottom: 18px;
+    }
+    .sign-box {
+      flex: 1;
       border: 1px solid #e5e7eb;
-      border-radius: 4px;
-      padding: 5px 14px;
-      margin-bottom: 14px;
-      font-size: 8pt;
+      border-radius: 3px;
+      padding: 9px 14px;
     }
-    .reg-row span { color: #6b7280; }
-    .reg-row strong { color: #111827; margin-left: 4px; }
-    .reg-row .sep { color: #d1d5db; margin: 0 6px; }
-
-    /* ── QR stub ─────────────────────────────────────────── */
-    .qr-stub {
-      display: inline-block;
-      width: 64px;
-      height: 64px;
-      border: 2px dashed #d1d5db;
-      border-radius: 4px;
-      text-align: center;
-      font-size: 6pt;
+    .sign-box .label {
+      font-size: 7pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
       color: #9ca3af;
-      padding-top: 20px;
-      vertical-align: middle;
+      margin-bottom: 10px;
+    }
+    .sign-stamp {
+      height: 56px;
+      border: 1px dashed #d1d5db;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 7.5pt;
+      color: #c0c4cc;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    .sign-line-row {
+      border-top: 1px solid #d1d5db;
+      padding-top: 5px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 7.5pt;
+      color: #9ca3af;
     }
 
-    /* ── Legal footer ─────────────────────────────────────── */
+    /* ── Legal footer ────────────────────────────────────────────────── */
     .legal {
       border-top: 1px solid #e5e7eb;
       padding-top: 10px;
-      font-size: 7.5pt;
-      color: #9ca3af;
-      line-height: 1.5;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 20px;
     }
-    .legal .ird-note {
-      font-weight: 600;
+    .legal-text {
+      font-size: 7.5pt;
       color: #6b7280;
+      line-height: 1.55;
+    }
+    .legal-text .ird-note {
+      font-weight: 700;
+      color: #4b5563;
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    /* ── QR Stub ─────────────────────────────────────────────────────── */
+    .qr-stub {
+      width: 62px;
+      height: 62px;
+      border: 1px dashed #d1d5db;
+      border-radius: 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-size: 6.5pt;
+      color: #c0c4cc;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .qr-stub span {
+      font-size: 5.5pt;
+      margin-top: 3px;
+      color: #d1d5db;
+    }
+
+    /* ── Print utility ───────────────────────────────────────────────── */
+    @media print {
+      body { background: #fff; }
+      .page { page-break-after: always; }
     }
   </style>
 </head>
@@ -267,28 +428,38 @@
 {% load nepali_date_tags %}
 <div class="page">
 
-  <!-- ── IRD TAX INVOICE BANNER ──────────────────────────── -->
+  <!-- ══ IRD TAX INVOICE BANNER ══════════════════════════════════════ -->
   <div class="ird-banner">
-    <span class="tax-invoice-label">TAX INVOICE</span>
-    <span class="tax-invoice-np">/ कर बिल</span>
-    <div class="fy-label">
-      Fiscal Year / आर्थिक वर्ष:
-      <strong>{{ invoice.created_at|fiscal_year_label }}</strong>
+    <div>
+      <span class="tax-title">TAX INVOICE</span>
+      <span class="tax-title-np">/ कर बिल</span>
+      <div class="fy">
+        Fiscal Year / आर्थिक वर्ष: &nbsp;<strong>{{ invoice_fiscal_label }}</strong>
+      </div>
+    </div>
+    <div class="inv-ref">
+      Invoice No.
+      <strong>{{ invoice.invoice_number }}</strong>
     </div>
   </div>
   <!-- /IRD BANNER -->
 
-  <!-- ── HEADER ──────────────────────────────────────────── -->
+  <!-- ══ HEADER ═══════════════════════════════════════════════════════ -->
   <div class="header">
     <div class="logo-area">
+      {% if tenant.logo %}
+      <img src="{{ tenant.logo }}" alt="{{ tenant.name }} logo" class="logo-mark" />
+      {% endif %}
       <h1>{{ tenant.name }}</h1>
       {% if tenant.address %}
       <p class="tagline">{{ tenant.address }}</p>
       {% endif %}
+      {% if tenant.email %}
+      <p class="tagline">{{ tenant.email }}{% if tenant.phone %} &nbsp;|&nbsp; {{ tenant.phone }}{% endif %}</p>
+      {% endif %}
     </div>
 
     <div class="invoice-meta">
-      <div class="invoice-label">Invoice / बिल</div>
       <table>
         <tr>
           <td>Invoice #</td>
@@ -296,11 +467,15 @@
         </tr>
         <tr>
           <td>Date (AD)</td>
-          <td>{{ invoice.created_at|date:"d M Y" }}</td>
+          <td>{{ invoice_date|date:"d M Y" }}</td>
         </tr>
         <tr>
           <td>Date (BS)</td>
-          <td><strong>{{ invoice.created_at|date_to_bs }}</strong></td>
+          <td>{{ invoice_date_bs }}</td>
+        </tr>
+        <tr>
+          <td>Time Period</td>
+          <td>{{ period_start|date:"d M Y" }} - {{ period_end|date:"d M Y" }}</td>
         </tr>
         {% if invoice.due_date %}
         <tr>
@@ -325,26 +500,26 @@
   </div>
   <!-- /HEADER -->
 
-  <!-- ── PAN / VAT REG ROW ───────────────────────────────── -->
-  <div class="reg-row">
+  <!-- ══ PAN / VAT REG STRIP ═════════════════════════════════════════ -->
+  <div class="reg-strip">
     {% if tenant.pan_number %}
-      <span>Seller PAN:</span><strong>{{ tenant.pan_number }}</strong>
-      {% if tenant.vat_reg_number or invoice.buyer_pan %}<span class="sep">|</span>{% endif %}
+      <span>Seller PAN: <strong>{{ tenant.pan_number }}</strong></span>
+      {% if tenant.vat_reg_number or invoice.buyer_pan %}<span class="reg-sep">|</span>{% endif %}
     {% endif %}
     {% if tenant.vat_reg_number %}
-      <span>VAT Reg No:</span><strong>{{ tenant.vat_reg_number }}</strong>
-      {% if invoice.buyer_pan %}<span class="sep">|</span>{% endif %}
+      <span>VAT Reg No: <strong>{{ tenant.vat_reg_number }}</strong></span>
+      {% if invoice.buyer_pan %}<span class="reg-sep">|</span>{% endif %}
     {% endif %}
     {% if invoice.buyer_pan %}
-      <span>Buyer PAN:</span><strong>{{ invoice.buyer_pan }}</strong>
+      <span>Buyer PAN: <strong>{{ invoice.buyer_pan }}</strong></span>
     {% endif %}
     {% if not tenant.pan_number and not tenant.vat_reg_number %}
-      <span style="color:#dc2626;">⚠ PAN / VAT registration number not configured — required for IRD compliance. Set in Settings → Business Profile.</span>
+      <span style="color:#9ca3af;">PAN / VAT registration number not configured. Go to Settings &rsaquo; Business Profile.</span>
     {% endif %}
   </div>
-  <!-- /PAN ROW -->
+  <!-- /PAN STRIP -->
 
-  <!-- ── ADDRESSES ───────────────────────────────────────── -->
+  <!-- ══ ADDRESSES ════════════════════════════════════════════════════ -->
   <div class="addresses">
     <div class="address-box">
       <div class="label">From / बिक्रेता</div>
@@ -352,109 +527,130 @@
       {% if tenant.email %}<p>{{ tenant.email }}</p>{% endif %}
       {% if tenant.phone %}<p>{{ tenant.phone }}</p>{% endif %}
       {% if tenant.address %}<p>{{ tenant.address }}</p>{% endif %}
-      {% if tenant.pan_number %}<p style="font-size:8pt;color:#374151;">PAN: <strong>{{ tenant.pan_number }}</strong></p>{% endif %}
+      {% if tenant.pan_number %}
+      <p class="pan-line">PAN: <strong>{{ tenant.pan_number }}</strong></p>
+      {% endif %}
     </div>
 
     <div class="address-box">
       <div class="label">Bill To / खरिदकर्ता</div>
-      {% if invoice.customer %}
-        <p class="name">{{ invoice.customer.name }}</p>
-        {% if invoice.customer.email %}<p>{{ invoice.customer.email }}</p>{% endif %}
-        {% if invoice.customer.phone %}<p>{{ invoice.customer.phone }}</p>{% endif %}
-        {% if invoice.customer.address %}<p>{{ invoice.customer.address }}</p>{% endif %}
-        {% if invoice.buyer_pan %}<p style="font-size:8pt;color:#374151;">PAN: <strong>{{ invoice.buyer_pan }}</strong></p>{% endif %}
-      {% elif invoice.bill_address %}
-        <p>{{ invoice.bill_address }}</p>
-      {% else %}
+      <p class="name">{{ bill_to.name }}</p>
+      {% for line in bill_to.lines %}
+        <p>{{ line }}</p>
+      {% empty %}
         <p style="color:#9ca3af;">—</p>
+      {% endfor %}
+      {% if bill_to.pan %}
+      <p class="pan-line">PAN: <strong>{{ bill_to.pan }}</strong></p>
       {% endif %}
     </div>
   </div>
   <!-- /ADDRESSES -->
 
-  <!-- ── LINE ITEMS ──────────────────────────────────────── -->
-  <table class="items-table">
-    <thead>
-      <tr>
-        <th style="width:4%">#</th>
-        <th style="width:44%">Description</th>
-        <th class="right" style="width:12%">Qty</th>
-        <th class="right" style="width:18%">Unit Price</th>
-        <th class="right" style="width:10%">Disc %</th>
-        <th class="right" style="width:12%">Amount</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for item in invoice.line_items %}
-      <tr>
-        <td>{{ forloop.counter }}</td>
-        <td>
-          {{ item.description }}
-          {% if item.notes %}<br><span class="desc">{{ item.notes }}</span>{% endif %}
-        </td>
-        <td class="right">{{ item.quantity }}</td>
-        <td class="right">NPR {{ item.unit_price|floatformat:2 }}</td>
-        <td class="right">{{ item.discount|default:"0" }}%</td>
-        <td class="right">NPR {{ item.total|floatformat:2 }}</td>
-      </tr>
-      {% empty %}
-      <tr>
-        <td colspan="6" style="text-align:center;color:#9ca3af;padding:20px;">
-          No line items.
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <!-- ══ LINE ITEMS ════════════════════════════════════════════════════ -->
+  <div class="items-wrap">
+    <table class="items-table">
+      <thead>
+        <tr>
+          <th style="width:4%">#</th>
+          <th style="width:44%">Description / विवरण</th>
+          <th class="r" style="width:10%">Qty</th>
+          <th class="r" style="width:16%">Unit Price</th>
+          <th class="r" style="width:10%">Disc %</th>
+          <th class="r" style="width:16%">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in line_rows %}
+        <tr>
+          <td>{{ item.sn }}</td>
+          <td>
+            {{ item.description }}
+            {% if item.notes %}
+            <div class="item-note">{{ item.notes }}</div>
+            {% endif %}
+          </td>
+          <td class="r">{{ item.qty|floatformat:2 }}</td>
+          <td class="r">{{ tenant.currency|default:"NPR" }} {{ item.unit_price|floatformat:2 }}</td>
+          <td class="r">{{ item.discount_pct|floatformat:2 }}%</td>
+          <td class="r">{{ tenant.currency|default:"NPR" }} {{ item.line_total|floatformat:2 }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="6" style="text-align:center;color:#9ca3af;padding:20px 10px;">
+            No line items.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
   <!-- /LINE ITEMS -->
 
-  <!-- ── TOTALS ───────────────────────────────────────────── -->
+  <!-- ══ TOTALS ════════════════════════════════════════════════════════ -->
   <div class="totals-wrap">
     <table class="totals-table">
       <tr>
         <td>Subtotal</td>
-        <td>NPR {{ invoice.subtotal|floatformat:2 }}</td>
+        <td>{{ tenant.currency|default:"NPR" }} {{ invoice.subtotal|floatformat:2 }}</td>
       </tr>
       {% if invoice.discount %}
       <tr>
         <td>Discount</td>
-        <td>- NPR {{ invoice.discount|floatformat:2 }}</td>
+        <td>&minus; {{ tenant.currency|default:"NPR" }} {{ invoice.discount|floatformat:2 }}</td>
       </tr>
       {% endif %}
       {% if invoice.vat_amount %}
       <tr>
         <td>Taxable Amount / करयोग्य रकम</td>
-        <td>NPR {{ invoice.subtotal|floatformat:2 }}</td>
+        <td>{{ tenant.currency|default:"NPR" }} {{ invoice.taxable_amount|floatformat:2 }}</td>
       </tr>
       <tr>
         <td>VAT 13% / मूल्य अभिवृद्धि कर</td>
-        <td>NPR {{ invoice.vat_amount|floatformat:2 }}</td>
+        <td>{{ tenant.currency|default:"NPR" }} {{ invoice.vat_amount|floatformat:2 }}</td>
       </tr>
       {% endif %}
-      <tr class="grand-total">
+      <tr class="row-grand">
         <td>Total</td>
-        <td>NPR {{ invoice.total|floatformat:2 }}</td>
+        <td>{{ tenant.currency|default:"NPR" }} {{ invoice.total|floatformat:2 }}</td>
       </tr>
       {% if invoice.amount_paid %}
-      <tr class="divider">
+      <tr class="row-divider">
         <td>Amount Paid</td>
-        <td>- NPR {{ invoice.amount_paid|floatformat:2 }}</td>
+        <td>&minus; {{ tenant.currency|default:"NPR" }} {{ invoice.amount_paid|floatformat:2 }}</td>
       </tr>
-      <tr class="balance-due">
+      <tr class="row-balance">
         <td>Balance Due</td>
-        <td>NPR {{ invoice.amount_due|floatformat:2 }}</td>
+        <td>{{ tenant.currency|default:"NPR" }} {{ invoice.amount_due|floatformat:2 }}</td>
       </tr>
       {% endif %}
     </table>
   </div>
   <!-- /TOTALS -->
 
-  <!-- ── NOTES & PAYMENT INFO ────────────────────────────── -->
-  <div class="footer-section">
+  <!-- ══ AMOUNT IN WORDS ═══════════════════════════════════════════════ -->
+  <div class="amount-words">
+    <strong>Amount in words / अक्षरमा:</strong> {{ amount_in_words }}
+  </div>
+
+  <!-- ══ NOTES & PAYMENT INFO ══════════════════════════════════════════ -->
+  <div class="footer-grid">
     {% if invoice.notes %}
     <div class="footer-box" style="flex:2">
-      <div class="label">Notes</div>
+      <div class="label">Notes / टिप्पणी</div>
       <p>{{ invoice.notes }}</p>
+    </div>
+    {% endif %}
+
+    {% if tenant.bank_name or tenant.bank_account_number %}
+    <div class="footer-box" style="flex:2">
+      <div class="label">Bank / Payment Details</div>
+      <p>
+        {% if tenant.bank_name %}Bank: {{ tenant.bank_name }}<br>{% endif %}
+        {% if tenant.bank_account_name %}A/C Name: {{ tenant.bank_account_name }}<br>{% endif %}
+        {% if tenant.bank_account_number %}A/C No: {{ tenant.bank_account_number }}<br>{% endif %}
+        {% if tenant.bank_branch %}Branch: {{ tenant.bank_branch }}{% endif %}
+      </p>
     </div>
     {% endif %}
 
@@ -471,24 +667,77 @@
   </div>
   <!-- /FOOTER -->
 
-  <!-- ── LEGAL ─────────────────────────────────────────────── -->
-  <div class="legal" style="display:flex;justify-content:space-between;align-items:flex-start;">
-    <div style="flex:1">
-      <p class="ird-note">This is a computer-generated Tax Invoice / यो कम्प्युटरबाट निर्मित कर बिल हो।</p>
-      {% if tenant.vat_enabled %}
-      <p style="margin-top:4px;">VAT charged at 13% as per VAT Act 2052 of Nepal.</p>
-      {% endif %}
-      {% if tenant.pan_number %}
-      <p style="margin-top:2px;">Seller PAN: {{ tenant.pan_number }}{% if tenant.vat_reg_number %} &bull; VAT Reg: {{ tenant.vat_reg_number }}{% endif %}</p>
-      {% endif %}
-      <p style="margin-top:4px;">{{ tenant.name }}{% if tenant.address %} &bull; {{ tenant.address }}{% endif %}</p>
+  <!-- ══ SIGNATURE & CUSTOMER APPROVAL ════════════════════════════════ -->
+  <div class="sign-grid">
+    <div class="sign-box">
+      <div class="label">Prepared By / तयार पार्ने</div>
+      <div class="sign-stamp">Signature / हस्ताक्षर</div>
+      <div class="sign-line-row">
+        <span>
+          {% if prepared_by_name %}
+            {{ prepared_by_name }}
+          {% else %}
+            Name: ____________________
+          {% endif %}
+        </span>
+        <span>
+          {% if prepared_by_at %}
+            {{ prepared_by_at|date:"d M Y H:i" }}
+          {% else %}
+            Date: ____________________
+          {% endif %}
+        </span>
+      </div>
     </div>
-    {# QR stub — CBMS QR will be generated here once IRD credentials are issued #}
-    <div style="text-align:center;margin-left:16px">
-      <div class="qr-stub">CBMS<br>QR</div>
-      <p style="font-size:6pt;color:#9ca3af;margin-top:3px;">CBMS Pending</p>
+    <div class="sign-box">
+      <div class="label">Approved By / स्वीकृत गर्ने</div>
+      <div class="sign-stamp">Signature / हस्ताक्षर</div>
+      <div class="sign-line-row">
+        <span>
+          {% if approved_by_name %}
+            {{ approved_by_name }}
+          {% else %}
+            Name: ____________________
+          {% endif %}
+        </span>
+        <span>
+          {% if approved_by_at %}
+            {{ approved_by_at|date:"d M Y H:i" }}
+          {% else %}
+            Date: ____________________
+          {% endif %}
+        </span>
+      </div>
     </div>
   </div>
+  <!-- /SIGNATURES -->
+
+  <!-- ══ LEGAL FOOTER ══════════════════════════════════════════════════ -->
+  <div class="legal">
+    <div class="legal-text">
+      <span class="ird-note">This is a computer-generated Tax Invoice / यो कम्प्युटरबाट निर्मित कर बिल हो।</span>
+      {% if tenant.vat_enabled %}
+      VAT charged at 13% as per VAT Act 2052 of Nepal.<br>
+      {% endif %}
+      {% if tenant.pan_number %}
+      Seller PAN: {{ tenant.pan_number }}{% if tenant.vat_reg_number %} &bull; VAT Reg: {{ tenant.vat_reg_number }}{% endif %}<br>
+      {% endif %}
+      {{ tenant.name }}{% if tenant.address %} &bull; {{ tenant.address }}{% endif %}
+    </div>
+    {# QR stub — CBMS QR will be generated here once IRD credentials are issued #}
+    <div style="text-align:center;flex-shrink:0;">
+      {% if invoice.cbms_qr_url %}
+      <img src="{{ invoice.cbms_qr_url }}" alt="CBMS QR" style="width:62px;height:62px;border:1px solid #e5e7eb;border-radius:4px;" />
+      {% else %}
+      <div class="qr-stub">
+        CBMS<br>QR
+        <span>Pending</span>
+      </div>
+      {% endif %}
+      <p style="font-size:6pt;color:#c0c4cc;margin-top:3px;">CBMS / IRD</p>
+    </div>
+  </div>
+  <!-- /LEGAL -->
 
 </div>
 </body>

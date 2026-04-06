@@ -35,6 +35,8 @@ import DateDisplay from '../../components/DateDisplay'
 import NepaliDatePicker from '../../components/NepaliDatePicker'
 import { adStringToBsDisplay, currentFiscalYear, fiscalYearAdParams, fiscalYearOf, fiscalYearDateRange } from '../../utils/nepaliDate'
 import { useFyStore } from '../../store/fyStore'
+import { useTenantStore } from '../../store/tenantStore'
+import { useAuthStore } from '../../store/authStore'
 import { CoinDetailDrawer } from './CoinsPage'
 
 // ─── Fiscal Year — reads/writes the global persistent store ───────────────
@@ -130,7 +132,11 @@ interface Payment {
   bank_account: number | null; bank_account_name: string
   account: number | null; account_name: string
   reference: string; notes: string
-  party_name: string; cheque_status: string
+  party_name?: string; supplier_name?: string; customer_name?: string; cheque_status: string
+  tds_rate?: string | number
+  tds_withheld_amount?: string | number
+  net_receipt_amount?: string | number
+  tds_reference?: string
   created_by_name: string; created_at: string
 }
 interface CreditNote {
@@ -274,7 +280,15 @@ interface LedgerReport {
 }
 interface DayBookLine { account_code: string; account_name: string; description: string; debit: string; credit: string }
 interface DayBookEntry { entry_number: string; description: string; reference_type: string; total_debit: string; total_credit: string; lines: DayBookLine[] }
-interface DayBookReport { date: string; entries: DayBookEntry[]; total_debit: string; total_credit: string }
+interface DayBookDay { date: string; entries: DayBookEntry[]; total_debit: string; total_credit: string; entry_count: number }
+interface DayBookRangeReport {
+  date_from: string
+  date_to: string
+  days: DayBookDay[]
+  total_debit: string
+  total_credit: string
+  entry_count: number
+}
 
 interface ApiPage<T> { results: T[]; count: number }
 
@@ -296,6 +310,10 @@ function fmt(d: string | null) {
 }
 function npr(v: string | number) {
   return `NPR ${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function paymentPartyName(p: Payment): string {
+  return p.party_name || p.supplier_name || p.customer_name || '—'
 }
 
 function buildAccountingTabUrl(
@@ -578,6 +596,7 @@ interface InventoryProduct { id: number; name: string; unit_price: string; sku: 
 function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
   const [customerId, setCustomerId] = useState('')
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
   const [applyVat, setApplyVat] = useState(true)
@@ -642,6 +661,7 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
     }
     mutation.mutate({
       customer: customerId ? Number(customerId) : null,
+      date,
       due_date: dueDate || null,
       notes,
       apply_vat: applyVat,
@@ -664,6 +684,9 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
     <Modal title="New Invoice" onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
+          <Field label="Date">
+            <NepaliDatePicker value={date} onChange={setDate} />
+          </Field>
           <Field label="Customer">
             <select value={customerId} onChange={e => setCustomerId(e.target.value)} className={selectCls}>
               <option value="">— No customer —</option>
@@ -811,7 +834,26 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
 // ─── Invoice Detail Modal ─────────────────────────────────────────────────
 
 function InvoiceDetailModal({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
-  const handlePrint = () => window.print()
+  const handlePrint = async () => {
+    const popup = window.open('', '_blank', 'noopener,noreferrer')
+    if (!popup) {
+      toast.error('Pop-up blocked. Please allow pop-ups to print invoice.')
+      return
+    }
+    popup.document.write('<html><head><title>Loading invoice...</title></head><body style="font-family: Arial, sans-serif; padding: 16px;">Loading invoice PDF...</body></html>')
+    popup.document.close()
+
+    try {
+      const res = await apiClient.get(ACCOUNTING.INVOICE_PDF(inv.id), { responseType: 'blob' })
+      const blob = new Blob([res.data], { type: 'application/pdf' })
+      const url = URL.createObjectURL(blob)
+      popup.location.href = url
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch {
+      popup.close()
+      toast.error('Invoice print failed')
+    }
+  }
   return (
     <Modal title={`Invoice ${inv.invoice_number}`} onClose={onClose}>
       <div className="space-y-4 text-sm">
@@ -827,7 +869,7 @@ function InvoiceDetailModal({ inv, onClose }: { inv: Invoice; onClose: () => voi
           </div>
           <div>
             <p className="text-gray-400 font-medium uppercase tracking-wide mb-1">Date</p>
-            <p className="text-gray-700">{fmt(inv.created_at)}</p>
+            <p className="text-gray-700">{fmt(inv.date || inv.created_at)}</p>
           </div>
           <div>
             <p className="text-gray-400 font-medium uppercase tracking-wide mb-1">Due Date</p>
@@ -948,6 +990,7 @@ function InvoiceDetailModal({ inv, onClose }: { inv: Invoice; onClose: () => voi
 function InvoiceEditModal({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
   const qc = useQueryClient()
   const [customerId, setCustomerId] = useState(inv.customer ? String(inv.customer) : '')
+  const [date, setDate]             = useState(inv.date ?? new Date().toISOString().slice(0, 10))
   const [dueDate, setDueDate]       = useState(inv.due_date ?? '')
   const [notes, setNotes]           = useState(inv.notes ?? '')
   const [lines, setLines]           = useState<LineItemDraft[]>(() =>
@@ -1003,6 +1046,7 @@ function InvoiceEditModal({ inv, onClose }: { inv: Invoice; onClose: () => void 
     }
     mutation.mutate({
       customer: customerId ? Number(customerId) : null,
+      date,
       due_date: dueDate || null,
       notes,
       line_items: lines
@@ -1030,6 +1074,9 @@ function InvoiceEditModal({ inv, onClose }: { inv: Invoice; onClose: () => void 
           </div>
         )}
         <div className="grid grid-cols-2 gap-4">
+          <Field label="Date">
+            <NepaliDatePicker value={date} onChange={setDate} />
+          </Field>
           <Field label="Customer">
             <select value={customerId} onChange={e => setCustomerId(e.target.value)} className={selectCls}>
               <option value="">— No customer —</option>
@@ -5299,11 +5346,68 @@ const REPORTS: ReportMeta[] = [
 
 // ── typed data shapes ──────────────────────────────────────────────────────
 
-interface RptAccount  { code: string; name: string; balance: string | number }
+interface RptAccount  {
+  id?: number
+  code: string
+  name: string
+  balance: string | number
+  group_name?: string
+  parent_id?: number | null
+  parent_code?: string
+  parent_name?: string
+  level?: number
+}
 interface PLReport    { date_from: string; date_to: string; revenue: RptAccount[]; total_revenue: string | number; expenses: RptAccount[]; total_expenses: string | number; net_profit: string | number }
-interface BSReport    { as_of_date: string; assets: RptAccount[]; total_assets: string | number; liabilities: RptAccount[]; total_liabilities: string | number; equity: RptAccount[]; total_equity: string | number; balanced: boolean }
-interface TBRow       { code: string; name: string; debit: string | number; credit: string | number }
-interface TBReport    { date_from: string; date_to: string; accounts: TBRow[]; total_debit: string | number; total_credit: string | number; balanced: boolean }
+interface BSReport {
+  as_of_date: string
+  as_of_date_bs?: string
+  fixed_assets: RptAccount[]
+  total_fixed_assets: string | number
+  investments: RptAccount[]
+  total_investments: string | number
+  current_assets: RptAccount[]
+  total_current_assets: string | number
+  total_assets: string | number
+  capital: RptAccount[]
+  total_capital: string | number
+  bank_od: RptAccount[]
+  loans: RptAccount[]
+  total_loans: string | number
+  current_liabilities: RptAccount[]
+  total_current_liabilities: string | number
+  total_liabilities: string | number
+  total_equity_and_liabilities: string | number
+  balanced: boolean
+}
+interface TBRow {
+  id?: number
+  code: string
+  name: string
+  type?: string
+  group_name?: string
+  parent_id?: number | null
+  parent_code?: string
+  parent_name?: string
+  level?: number
+  opening_dr: string | number
+  opening_cr: string | number
+  period_dr: string | number
+  period_cr: string | number
+  closing_dr: string | number
+  closing_cr: string | number
+}
+interface TBReport {
+  date_from: string
+  date_to: string
+  accounts: TBRow[]
+  total_opening_dr: string | number
+  total_opening_cr: string | number
+  total_period_dr: string | number
+  total_period_cr: string | number
+  total_closing_dr: string | number
+  total_closing_cr: string | number
+  balanced: boolean
+}
 interface AgedItem    { id: number; invoice_number?: string; bill_number?: string; customer?: string; supplier?: string; due_date: string; amount_due: number }
 interface AgedBucket  { items: AgedItem[]; total: number }
 interface AgedReport  { as_of_date: string; current: AgedBucket; '1_30': AgedBucket; '31_60': AgedBucket; '61_90': AgedBucket; '90_plus': AgedBucket; grand_total: number }
@@ -5376,6 +5480,19 @@ function RptDateBadge({ label }: { label: string }) {
   return <p className="text-xs text-gray-400 text-center mt-1">{label}</p>
 }
 
+function groupByCoa(items: RptAccount[]): Array<{ group: string; rows: RptAccount[] }> {
+  const grouped = new Map<string, RptAccount[]>()
+  items.forEach((it) => {
+    const key = it.group_name || 'Ungrouped'
+    if (!grouped.has(key)) grouped.set(key, [])
+    grouped.get(key)!.push(it)
+  })
+  return Array.from(grouped.entries()).map(([group, rows]) => ({
+    group,
+    rows: rows.sort((a, b) => String(a.code).localeCompare(String(b.code))),
+  }))
+}
+
 // ── Profit & Loss renderer ────────────────────────────────────────────────
 
 function PLReportView({ data }: { data: PLReport }) {
@@ -5407,43 +5524,90 @@ function PLReportView({ data }: { data: PLReport }) {
 // ── Balance Sheet renderer ────────────────────────────────────────────────
 
 function BSReportView({ data }: { data: BSReport }) {
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
+  const sections = [
+    { title: 'Fixed Assets', rows: data.fixed_assets ?? [], total: data.total_fixed_assets },
+    { title: 'Investments', rows: data.investments ?? [], total: data.total_investments },
+    { title: 'Current Assets', rows: data.current_assets ?? [], total: data.total_current_assets },
+    { title: 'Capital', rows: data.capital ?? [], total: data.total_capital },
+    { title: 'Loans', rows: [...(data.bank_od ?? []), ...(data.loans ?? [])], total: data.total_loans },
+    { title: 'Current Liabilities', rows: data.current_liabilities ?? [], total: data.total_current_liabilities },
+  ]
+  const expandAllSections = () => {
+    const next: Record<string, boolean> = {}
+    sections.forEach((s) => { next[s.title] = true })
+    setOpenSections(next)
+  }
+  const collapseAllSections = () => setOpenSections({})
+
   return (
-    <div>
+    <div className="space-y-4">
       {data.balanced === false && (
         <div className="mx-4 mt-4 px-4 py-2 bg-gray-50 border border-gray-300 rounded flex items-center gap-2 text-sm text-gray-700">
           <AlertCircle size={14} className="shrink-0" /> Out of balance — Assets ≠ Liabilities + Equity. Check posted journal entries.
         </div>
       )}
-      <div className="grid grid-cols-2 divide-x divide-gray-200 mt-4">
-        <div>
-          <RptSection title="Liabilities">
-            {data.liabilities?.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
-            {!data.liabilities?.length && <p className="px-8 py-2 text-xs text-gray-400 italic">None</p>}
-            <RptTotal label="Total Liabilities" amount={data.total_liabilities} />
-          </RptSection>
-          <div className="mt-2">
-            <RptSection title="Capital / Equity">
-              {data.equity?.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
-              {!data.equity?.length && <p className="px-8 py-2 text-xs text-gray-400 italic">None</p>}
-              <RptTotal label="Total Equity" amount={data.total_equity} />
-            </RptSection>
+      <div className="flex items-center justify-end gap-2 px-1">
+        <button
+          type="button"
+          onClick={expandAllSections}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
+        >
+          <ChevronsDownUp size={13} /> Expand All
+        </button>
+        <button
+          type="button"
+          onClick={collapseAllSections}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
+        >
+          <ChevronsUpDown size={13} /> Collapse All
+        </button>
+      </div>
+      {sections.map(section => (
+        <div key={section.title} className="border border-gray-200 rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setOpenSections((prev) => ({ ...prev, [section.title]: !prev[section.title] }))}
+            className="w-full bg-gray-50 px-4 py-2 border-b border-gray-200 flex items-center justify-between"
+          >
+            <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">{section.title}</span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-semibold tabular-nums text-gray-700">{npr(section.total)}</span>
+              {openSections[section.title] ? <ChevronDown size={14} className="text-gray-500" /> : <ChevronRight size={14} className="text-gray-500" />}
+            </div>
+          </button>
+          {openSections[section.title] && groupByCoa(section.rows).map(group => (
+            <div key={`${section.title}-${group.group}`}>
+              <div className="px-4 py-1.5 bg-white border-b border-gray-100 text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{group.group}</div>
+              {group.rows.map(r => {
+                const level = Math.max(0, Number(r.level ?? 0))
+                return (
+                  <div key={`${section.title}-${r.code}`} className="flex items-center justify-between px-4 py-2 border-b border-gray-100 last:border-b-0">
+                    <div className="text-sm text-gray-700" style={{ paddingLeft: `${level * 14}px` }}>
+                      <span className="font-mono text-xs text-gray-400 mr-2">{r.code}</span>
+                      <span>{r.name}</span>
+                    </div>
+                    <span className="text-sm font-medium tabular-nums text-gray-900">{npr(r.balance)}</span>
+                  </div>
+                )
+              })}
+            </div>
+          ))}
+          <div className="flex items-center justify-between px-4 py-2 bg-gray-100 border-t border-gray-300">
+            <span className="text-sm font-semibold text-gray-700">Total {section.title}</span>
+            <span className="text-sm font-bold tabular-nums text-gray-900">{npr(section.total)}</span>
           </div>
-          <RptGrandTotal
-            label="Total Liabilities + Equity"
-            amount={String(parseFloat(String(data.total_liabilities)) + parseFloat(String(data.total_equity)))}
-          />
         </div>
+      ))}
 
-        <div>
-          <RptSection title="Assets">
-            {data.assets?.map(r => <RptRow key={r.code} code={r.code} name={r.name} amount={r.balance} indent />)}
-            {!data.assets?.length && <p className="px-8 py-2 text-xs text-gray-400 italic">None</p>}
-          </RptSection>
-          <RptGrandTotal
-            label="Total Assets"
-            amount={data.total_assets}
-            note={data.balanced ? '(Balanced ✓)' : undefined}
-          />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="bg-gray-800 text-white rounded-lg px-4 py-3 flex items-center justify-between">
+          <span className="text-sm font-semibold uppercase tracking-wide">Total Assets</span>
+          <span className="font-bold tabular-nums">{npr(data.total_assets)}</span>
+        </div>
+        <div className="bg-gray-800 text-white rounded-lg px-4 py-3 flex items-center justify-between">
+          <span className="text-sm font-semibold uppercase tracking-wide">Total Liabilities + Equity</span>
+          <span className="font-bold tabular-nums">{npr(data.total_equity_and_liabilities)}</span>
         </div>
       </div>
     </div>
@@ -5453,37 +5617,124 @@ function BSReportView({ data }: { data: BSReport }) {
 // ── Trial Balance renderer ────────────────────────────────────────────────
 
 function TBReportView({ data }: { data: TBReport }) {
+  const [openTypes, setOpenTypes] = useState<Record<string, boolean>>({})
+  const groupedByType = new Map<string, TBRow[]>()
+
+  ;(data.accounts ?? []).forEach(row => {
+    const typeKey = row.type ? row.type.replace(/_/g, ' ') : 'Other'
+    if (!groupedByType.has(typeKey)) groupedByType.set(typeKey, [])
+    groupedByType.get(typeKey)!.push(row)
+  })
+
+  const typeRows = Array.from(groupedByType.entries()).map(([type, rows]) => {
+    const groupedByCoa = new Map<string, TBRow[]>()
+    rows.forEach((r) => {
+      const group = r.group_name || 'Ungrouped'
+      if (!groupedByCoa.has(group)) groupedByCoa.set(group, [])
+      groupedByCoa.get(group)!.push(r)
+    })
+
+    return {
+      type,
+      groups: Array.from(groupedByCoa.entries()).map(([group, groupRows]) => ({
+        group,
+        rows: groupRows.sort((a, b) => String(a.code).localeCompare(String(b.code))),
+      })),
+    }
+  })
+  const expandAllTypes = () => {
+    const next: Record<string, boolean> = {}
+    typeRows.forEach((t) => { next[t.type] = true })
+    setOpenTypes(next)
+  }
+  const collapseAllTypes = () => setOpenTypes({})
+
   return (
     <div>
+      <div className="flex items-center justify-end gap-2 px-1 mb-2">
+        <button
+          type="button"
+          onClick={expandAllTypes}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
+        >
+          <ChevronsDownUp size={13} /> Expand All
+        </button>
+        <button
+          type="button"
+          onClick={collapseAllTypes}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
+        >
+          <ChevronsUpDown size={13} /> Collapse All
+        </button>
+      </div>
       <table className="w-full text-sm">
         <thead className="bg-gray-50 border-b border-gray-200">
           <tr>
-            <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-20">Code</th>
-            <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Account Name</th>
-            <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Debit (Dr)</th>
-            <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Credit (Cr)</th>
+            <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Account</th>
+            <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Opening Dr</th>
+            <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Opening Cr</th>
+            <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Period Dr</th>
+            <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Period Cr</th>
+            <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Closing Dr</th>
+            <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Closing Cr</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
-          {data.accounts?.map(row => (
-            <tr key={row.code} className="hover:bg-gray-50">
-              <td className="px-4 py-2 font-mono text-xs text-gray-400">{row.code}</td>
-              <td className="px-4 py-2 text-gray-700">{row.name}</td>
-              <td className="px-4 py-2 text-right tabular-nums text-gray-800">{parseFloat(String(row.debit)) ? npr(row.debit) : <span className="text-gray-300">—</span>}</td>
-              <td className="px-4 py-2 text-right tabular-nums text-gray-800">{parseFloat(String(row.credit)) ? npr(row.credit) : <span className="text-gray-300">—</span>}</td>
-            </tr>
+          {typeRows.map(typeBlock => (
+            <Fragment key={typeBlock.type}>
+              <tr className="bg-gray-50 border-t border-gray-200">
+                <td colSpan={7} className="px-2 py-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setOpenTypes((prev) => ({ ...prev, [typeBlock.type]: !prev[typeBlock.type] }))}
+                    className="w-full flex items-center justify-between px-2 py-1"
+                  >
+                    <span className="text-[11px] font-semibold text-gray-600 uppercase tracking-wide">{typeBlock.type}</span>
+                    {openTypes[typeBlock.type] ? <ChevronDown size={14} className="text-gray-500" /> : <ChevronRight size={14} className="text-gray-500" />}
+                  </button>
+                </td>
+              </tr>
+              {openTypes[typeBlock.type] && typeBlock.groups.map(gr => (
+                <Fragment key={`${typeBlock.type}-${gr.group}`}>
+                  <tr className="bg-white">
+                    <td colSpan={7} className="px-4 py-2 text-[11px] font-semibold text-gray-500 uppercase tracking-wide border-t border-gray-200">{gr.group}</td>
+                  </tr>
+                  {gr.rows.map(row => {
+                    const level = Math.max(0, Number(row.level ?? 0))
+                    return (
+                      <tr key={`${typeBlock.type}-${row.code}`} className="hover:bg-gray-50">
+                        <td className="px-4 py-2 text-gray-700" style={{ paddingLeft: `${16 + level * 14}px` }}>
+                          <span className="font-mono text-xs text-gray-400 mr-2">{row.code}</span>
+                          {row.name}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-800">{Number(row.opening_dr) ? npr(row.opening_dr) : <span className="text-gray-300">—</span>}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-800">{Number(row.opening_cr) ? npr(row.opening_cr) : <span className="text-gray-300">—</span>}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-800">{Number(row.period_dr) ? npr(row.period_dr) : <span className="text-gray-300">—</span>}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-800">{Number(row.period_cr) ? npr(row.period_cr) : <span className="text-gray-300">—</span>}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-800">{Number(row.closing_dr) ? npr(row.closing_dr) : <span className="text-gray-300">—</span>}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-gray-800">{Number(row.closing_cr) ? npr(row.closing_cr) : <span className="text-gray-300">—</span>}</td>
+                      </tr>
+                    )
+                  })}
+                </Fragment>
+              ))}
+            </Fragment>
           ))}
         </tbody>
         <tfoot className="bg-gray-800 text-white">
           <tr>
-            <td colSpan={2} className="px-4 py-2.5 text-sm font-bold uppercase tracking-wide">
+            <td className="px-4 py-2.5 text-sm font-bold uppercase tracking-wide">
               Total
               <span className="ml-2 text-xs text-gray-400 font-normal">
                 {data.balanced ? '(Balanced ✓)' : '(NOT balanced ✗)'}
               </span>
             </td>
-            <td className="px-4 py-2.5 text-right font-bold tabular-nums">{npr(data.total_debit)}</td>
-            <td className="px-4 py-2.5 text-right font-bold tabular-nums">{npr(data.total_credit)}</td>
+            <td className="px-3 py-2.5 text-right font-bold tabular-nums">{npr(data.total_opening_dr)}</td>
+            <td className="px-3 py-2.5 text-right font-bold tabular-nums">{npr(data.total_opening_cr)}</td>
+            <td className="px-3 py-2.5 text-right font-bold tabular-nums">{npr(data.total_period_dr)}</td>
+            <td className="px-3 py-2.5 text-right font-bold tabular-nums">{npr(data.total_period_cr)}</td>
+            <td className="px-3 py-2.5 text-right font-bold tabular-nums">{npr(data.total_closing_dr)}</td>
+            <td className="px-3 py-2.5 text-right font-bold tabular-nums">{npr(data.total_closing_cr)}</td>
           </tr>
         </tfoot>
       </table>
@@ -5759,19 +6010,27 @@ function toCSV(key: ReportType, data: Record<string, unknown>): string {
     case 'balance-sheet': {
       const d = data as unknown as BSReport
       row('Section', 'Code', 'Account', 'Amount')
-      d.liabilities?.forEach(r => row('Liabilities', r.code, r.name, r.balance))
-      row('', '', 'Total Liabilities', d.total_liabilities)
-      d.equity?.forEach(r    => row('Equity',      r.code, r.name, r.balance))
-      row('', '', 'Total Equity', d.total_equity)
-      d.assets?.forEach(r    => row('Assets',      r.code, r.name, r.balance))
+      const bsSections: Array<{ label: string; rows: RptAccount[]; total: string | number }> = [
+        { label: 'Fixed Assets', rows: d.fixed_assets ?? [], total: d.total_fixed_assets },
+        { label: 'Investments', rows: d.investments ?? [], total: d.total_investments },
+        { label: 'Current Assets', rows: d.current_assets ?? [], total: d.total_current_assets },
+        { label: 'Capital', rows: d.capital ?? [], total: d.total_capital },
+        { label: 'Loans', rows: [...(d.bank_od ?? []), ...(d.loans ?? [])], total: d.total_loans },
+        { label: 'Current Liabilities', rows: d.current_liabilities ?? [], total: d.total_current_liabilities },
+      ]
+      bsSections.forEach((section) => {
+        section.rows.forEach((r) => row(section.label, r.code, r.name, r.balance))
+        row('', '', `Total ${section.label}`, section.total)
+      })
       row('', '', 'Total Assets', d.total_assets)
+      row('', '', 'Total Liabilities + Equity', d.total_equity_and_liabilities)
       break
     }
     case 'trial-balance': {
       const d = data as unknown as TBReport
-      row('Code', 'Account', 'Debit (Dr)', 'Credit (Cr)')
-      d.accounts?.forEach(r => row(r.code, r.name, r.debit, r.credit))
-      row('', 'TOTAL', d.total_debit, d.total_credit)
+      row('Code', 'Account', 'Opening Dr', 'Opening Cr', 'Period Dr', 'Period Cr', 'Closing Dr', 'Closing Cr')
+      d.accounts?.forEach(r => row(r.code, r.name, r.opening_dr, r.opening_cr, r.period_dr, r.period_cr, r.closing_dr, r.closing_cr))
+      row('', 'TOTAL', d.total_opening_dr, d.total_opening_cr, d.total_period_dr, d.total_period_cr, d.total_closing_dr, d.total_closing_cr)
       break
     }
     case 'aged-receivables':
@@ -8636,40 +8895,221 @@ function LedgerTab() {
 
 function DayBookTab() {
   const today = new Date().toISOString().slice(0, 10)
-  const [date, setDate]          = useState(today)
+  const tenantName = useTenantStore(s => s.tenantName)
+  const tenantLogo = useTenantStore(s => s.logo)
+  const currentUser = useAuthStore(s => s.user)
+  const [dateFrom, setDateFrom] = useState(today)
+  const [dateTo, setDateTo] = useState(today)
   const [entrySearch, setEntrySearch] = useState('')
   const [submitted, setSubmitted] = useState(false)
   const [expandedEntry, setExpandedEntry] = useState<Set<string>>(new Set())
 
-  const { data: dayBook, isLoading, isFetching } = useQuery<DayBookReport>({
-    queryKey: ['day-book', date],
-    queryFn: () => apiClient.get(`${ACCOUNTING.REPORT_DAY_BOOK}?date=${date}`).then(r => r.data?.data ?? r.data),
+  const { data: dayBook, isLoading, isFetching } = useQuery<DayBookRangeReport>({
+    queryKey: ['day-book', dateFrom, dateTo],
+    queryFn: () => apiClient.get(`${ACCOUNTING.REPORT_DAY_BOOK}?date_from=${dateFrom}&date_to=${dateTo}`).then(r => r.data?.data ?? r.data),
     enabled: submitted,
   })
 
-  const filteredDayEntries = useMemo(() => {
-    const rows = dayBook?.entries ?? []
+  const filteredDays = useMemo(() => {
+    const days = dayBook?.days ?? []
     const q = entrySearch.trim().toLowerCase()
-    if (!q) return rows
-    return rows.filter(entry =>
-      String(entry.entry_number ?? '').toLowerCase().includes(q) ||
-      String(entry.description ?? '').toLowerCase().includes(q) ||
-      String(entry.reference_type ?? '').toLowerCase().includes(q) ||
-      (entry.lines ?? []).some(line =>
-        String(line.account_code ?? '').toLowerCase().includes(q) ||
-        String(line.account_name ?? '').toLowerCase().includes(q) ||
-        String(line.description ?? '').toLowerCase().includes(q),
-      ),
-    )
+    return days
+      .map(day => {
+        const entries = (day.entries ?? []).filter(entry => {
+          if (!q) return true
+          return (
+            String(entry.entry_number ?? '').toLowerCase().includes(q)
+            || String(entry.description ?? '').toLowerCase().includes(q)
+            || String(entry.reference_type ?? '').toLowerCase().includes(q)
+            || (entry.lines ?? []).some(line =>
+              String(line.account_code ?? '').toLowerCase().includes(q)
+              || String(line.account_name ?? '').toLowerCase().includes(q)
+              || String(line.description ?? '').toLowerCase().includes(q),
+            )
+          )
+        })
+        const totalDebit = entries.reduce((sum, e) => sum + Number(e.total_debit || 0), 0)
+        const totalCredit = entries.reduce((sum, e) => sum + Number(e.total_credit || 0), 0)
+        return {
+          ...day,
+          entries,
+          total_debit: String(totalDebit),
+          total_credit: String(totalCredit),
+          entry_count: entries.length,
+        }
+      })
+      .filter(day => day.entries.length > 0 || !q)
   }, [dayBook, entrySearch])
+
+  const flattenedEntries = useMemo(
+    () => filteredDays.flatMap(day => (day.entries ?? []).map(entry => ({
+      day,
+      entry,
+      key: `${day.date}::${entry.entry_number}`,
+    }))),
+    [filteredDays],
+  )
+
+  const filteredEntryCount = flattenedEntries.length
+
+  const exportCsv = useCallback(() => {
+    if (!dayBook) return
+    const lines = ['Date,Entry Number,Reference Type,Entry Description,Account Code,Account Name,Line Description,Debit,Credit']
+    ;(filteredDays ?? []).forEach(day => {
+      (day.entries ?? []).forEach(entry => {
+        (entry.lines ?? []).forEach(line => {
+          const row = [
+            day.date,
+            entry.entry_number,
+            entry.reference_type || '',
+            entry.description || '',
+            line.account_code || '',
+            line.account_name || '',
+            line.description || '',
+            line.debit || '0',
+            line.credit || '0',
+          ]
+            .map(v => `"${String(v).replace(/"/g, '""')}"`)
+            .join(',')
+          lines.push(row)
+        })
+      })
+    })
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `day_book_${dayBook.date_from}_to_${dayBook.date_to}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [dayBook, filteredDays])
+
+  const openPrintableReport = useCallback((mode: 'print' | 'pdf') => {
+    if (!dayBook) return
+    const esc = (v: string) => v
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+
+    const companyDisplay = esc(tenantName || 'Company')
+    const preparedBy = esc(currentUser?.full_name || currentUser?.email || currentUser?.username || 'System User')
+    const now = new Date()
+    const preparedAt = now.toLocaleString('en-GB', {
+      year: 'numeric', month: 'short', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+    })
+
+    const logoHtml = tenantLogo
+      ? `<img src="${esc(tenantLogo)}" alt="${companyDisplay} logo" style="height:40px;max-width:180px;object-fit:contain;display:block;margin-bottom:4px;" />`
+      : ''
+
+    const html = `<!doctype html><html><head><meta charset="utf-8" /><title>Day Book ${dayBook.date_from} to ${dayBook.date_to}</title><style>
+      body{font-family:Arial,sans-serif;padding:16px;color:#111827;font-size:12px}
+      .top{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid #d1d5db;padding-bottom:10px;margin-bottom:10px}
+      .title{font-size:16px;font-weight:700;margin:0 0 3px}
+      .meta{font-size:11px;color:#4b5563;line-height:1.5}
+      .period{border:1px solid #e5e7eb;background:#f9fafb;padding:6px 10px;border-radius:3px;margin-bottom:10px;font-size:11px;color:#374151}
+      table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:10px}
+      th,td{border:1px solid #e5e7eb;padding:5px 6px;vertical-align:top}
+      th{background:#f3f4f6;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:0.4px;color:#4b5563}
+      .right{text-align:right}
+      .day{margin-top:12px;font-weight:700;color:#374151}
+      .sign{display:flex;gap:12px;margin-top:14px}
+      .sign-box{flex:1;border:1px solid #e5e7eb;border-radius:3px;padding:8px 10px}
+      .sign-title{font-size:10px;text-transform:uppercase;letter-spacing:0.6px;color:#6b7280;font-weight:700;margin-bottom:16px}
+      .sign-line{border-top:1px solid #9ca3af;padding-top:4px;display:flex;justify-content:space-between;color:#4b5563;font-size:10px}
+      @media print { body{padding:8px} }
+    </style></head><body>
+      <div class="top">
+        <div>
+          ${logoHtml}
+          <div class="title">${companyDisplay}</div>
+          <div class="meta">Day Book Statement</div>
+        </div>
+        <div class="meta" style="text-align:right;">Entries: ${filteredEntryCount}<br/>Generated: ${esc(preparedAt)}</div>
+      </div>
+      <div class="period"><strong>Time Period:</strong> ${esc(dayBook.date_from)} to ${esc(dayBook.date_to)}</div>
+      ${(filteredDays ?? []).map(day => `
+        <div class="day">Date: ${esc(day.date)}</div>
+        <table>
+          <thead><tr><th>Entry</th><th>Description</th><th>Account</th><th>Line Description</th><th class="right">Debit</th><th class="right">Credit</th></tr></thead>
+          <tbody>
+            ${(day.entries ?? []).flatMap(entry =>
+              (entry.lines ?? []).map(line => `
+                <tr>
+                  <td>${esc(entry.entry_number)}</td>
+                  <td>${esc(entry.description || '-')}</td>
+                  <td>${esc(`${line.account_code} ${line.account_name}`.trim())}</td>
+                  <td>${esc(line.description || '-')}</td>
+                  <td class="right">${Number(line.debit || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td class="right">${Number(line.credit || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                </tr>
+              `),
+            ).join('')}
+          </tbody>
+        </table>
+      `).join('')}
+      <div class="sign">
+        <div class="sign-box">
+          <div class="sign-title">Prepared By</div>
+          <div class="sign-line"><span>${preparedBy}</span><span>${esc(preparedAt)}</span></div>
+        </div>
+        <div class="sign-box">
+          <div class="sign-title">Approved By</div>
+          <div class="sign-line"><span>Name: ____________________</span><span>Date: ____________________</span></div>
+        </div>
+      </div>
+    </body></html>`
+
+    const iframe = document.createElement('iframe')
+    iframe.style.position = 'fixed'
+    iframe.style.right = '0'
+    iframe.style.bottom = '0'
+    iframe.style.width = '0'
+    iframe.style.height = '0'
+    iframe.style.border = '0'
+    document.body.appendChild(iframe)
+
+    const cleanup = () => {
+      setTimeout(() => {
+        if (iframe.parentNode) iframe.parentNode.removeChild(iframe)
+      }, 800)
+    }
+
+    iframe.onload = () => {
+      try {
+        const win = iframe.contentWindow
+        if (!win) {
+          cleanup()
+          toast.error('Unable to open print preview')
+          return
+        }
+        if (mode === 'pdf') {
+          toast('In the print dialog, choose Save as PDF')
+        }
+        win.focus()
+        win.print()
+      } finally {
+        cleanup()
+      }
+    }
+
+    iframe.srcdoc = html
+  }, [dayBook, filteredDays, filteredEntryCount, tenantLogo, tenantName, currentUser])
 
   return (
     <div className="space-y-5">
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-4">
         <div className="flex flex-wrap items-end gap-4">
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Date</label>
-            <NepaliDatePicker value={date} onChange={v => { setDate(v); setSubmitted(false) }} />
+            <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
+            <NepaliDatePicker value={dateFrom} onChange={v => { setDateFrom(v); setSubmitted(false) }} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
+            <NepaliDatePicker value={dateTo} onChange={v => { setDateTo(v); setSubmitted(false) }} />
           </div>
           <button onClick={() => setSubmitted(true)}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
@@ -8685,16 +9125,32 @@ function DayBookTab() {
               className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-300"
             />
           </div>
-          {dayBook && !isLoading && (dayBook.entries ?? []).length > 0 && (
-            expandedEntry.size === filteredDayEntries.length && filteredDayEntries.length > 0
+          {dayBook && !isLoading && filteredEntryCount > 0 && (
+            expandedEntry.size === filteredEntryCount && filteredEntryCount > 0
               ? <button onClick={() => setExpandedEntry(new Set())}
                   className="flex items-center gap-2 px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
                   <ChevronsDownUp size={14} /> Collapse All
                 </button>
-              : <button onClick={() => setExpandedEntry(new Set(filteredDayEntries.map(e => e.entry_number)))}
+              : <button onClick={() => setExpandedEntry(new Set(flattenedEntries.map(e => e.key)))}
                   className="flex items-center gap-2 px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
                   <ChevronsUpDown size={14} /> Expand All
                 </button>
+          )}
+          {dayBook && !isLoading && (
+            <>
+              <button onClick={exportCsv}
+                className="flex items-center gap-2 px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                <FileSpreadsheet size={14} /> CSV
+              </button>
+              <button onClick={() => openPrintableReport('pdf')}
+                className="flex items-center gap-2 px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                <Download size={14} /> PDF
+              </button>
+              <button onClick={() => openPrintableReport('print')}
+                className="flex items-center gap-2 px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                <Printer size={14} /> Print
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -8703,10 +9159,10 @@ function DayBookTab() {
 
       {dayBook && !isLoading && (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-              <p className="text-xs text-gray-500 font-medium">Date</p>
-              <p className="text-base font-bold text-gray-800 mt-0.5">{fmt(dayBook.date)}</p>
+              <p className="text-xs text-gray-500 font-medium">Period</p>
+              <p className="text-sm font-bold text-gray-800 mt-0.5">{fmt(dayBook.date_from)} to {fmt(dayBook.date_to)}</p>
             </div>
             <div className="bg-emerald-50 rounded-xl border border-emerald-100 p-4">
               <p className="text-xs text-emerald-700 font-medium">Total Debit</p>
@@ -8716,60 +9172,72 @@ function DayBookTab() {
               <p className="text-xs text-red-700 font-medium">Total Credit</p>
               <p className="text-base font-bold text-red-800 mt-0.5">{npr(dayBook.total_credit)}</p>
             </div>
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+              <p className="text-xs text-gray-500 font-medium">Entries</p>
+              <p className="text-base font-bold text-gray-800 mt-0.5">{filteredEntryCount}</p>
+            </div>
           </div>
 
-          {filteredDayEntries.length === 0 ? (
+          {filteredEntryCount === 0 ? (
             <div className="text-center py-16 bg-gray-50 rounded-xl border border-dashed border-gray-200">
               <CalendarDays size={36} className="mx-auto text-gray-300 mb-3" />
-              <p className="text-sm text-gray-500 font-medium">{(dayBook.entries ?? []).length === 0 ? `No journal entries on ${fmt(dayBook.date)}` : 'No journal entries match your search'}</p>
+              <p className="text-sm text-gray-500 font-medium">{(dayBook.entry_count ?? 0) === 0 ? `No journal entries from ${fmt(dayBook.date_from)} to ${fmt(dayBook.date_to)}` : 'No journal entries match your search'}</p>
             </div>
           ) : (
             <div className="space-y-2">
-              {filteredDayEntries.map(entry => (
-                <div key={entry.entry_number} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                  <button className="w-full px-5 py-4 text-left flex items-center gap-4 hover:bg-gray-50 transition-colors"
-                    onClick={() => setExpandedEntry(s => { const n = new Set(s); n.has(entry.entry_number) ? n.delete(entry.entry_number) : n.add(entry.entry_number); return n })}>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono text-xs text-gray-500">{entry.entry_number}</span>
-                        {entry.reference_type && (
-                          <span className="bg-indigo-50 text-indigo-600 text-[11px] px-1.5 py-0.5 rounded font-medium">{entry.reference_type}</span>
+              {filteredDays.map(day => (
+                <div key={day.date} className="space-y-2">
+                  <div className="px-1 pt-2 text-xs font-semibold text-gray-600 uppercase tracking-wide">{fmt(day.date)}</div>
+                  {(day.entries ?? []).map(entry => {
+                    const entryKey = `${day.date}::${entry.entry_number}`
+                    return (
+                      <div key={entryKey} className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                        <button className="w-full px-5 py-4 text-left flex items-center gap-4 hover:bg-gray-50 transition-colors"
+                          onClick={() => setExpandedEntry(s => { const n = new Set(s); n.has(entryKey) ? n.delete(entryKey) : n.add(entryKey); return n })}>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono text-xs text-gray-500">{entry.entry_number}</span>
+                              {entry.reference_type && (
+                                <span className="bg-indigo-50 text-indigo-600 text-[11px] px-1.5 py-0.5 rounded font-medium">{entry.reference_type}</span>
+                              )}
+                              <span className="text-sm font-medium text-gray-800 truncate">{entry.description || 'No description'}</span>
+                            </div>
+                          </div>
+                          <div className="shrink-0 text-right hidden sm:block">
+                            <span className="text-xs text-gray-500">Dr: </span>
+                            <span className="text-xs font-semibold text-emerald-700">{npr(entry.total_debit)}</span>
+                            <span className="text-xs text-gray-400 mx-1">·</span>
+                            <span className="text-xs text-gray-500">Cr: </span>
+                            <span className="text-xs font-semibold text-red-600">{npr(entry.total_credit)}</span>
+                          </div>
+                          <ChevronDown size={15} className={`shrink-0 text-gray-400 transition-transform ${expandedEntry.has(entryKey) ? '' : '-rotate-90'}`} />
+                        </button>
+                        {expandedEntry.has(entryKey) && (
+                          <div className="border-t border-gray-100">
+                            <table className="w-full text-xs">
+                              <thead className="bg-gray-50">
+                                <tr>
+                                  {['Account', 'Description', 'Debit', 'Credit'].map(h => (
+                                    <th key={h} className="px-4 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-50">
+                                {entry.lines.map((l, i) => (
+                                  <tr key={i} className="hover:bg-gray-50">
+                                    <td className="px-4 py-2 font-mono">{l.account_code} <span className="text-gray-500 font-sans">{l.account_name}</span></td>
+                                    <td className="px-4 py-2 text-gray-500">{l.description || '—'}</td>
+                                    <td className="px-4 py-2 text-emerald-700 font-medium text-right">{Number(l.debit)  > 0 ? npr(l.debit)  : '—'}</td>
+                                    <td className="px-4 py-2 text-red-600    font-medium text-right">{Number(l.credit) > 0 ? npr(l.credit) : '—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                         )}
-                        <span className="text-sm font-medium text-gray-800 truncate">{entry.description || 'No description'}</span>
                       </div>
-                    </div>
-                    <div className="shrink-0 text-right hidden sm:block">
-                      <span className="text-xs text-gray-500">Dr: </span>
-                      <span className="text-xs font-semibold text-emerald-700">{npr(entry.total_debit)}</span>
-                      <span className="text-xs text-gray-400 mx-1">·</span>
-                      <span className="text-xs text-gray-500">Cr: </span>
-                      <span className="text-xs font-semibold text-red-600">{npr(entry.total_credit)}</span>
-                    </div>
-                    <ChevronDown size={15} className={`shrink-0 text-gray-400 transition-transform ${expandedEntry.has(entry.entry_number) ? '' : '-rotate-90'}`} />
-                  </button>
-                  {expandedEntry.has(entry.entry_number) && (
-                    <div className="border-t border-gray-100">
-                      <table className="w-full text-xs">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            {['Account', 'Description', 'Debit', 'Credit'].map(h => (
-                              <th key={h} className="px-4 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-50">
-                          {entry.lines.map((l, i) => (
-                            <tr key={i} className="hover:bg-gray-50">
-                              <td className="px-4 py-2 font-mono">{l.account_code} <span className="text-gray-500 font-sans">{l.account_name}</span></td>
-                              <td className="px-4 py-2 text-gray-500">{l.description || '—'}</td>
-                              <td className="px-4 py-2 text-emerald-700 font-medium text-right">{Number(l.debit)  > 0 ? npr(l.debit)  : '—'}</td>
-                              <td className="px-4 py-2 text-red-600    font-medium text-right">{Number(l.credit) > 0 ? npr(l.credit) : '—'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                    )
+                  })}
                 </div>
               ))}
             </div>
@@ -9604,12 +10072,103 @@ function PurchaseOrderCreateModal({ onClose }: { onClose: () => void }) {
   )
 }
 
+function PurchaseOrderDetailModal({ po, onClose }: { po: PurchaseOrder; onClose: () => void }) {
+  const receivedValue = (po.items ?? []).reduce((sum, i) => sum + (Number(i.quantity_received) * Number(i.unit_cost || 0)), 0)
+  const pendingValue = Math.max(0, Number(po.total_amount || 0) - receivedValue)
+
+  return (
+    <Modal title={`Purchase Order ${po.po_number}`} onClose={onClose}>
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Supplier</p>
+            <p className="text-sm font-semibold text-gray-800">{po.supplier_name}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Status</p>
+            <p className="text-sm font-semibold text-gray-800 capitalize">{po.status}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Expected Delivery</p>
+            <p className="text-sm font-semibold text-gray-800">{po.expected_delivery ? fmt(po.expected_delivery) : '—'}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Created</p>
+            <p className="text-sm font-semibold text-gray-800">{fmt(po.created_at)}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+            <p className="text-xs text-blue-600">Total PO Value</p>
+            <p className="text-sm font-bold text-blue-800 tabular-nums">{npr(po.total_amount)}</p>
+          </div>
+          <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3">
+            <p className="text-xs text-emerald-600">Received Value</p>
+            <p className="text-sm font-bold text-emerald-800 tabular-nums">{npr(receivedValue)}</p>
+          </div>
+          <div className="bg-orange-50 border border-orange-100 rounded-lg p-3">
+            <p className="text-xs text-orange-600">Pending Value</p>
+            <p className="text-sm font-bold text-orange-800 tabular-nums">{npr(pendingValue)}</p>
+          </div>
+        </div>
+
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
+            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Line Items</p>
+          </div>
+          <div className="max-h-[320px] overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>
+                  {['Product', 'Ordered', 'Received', 'Pending', 'Unit Cost', 'Line Total'].map(h => (
+                    <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {(po.items ?? []).map((item) => (
+                  <tr key={item.id} className="hover:bg-gray-50">
+                    <td className="px-3 py-2 text-gray-700">{item.product_name}</td>
+                    <td className="px-3 py-2 text-gray-600 tabular-nums">{item.quantity_ordered}</td>
+                    <td className="px-3 py-2 text-gray-600 tabular-nums">{item.quantity_received}</td>
+                    <td className="px-3 py-2 text-orange-700 tabular-nums">{item.pending_quantity}</td>
+                    <td className="px-3 py-2 text-gray-700 tabular-nums">{npr(item.unit_cost)}</td>
+                    <td className="px-3 py-2 text-gray-800 font-semibold tabular-nums">{npr(item.line_total)}</td>
+                  </tr>
+                ))}
+                {(po.items ?? []).length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-6 text-center text-sm text-gray-400">No line items found.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {po.notes && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Notes</p>
+            <p className="text-sm text-gray-700 whitespace-pre-wrap">{po.notes}</p>
+          </div>
+        )}
+
+        <div className="flex justify-end pt-2 border-t border-gray-100">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">Close</button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 function PurchaseOrdersTab() {
   const qc = useQueryClient()
   const { can } = usePermissions()
   const [statusFilter, setStatusFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [receiveFor, setReceiveFor] = useState<PurchaseOrder | null>(null)
+  const [detailPO, setDetailPO] = useState<PurchaseOrder | null>(null)
 
   const { data, isLoading } = useQuery<ApiPage<PurchaseOrder>>({
     queryKey: ['purchase-orders', statusFilter],
@@ -9632,6 +10191,7 @@ function PurchaseOrdersTab() {
     <div className="space-y-4">
       {showCreate && <PurchaseOrderCreateModal onClose={() => setShowCreate(false)} />}
       {receiveFor && <PurchaseOrderReceiveModal po={receiveFor} onClose={() => setReceiveFor(null)} />}
+      {detailPO && <PurchaseOrderDetailModal po={detailPO} onClose={() => setDetailPO(null)} />}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
           {['', 'draft', 'sent', 'partial', 'received', 'cancelled'].map(s => (
@@ -9667,7 +10227,12 @@ function PurchaseOrdersTab() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {orders.map(po => (
-                  <tr key={po.id} className="hover:bg-gray-50 transition-colors">
+                  <tr
+                    key={po.id}
+                    onClick={() => setDetailPO(po)}
+                    className="hover:bg-gray-50 transition-colors cursor-pointer"
+                    title="Click to view purchase order details"
+                  >
                     <td className="px-4 py-3 font-mono font-semibold text-gray-700 whitespace-nowrap">{po.po_number}</td>
                     <td className="px-4 py-3 text-gray-600">{po.supplier_name}</td>
                     <td className="px-4 py-3 text-gray-500 text-center">{po.items?.length ?? 0}</td>
@@ -9680,14 +10245,35 @@ function PurchaseOrdersTab() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 flex-wrap">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setDetailPO(po) }}
+                          className="px-2 py-1 text-xs bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors"
+                        >
+                          View
+                        </button>
                         {po.status === 'draft' && can('can_manage_accounting') && (
-                          <button onClick={() => mutateSend.mutate(po.id)} className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors">Send</button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); mutateSend.mutate(po.id) }}
+                            className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors"
+                          >
+                            Send
+                          </button>
                         )}
                         {(po.status === 'sent' || po.status === 'partial') && can('can_manage_accounting') && (
-                          <button onClick={() => setReceiveFor(po)} className="px-2 py-1 text-xs bg-emerald-50 text-emerald-700 rounded-md hover:bg-emerald-100 transition-colors">Receive</button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setReceiveFor(po) }}
+                            className="px-2 py-1 text-xs bg-emerald-50 text-emerald-700 rounded-md hover:bg-emerald-100 transition-colors"
+                          >
+                            Receive
+                          </button>
                         )}
                         {(po.status === 'draft' || po.status === 'sent') && can('can_manage_accounting') && (
-                          <button onClick={() => mutateCancel.mutate(po.id)} className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors">Cancel</button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); mutateCancel.mutate(po.id) }}
+                            className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors"
+                          >
+                            Cancel
+                          </button>
                         )}
                       </div>
                     </td>
@@ -9846,6 +10432,8 @@ function QuickReceiptTab() {
   const [amount, setAmount]       = useState('')
   const [bankAccId, setBankAccId] = useState('')
   const [invoiceId, setInvoiceId] = useState('')
+  const [tdsRatePct, setTdsRatePct] = useState('0')
+  const [tdsReference, setTdsReference] = useState('')
   const [reference, setReference] = useState('')
   const [notes, setNotes]         = useState('')
 
@@ -9863,16 +10451,25 @@ function QuickReceiptTab() {
     queryFn: () => apiClient.get(`${ACCOUNTING.PAYMENTS}?type=incoming&page_size=10`).then(r => toPage<Payment>(r.data)),
   })
 
+  const selectedInvoice = (openInvoices?.results ?? []).find(inv => String(inv.id) === invoiceId)
+  const tdsRate = Number(tdsRatePct || '0') / 100
+  const grossInvoiceAmount = Number(selectedInvoice?.total || 0)
+  const tdsWithheld = tdsRate > 0 && grossInvoiceAmount > 0 ? grossInvoiceAmount * tdsRate : 0
+  const netReceipt = grossInvoiceAmount - tdsWithheld
+
   const mutate = useMutation({
     mutationFn: () => apiClient.post(ACCOUNTING.PAYMENTS, {
-      type: 'incoming', date, method, amount,
+      type: 'incoming', date, method,
+      amount: tdsRate > 0 && selectedInvoice ? netReceipt.toFixed(2) : amount,
       bank_account: bankAccId ? Number(bankAccId) : null,
       invoice: invoiceId ? Number(invoiceId) : null,
+      tds_rate: tdsRate > 0 ? tdsRate.toFixed(4) : '0',
+      tds_reference: tdsReference,
       reference, notes,
     }),
     onSuccess: () => {
       toast.success('Receipt recorded')
-      setAmount(''); setReference(''); setNotes(''); setInvoiceId('')
+      setAmount(''); setReference(''); setNotes(''); setInvoiceId(''); setTdsRatePct('0'); setTdsReference('')
       qc.invalidateQueries({ queryKey: ['payments'] })
       qc.invalidateQueries({ queryKey: ['invoices'] })
     },
@@ -9926,6 +10523,29 @@ function QuickReceiptTab() {
             {(openInvoices?.results ?? []).filter(inv => Number(inv.amount_due) > 0).map(inv => <option key={inv.id} value={inv.id}>{inv.invoice_number} — {inv.customer_name} ({npr(inv.amount_due)} due)</option>)}
           </select>
         </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Customer TDS %</label>
+            <select value={tdsRatePct} onChange={e => setTdsRatePct(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
+              <option value="0">None (0%)</option>
+              <option value="1.5">1.5%</option>
+              <option value="10">10%</option>
+              <option value="15">15%</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">TDS Reference</label>
+            <input data-lpignore="true" value={tdsReference} onChange={e => setTdsReference(e.target.value)} placeholder="Form/Certificate #"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+          </div>
+        </div>
+        {tdsRate > 0 && selectedInvoice && (
+          <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 space-y-1 text-sm">
+            <div className="flex items-center justify-between"><span className="text-gray-600">Gross Invoice</span><span className="font-medium tabular-nums">{npr(grossInvoiceAmount)}</span></div>
+            <div className="flex items-center justify-between"><span className="text-gray-600">TDS Withheld ({tdsRatePct}%)</span><span className="font-medium tabular-nums text-red-700">{npr(tdsWithheld)}</span></div>
+            <div className="flex items-center justify-between border-t border-blue-200 pt-1"><span className="text-gray-700 font-semibold">Net Receipt (auto)</span><span className="font-bold tabular-nums text-green-700">{npr(netReceipt)}</span></div>
+          </div>
+        )}
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Reference</label>
           <input data-lpignore="true" value={reference} onChange={e => setReference(e.target.value)} placeholder="Cheque #, txn ref…"
@@ -9936,7 +10556,7 @@ function QuickReceiptTab() {
           <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Optional notes"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400 resize-none" />
         </div>
-        <button onClick={() => mutate.mutate()} disabled={mutate.isPending || !amount || !date}
+        <button onClick={() => mutate.mutate()} disabled={mutate.isPending || !(tdsRate > 0 && selectedInvoice ? netReceipt > 0 : Number(amount) > 0) || !date}
           className="w-full py-2.5 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
           {mutate.isPending ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Record Receipt
         </button>
@@ -10810,8 +11430,8 @@ function ChequeRegisterTab() {
                   <tr key={p.id} className="hover:bg-gray-50/60">
                     <td className="px-4 py-3 font-mono text-xs text-indigo-600">{p.reference || p.payment_number}</td>
                     <td className="px-4 py-3 text-gray-600"><DateDisplay adDate={p.date} /></td>
-                    <td className="px-4 py-3 text-xs font-medium text-gray-700 max-w-[140px] truncate" title={p.party_name || p.notes || '—'}>
-                      {p.party_name || <span className="text-gray-400">—</span>}
+                    <td className="px-4 py-3 text-xs font-medium text-gray-700 max-w-[140px] truncate" title={paymentPartyName(p) !== '—' ? paymentPartyName(p) : (p.notes || '—')}>
+                      {paymentPartyName(p) !== '—' ? paymentPartyName(p) : <span className="text-gray-400">—</span>}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${p.type === 'incoming' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
@@ -10849,7 +11469,7 @@ function ChequeRegisterTab() {
           <div className="space-y-4">
             <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-600 space-y-1">
               <p><span className="font-medium">Cheque No:</span> {updateTarget.reference || updateTarget.payment_number}</p>
-              <p><span className="font-medium">Party:</span> {updateTarget.party_name || '—'}</p>
+              <p><span className="font-medium">Party:</span> {paymentPartyName(updateTarget)}</p>
               <p><span className="font-medium">Amount:</span> {npr(updateTarget.amount)}</p>
             </div>
             <div>
@@ -10882,6 +11502,7 @@ function ChequeRegisterTab() {
 
 function CustomerPaymentsTab() {
   const { fyYear } = useFY()
+  const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null)
   const { data, isLoading } = useQuery<ApiPage<Payment>>({
     queryKey: ['payments', 'incoming', fyYear],
     queryFn: () => apiClient.get(addFyParam(`${ACCOUNTING.PAYMENTS}?type=incoming&page_size=200`, fyYear)).then(r => toPage<Payment>(r.data)),
@@ -10891,6 +11512,85 @@ function CustomerPaymentsTab() {
 
   return (
     <div className="space-y-4">
+      {selectedPayment && (
+        <Modal title={`Receipt ${selectedPayment.payment_number}`} onClose={() => setSelectedPayment(null)}>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Party</p>
+                <p className="text-sm font-semibold text-gray-800">{paymentPartyName(selectedPayment)}</p>
+              </div>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Amount</p>
+                <p className="text-sm font-bold text-emerald-700 tabular-nums">{npr(selectedPayment.amount)}</p>
+              </div>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Date</p>
+                <p className="text-sm font-semibold text-gray-800">{fmt(selectedPayment.date)}</p>
+              </div>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Method</p>
+                <p className="text-sm font-semibold text-gray-800 capitalize">{(selectedPayment.method ?? '').replace('_', ' ') || '—'}</p>
+              </div>
+            </div>
+
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Payment Details</p>
+              </div>
+              <div className="divide-y divide-gray-100">
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Receipt Number</span>
+                  <span className="font-mono text-indigo-600">{selectedPayment.payment_number}</span>
+                </div>
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Invoice</span>
+                  <span className="text-gray-800">{selectedPayment.invoice_number || '—'}</span>
+                </div>
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Bank Account</span>
+                  <span className="text-gray-800">{selectedPayment.bank_account_name || '—'}</span>
+                </div>
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Reference</span>
+                  <span className="text-gray-800">{selectedPayment.reference || '—'}</span>
+                </div>
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Created By</span>
+                  <span className="text-gray-800">{selectedPayment.created_by_name || '—'}</span>
+                </div>
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Created At</span>
+                  <span className="text-gray-800">{selectedPayment.created_at ? fmt(selectedPayment.created_at) : '—'}</span>
+                </div>
+                {selectedPayment.cheque_status && (
+                  <div className="px-4 py-2 flex items-center justify-between text-sm">
+                    <span className="text-gray-500">Cheque Status</span>
+                    <span className="text-gray-800 capitalize">{selectedPayment.cheque_status.replace('_', ' ')}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {selectedPayment.notes && (
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Notes</p>
+                <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedPayment.notes}</p>
+              </div>
+            )}
+            {Number(selectedPayment.tds_rate || 0) > 0 && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-1 text-sm">
+                <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1">Customer TDS</p>
+                <div className="flex items-center justify-between"><span className="text-gray-600">TDS Rate</span><span className="font-medium">{(Number(selectedPayment.tds_rate) * 100).toFixed(2)}%</span></div>
+                <div className="flex items-center justify-between"><span className="text-gray-600">TDS Withheld</span><span className="font-medium tabular-nums">{npr(selectedPayment.tds_withheld_amount || 0)}</span></div>
+                <div className="flex items-center justify-between"><span className="text-gray-600">Net Receipt</span><span className="font-medium tabular-nums">{npr(selectedPayment.net_receipt_amount || selectedPayment.amount)}</span></div>
+                <div className="flex items-center justify-between"><span className="text-gray-600">Reference</span><span className="font-medium">{selectedPayment.tds_reference || '—'}</span></div>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
       <div className="grid grid-cols-3 gap-4">
         {[
           { label: 'Total Receipts',  value: payments.length,   icon: Users,       bg: 'bg-blue-50',  color: 'text-blue-600'  },
@@ -10920,7 +11620,12 @@ function CustomerPaymentsTab() {
               {payments.length === 0 ? (
                 <tr><td colSpan={7} className="py-12 text-center text-sm text-gray-400">No customer payments found for this period.</td></tr>
               ) : payments.map(p => (
-                <tr key={p.id} className="hover:bg-gray-50/60">
+                <tr
+                  key={p.id}
+                  onClick={() => setSelectedPayment(p)}
+                  className="hover:bg-gray-50/60 cursor-pointer"
+                  title="Click to view receipt details"
+                >
                   <td className="px-4 py-3 font-mono text-xs text-indigo-600">{p.payment_number}</td>
                   <td className="px-4 py-3 text-gray-600"><DateDisplay adDate={p.date} /></td>
                   <td className="px-4 py-3 text-xs text-gray-500">{p.invoice_number || '—'}</td>
@@ -10942,6 +11647,7 @@ function CustomerPaymentsTab() {
 
 function SupplierPaymentsTab() {
   const { fyYear } = useFY()
+  const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null)
   const { data, isLoading } = useQuery<ApiPage<Payment>>({
     queryKey: ['payments', 'outgoing', fyYear],
     queryFn: () => apiClient.get(addFyParam(`${ACCOUNTING.PAYMENTS}?type=outgoing&page_size=200`, fyYear)).then(r => toPage<Payment>(r.data)),
@@ -10951,6 +11657,76 @@ function SupplierPaymentsTab() {
 
   return (
     <div className="space-y-4">
+      {selectedPayment && (
+        <Modal title={`Payment ${selectedPayment.payment_number}`} onClose={() => setSelectedPayment(null)}>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Party</p>
+                <p className="text-sm font-semibold text-gray-800">{paymentPartyName(selectedPayment)}</p>
+              </div>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Amount</p>
+                <p className="text-sm font-bold text-red-700 tabular-nums">{npr(selectedPayment.amount)}</p>
+              </div>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Date</p>
+                <p className="text-sm font-semibold text-gray-800">{fmt(selectedPayment.date)}</p>
+              </div>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Method</p>
+                <p className="text-sm font-semibold text-gray-800 capitalize">{(selectedPayment.method ?? '').replace('_', ' ') || '—'}</p>
+              </div>
+            </div>
+
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Payment Details</p>
+              </div>
+              <div className="divide-y divide-gray-100">
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Payment Number</span>
+                  <span className="font-mono text-indigo-600">{selectedPayment.payment_number}</span>
+                </div>
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Bill</span>
+                  <span className="text-gray-800">{selectedPayment.bill_number || '—'}</span>
+                </div>
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Bank Account</span>
+                  <span className="text-gray-800">{selectedPayment.bank_account_name || '—'}</span>
+                </div>
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Reference</span>
+                  <span className="text-gray-800">{selectedPayment.reference || '—'}</span>
+                </div>
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Created By</span>
+                  <span className="text-gray-800">{selectedPayment.created_by_name || '—'}</span>
+                </div>
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Created At</span>
+                  <span className="text-gray-800">{selectedPayment.created_at ? fmt(selectedPayment.created_at) : '—'}</span>
+                </div>
+                {selectedPayment.cheque_status && (
+                  <div className="px-4 py-2 flex items-center justify-between text-sm">
+                    <span className="text-gray-500">Cheque Status</span>
+                    <span className="text-gray-800 capitalize">{selectedPayment.cheque_status.replace('_', ' ')}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {selectedPayment.notes && (
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Notes</p>
+                <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedPayment.notes}</p>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
       <div className="grid grid-cols-3 gap-4">
         {[
           { label: 'Payments Made',  value: payments.length,    icon: Truck,       bg: 'bg-orange-50', color: 'text-orange-600' },
@@ -10983,7 +11759,12 @@ function SupplierPaymentsTab() {
               {payments.length === 0 ? (
                 <tr><td colSpan={7} className="py-12 text-center text-sm text-gray-400">No supplier payments found for this period.</td></tr>
               ) : payments.map(p => (
-                <tr key={p.id} className="hover:bg-gray-50/60">
+                <tr
+                  key={p.id}
+                  onClick={() => setSelectedPayment(p)}
+                  className="hover:bg-gray-50/60 cursor-pointer"
+                  title="Click to view payment details"
+                >
                   <td className="px-4 py-3 font-mono text-xs text-indigo-600">{p.payment_number}</td>
                   <td className="px-4 py-3 text-gray-600"><DateDisplay adDate={p.date} /></td>
                   <td className="px-4 py-3 text-xs text-gray-500">{p.bill_number || '—'}</td>

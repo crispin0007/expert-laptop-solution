@@ -111,7 +111,7 @@ class Command(BaseCommand):
             ('4300', 'Interest Income',               'revenue'),
             ('5100', 'Cost of Goods Sold',            'expense'),
             ('5200', 'Direct Labour',                 'expense'),
-            ('5400', 'Salary Expense',                'expense'),
+            ('5400', 'General Administrative Expense','expense'),
             ('5410', 'Rent Expense',                  'expense'),
             ('5420', 'Depreciation Expense',          'expense'),
             ('5430', 'Internet & Utilities',          'expense'),
@@ -247,7 +247,7 @@ class Command(BaseCommand):
 
         # ── Month 7 ago: Payroll ───────────────────────────────────────────
         je(mo(7, 28), '[DEMO] Payroll — Month 1', [
-            ('5400', '120000', '0',      'Gross salaries — 4 staff'),
+            ('5200', '120000', '0',      'Gross salaries — 4 staff'),
             ('2300', '0',      '6000',   'TDS withheld 5%'),
             ('1100', '0',      '114000', 'Net salaries paid'),
         ])
@@ -289,7 +289,7 @@ class Command(BaseCommand):
 
         # ── Month 5 ago: Payroll ──────────────────────────────────────────
         je(mo(5, 28), '[DEMO] Payroll — Month 3', [
-            ('5400', '125000', '0',      'Gross salaries'),
+            ('5200', '125000', '0',      'Gross salaries'),
             ('2300', '0',      '6250',   'TDS 5%'),
             ('1100', '0',      '118750', 'Net paid'),
         ])
@@ -334,7 +334,7 @@ class Command(BaseCommand):
             ('1100', '0',     '25000', 'Cash paid'),
         ])
         je(mo(2, 28), '[DEMO] Payroll — Month 6', [
-            ('5400', '130000', '0',      'Gross salaries'),
+            ('5200', '130000', '0',      'Gross salaries'),
             ('2300', '0',      '6500',   'TDS 5%'),
             ('1100', '0',      '123500', 'Net paid'),
         ])
@@ -353,7 +353,7 @@ class Command(BaseCommand):
             ('1100', '0',     '15000', 'Cash paid'),
         ])
         je(mo(1, 28), '[DEMO] Payroll — Month 7', [
-            ('5400', '130000', '0',      'Gross salaries'),
+            ('5200', '130000', '0',      'Gross salaries'),
             ('2300', '0',      '6500',   'TDS 5%'),
             ('1100', '0',      '123500', 'Net paid'),
         ])
