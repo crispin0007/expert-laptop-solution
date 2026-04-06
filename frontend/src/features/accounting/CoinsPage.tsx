@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from '../../api/client'
-import { ACCOUNTING, STAFF } from '../../api/endpoints'
+import { STAFF } from '../../api/endpoints'
 import Modal from '../../components/Modal'
 import toast from 'react-hot-toast'
 import { useFyStore } from '../../store/fyStore'
+import { approveCoin, awardCoins, fetchCoinDetail, fetchCoinsList, fetchCoinsSummary, fetchStaffCoinHistory, rejectCoin } from './services'
 import {
   CheckCircle2, XCircle, Loader2, Coins, History, Plus,
   X, Ticket, Package, Wrench, User, ArrowUpRight,
@@ -88,7 +89,7 @@ export function CoinDetailDrawer({ coinId, onClose, onApprove, onReject, canMana
 
   const { data: raw, isLoading } = useQuery({
     queryKey: ['coin-detail', coinId],
-    queryFn: () => apiClient.get(ACCOUNTING.COIN_DETAIL(coinId)).then(r => r.data?.data ?? r.data),
+    queryFn: () => fetchCoinDetail(coinId),
   })
 
   const coin = raw as CoinTxnDetail | undefined
@@ -345,7 +346,7 @@ function AwardCoinsModal({ open, onClose, onDone }: {
 
   const mutation = useMutation({
     mutationFn: () =>
-      apiClient.post(ACCOUNTING.COINS_AWARD, {
+      awardCoins({
         staff: staffId,
         amount: Number(amount),
         note,
@@ -442,8 +443,7 @@ function StaffCoinHistoryPanel() {
 
   const { data: history, isLoading } = useQuery<StaffCoinHistory>({
     queryKey: ['staff-coin-history', selectedStaffId],
-    queryFn: () =>
-      apiClient.get(ACCOUNTING.COINS_STAFF_HISTORY(selectedStaffId as number)).then(r => r.data),
+    queryFn: () => fetchStaffCoinHistory(selectedStaffId as number),
     enabled: !!selectedStaffId,
   })
 
@@ -552,27 +552,17 @@ export default function CoinsPage() {
   // Summary — drives tab badges + approved NPR total card
   const { data: summary } = useQuery<CoinSummary>({
     queryKey: ['coins-summary', fyYear],
-    queryFn: () => {
-      const params: Record<string, string | number> = {}
-      if (fyYear) params.fiscal_year = fyYear
-      return apiClient.get(ACCOUNTING.COINS_SUMMARY, { params }).then(r => r.data?.data ?? r.data)
-    },
+    queryFn: () => fetchCoinsSummary(fyYear ? { fiscal_year: fyYear } : undefined),
   })
 
   // Coin list filtered by active tab
   const { data: coins = [], isLoading } = useQuery<CoinTxn[]>({
     queryKey: ['coins', activeTab, fyYear],
-    queryFn: () => {
-      const params: Record<string, string | number> = { status: activeTab }
-      if (fyYear) params.fiscal_year = fyYear
-      return apiClient.get(ACCOUNTING.COINS, { params }).then(r =>
-        Array.isArray(r.data) ? r.data : r.data.data ?? r.data.results ?? []
-      )
-    },
+    queryFn: () => fetchCoinsList({ status: activeTab, ...(fyYear ? { fiscal_year: fyYear } : {}) }),
   })
 
   const approveMutation = useMutation({
-    mutationFn: (id: number) => apiClient.post(ACCOUNTING.COIN_APPROVE(id)),
+    mutationFn: (id: number) => approveCoin(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['coins'] })
       qc.invalidateQueries({ queryKey: ['coins-summary'] })
@@ -583,7 +573,7 @@ export default function CoinsPage() {
   })
 
   const rejectMutation = useMutation({
-    mutationFn: (id: number) => apiClient.post(ACCOUNTING.COIN_REJECT(id)),
+    mutationFn: (id: number) => rejectCoin(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['coins'] })
       qc.invalidateQueries({ queryKey: ['coins-summary'] })
