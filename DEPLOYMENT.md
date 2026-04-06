@@ -1,5 +1,8 @@
 # NEXUS BMS — Deployment Guide
 
+For current production rollout with strict backup + rollback steps, use:
+- `DEPLOYMENT_PROD_PLAN.md`
+
 ## Target environment
 - **Server OS**: Ubuntu 22.04 LTS
 - **Domain**: `bms.techyatra.com.np` + wildcard `*.bms.techyatra.com.np`
