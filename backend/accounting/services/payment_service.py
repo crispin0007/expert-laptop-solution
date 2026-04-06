@@ -109,8 +109,11 @@ def record_payment(
     invoice=None,
     bill=None,
     bank_account=None,
+    party=None,
     reference='',
     notes='',
+    tds_rate=Decimal('0'),
+    tds_reference='',
     party_name='',
     cheque_status='',
 ):
@@ -141,9 +144,70 @@ def record_payment(
     if bank_account and getattr(bank_account, 'tenant_id', None) != tenant.id:
         raise ValueError('Bank account does not belong to this workspace.')
 
+    if party is not None and getattr(party, 'tenant_id', None) != tenant.id:
+        raise ValueError('Party does not belong to this workspace.')
+
+    tds_rate = Decimal(str(tds_rate or '0')).quantize(Decimal('0.0001'))
+    tds_withheld_amount = Decimal('0')
+    net_receipt_amount = amount
+
+    # Supplier-side guardrail: if a bill is configured with TDS, payment must
+    # include the same TDS rate so AP/Cash/TDS payable postings stay consistent.
+    if payment_type == Payment.TYPE_OUTGOING and bill is not None:
+        bill_rate = getattr(bill, 'tds_rate', None)
+        if bill_rate is not None and Decimal(str(bill_rate)) > Decimal('0'):
+            bill_rate = Decimal(str(bill_rate)).quantize(Decimal('0.0001'))
+            if tds_rate <= Decimal('0'):
+                raise ValueError(
+                    f'Bill requires TDS at {bill_rate}. Provide tds_rate in payment to post correctly.'
+                )
+
+    if tds_rate > Decimal('0'):
+        if tds_rate >= Decimal('1'):
+            raise ValueError('TDS rate must be below 1 (e.g. 0.10 for 10%).')
+
+        if payment_type == Payment.TYPE_INCOMING:
+            if invoice is None:
+                raise ValueError('Incoming payment with TDS must be linked to an invoice.')
+
+            # Amount sent in payload is net cash actually received.
+            net_receipt_amount = Decimal(str(amount)).quantize(Decimal('0.01'))
+            gross_settlement = (net_receipt_amount / (Decimal('1') - tds_rate)).quantize(Decimal('0.01'))
+            tds_withheld_amount = (gross_settlement - net_receipt_amount).quantize(Decimal('0.01'))
+
+            if gross_settlement - invoice.amount_due > Decimal('0.01'):
+                raise ValueError('Incoming payment + implied TDS exceeds the invoice amount due.')
+
+        elif payment_type == Payment.TYPE_OUTGOING:
+            if bill is None:
+                raise ValueError('Outgoing payment with TDS must be linked to a bill.')
+
+            bill_rate = getattr(bill, 'tds_rate', None)
+            if bill_rate is not None and Decimal(str(bill_rate)) > Decimal('0'):
+                bill_rate = Decimal(str(bill_rate)).quantize(Decimal('0.0001'))
+                if bill_rate != tds_rate:
+                    raise ValueError(
+                        f'TDS rate mismatch. Bill requires {bill_rate} but payment used {tds_rate}.'
+                    )
+
+            # Outgoing amount is gross bill settlement. Net cash disbursed is reduced by withheld TDS.
+            gross_settlement = Decimal(str(amount)).quantize(Decimal('0.01'))
+            tds_withheld_amount = (gross_settlement * tds_rate).quantize(Decimal('0.01'))
+            net_receipt_amount = (gross_settlement - tds_withheld_amount).quantize(Decimal('0.01'))
+            if net_receipt_amount <= Decimal('0'):
+                raise ValueError('Outgoing payment net disbursement must be positive after TDS.')
+
+            if gross_settlement - bill.amount_due > Decimal('0.01'):
+                raise ValueError('Outgoing payment exceeds the bill amount due.')
+
+        else:
+            raise ValueError('TDS is only supported for incoming or outgoing payments.')
+
     party_id = _resolve_party_id_from_invoice(invoice) if invoice is not None else None
     if party_id is None and bill is not None:
         party_id = _resolve_party_id_from_bill(bill)
+    if party_id is None and party is not None:
+        party_id = getattr(party, 'id', None)
 
     payment = Payment.objects.create(
         tenant=tenant,
@@ -158,6 +222,10 @@ def record_payment(
         party_id=party_id,
         reference=reference,
         notes=notes,
+        tds_rate=tds_rate,
+        tds_withheld_amount=tds_withheld_amount,
+        net_receipt_amount=net_receipt_amount,
+        tds_reference=tds_reference,
         party_name=party_name,
         cheque_status=cheque_status,
     )

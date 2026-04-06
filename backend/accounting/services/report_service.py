@@ -93,6 +93,7 @@ def _accounts_by_type(tenant, acct_type, date_from=None, date_to=None):
 
     accounts = list(
         Account.objects.filter(tenant=tenant, type=acct_type, is_active=True)
+        .select_related('group', 'parent')
         .order_by('code')
     )
     if not accounts:
@@ -119,6 +120,23 @@ def _accounts_by_type(tenant, acct_type, date_from=None, date_to=None):
         )
     }
 
+    account_map = {a.pk: a for a in accounts}
+
+    def _level(acc_obj):
+        level = 0
+        seen = set()
+        cur = acc_obj
+        while getattr(cur, 'parent_id', None):
+            pid = cur.parent_id
+            if pid in seen:
+                break
+            seen.add(pid)
+            level += 1
+            cur = account_map.get(pid)
+            if cur is None:
+                break
+        return level
+
     result = []
     for acc in accounts:
         dr, cr = balance_map.get(acc.pk, (_zero(), _zero()))
@@ -127,7 +145,17 @@ def _accounts_by_type(tenant, acct_type, date_from=None, date_to=None):
             balance = ob + dr - cr
         else:
             balance = ob + cr - dr
-        result.append({'id': acc.pk, 'code': acc.code, 'name': acc.name, 'balance': balance})
+        result.append({
+            'id': acc.pk,
+            'code': acc.code,
+            'name': acc.name,
+            'balance': balance,
+            'group_name': acc.group.name if acc.group else '',
+            'parent_id': acc.parent_id,
+            'parent_code': acc.parent.code if acc.parent else '',
+            'parent_name': acc.parent.name if acc.parent else '',
+            'level': _level(acc),
+        })
 
     return result
 
@@ -152,7 +180,7 @@ def _accounts_by_group_slug(tenant, group_slug, date_from=None, date_to=None):
             tenant=tenant,
             group__slug=group_slug,
             is_active=True,
-        ).select_related('group').order_by('code')
+        ).select_related('group', 'parent').order_by('code')
     )
     if not accounts:
         return []
@@ -178,6 +206,23 @@ def _accounts_by_group_slug(tenant, group_slug, date_from=None, date_to=None):
         )
     }
 
+    account_map = {a.pk: a for a in accounts}
+
+    def _level(acc_obj):
+        level = 0
+        seen = set()
+        cur = acc_obj
+        while getattr(cur, 'parent_id', None):
+            pid = cur.parent_id
+            if pid in seen:
+                break
+            seen.add(pid)
+            level += 1
+            cur = account_map.get(pid)
+            if cur is None:
+                break
+        return level
+
     result = []
     for acc in accounts:
         dr, cr = balance_map.get(acc.pk, (_zero(), _zero()))
@@ -192,6 +237,10 @@ def _accounts_by_group_slug(tenant, group_slug, date_from=None, date_to=None):
             'name':       acc.name,
             'balance':    balance,
             'group_name': acc.group.name if acc.group else '',
+            'parent_id':  acc.parent_id,
+            'parent_code': acc.parent.code if acc.parent else '',
+            'parent_name': acc.parent.name if acc.parent else '',
+            'level':      _level(acc),
         })
     return result
 
@@ -516,6 +565,9 @@ def _trial_balance_row(acc, pre_map, period_map):
             'name': acc.name,
             'type': acc.type,
             'group_name': acc.group.name if acc.group_id else '',
+            'parent_id': acc.parent_id,
+            'parent_code': acc.parent.code if acc.parent_id and acc.parent else '',
+            'parent_name': acc.parent.name if acc.parent_id and acc.parent else '',
             'opening_dr': o_dr,
             'opening_cr': o_cr,
             'period_dr': period_dr,
@@ -581,7 +633,7 @@ def trial_balance(tenant, date_from, date_to):
 
     accounts = list(
         Account.objects.filter(tenant=tenant, is_active=True)
-        .select_related('group')
+        .select_related('group', 'parent')
         .order_by('code')
     )
     if not accounts:
@@ -595,6 +647,23 @@ def trial_balance(tenant, date_from, date_to):
 
     pre_map, period_map = _trial_balance_opening_and_period_maps(tenant, date_from, date_to)
     rows, totals = _trial_balance_rows_and_totals(accounts, pre_map, period_map)
+
+    # Attach hierarchy level for frontend vertical/hierarchical rendering.
+    row_map = {r['id']: r for r in rows}
+    for row in rows:
+        level = 0
+        seen = set()
+        cur = row
+        while cur.get('parent_id'):
+            pid = cur.get('parent_id')
+            if pid in seen:
+                break
+            seen.add(pid)
+            level += 1
+            cur = row_map.get(pid)
+            if not cur:
+                break
+        row['level'] = level
 
     return {
         'date_from':         str(date_from),
@@ -1459,11 +1528,8 @@ def report_drill_node(tenant, node_type, node_id, date_from=None, date_to=None):
 
 # ─── Day Book ────────────────────────────────────────────────────────────────────
 
-def day_book(tenant, date):
-    """
-    All posted journal entries for a specific date with their lines.
-    Equivalent to Tally's Day Book—useful for daily review and printing.
-    """
+def _day_book_rows_for_date(tenant, date):
+    """Return (entries, total_debit, total_credit) for one posted day-book date."""
     from accounting.models import JournalEntry
 
     entries = (
@@ -1482,31 +1548,77 @@ def day_book(tenant, date):
             {
                 'account_code': line.account.code,
                 'account_name': line.account.name,
-                'description':  line.description,
-                'debit':        line.debit,
-                'credit':       line.credit,
+                'description': line.description,
+                'debit': line.debit,
+                'credit': line.credit,
             }
             for line in entry.lines.all()
         ]
-        entry_dr = sum(l['debit']  for l in lines)
+        entry_dr = sum(l['debit'] for l in lines)
         entry_cr = sum(l['credit'] for l in lines)
         total_dr += entry_dr
         total_cr += entry_cr
         result.append({
-            'entry_number':  entry.entry_number,
-            'description':   entry.description,
+            'entry_number': entry.entry_number,
+            'description': entry.description,
             'reference_type': entry.reference_type,
-            'total_debit':   entry_dr,
-            'total_credit':  entry_cr,
-            'lines':         lines,
+            'total_debit': entry_dr,
+            'total_credit': entry_cr,
+            'lines': lines,
         })
 
+    return result, total_dr, total_cr
+
+
+def day_book(tenant, date):
+    """
+    All posted journal entries for a specific date with their lines.
+    Equivalent to Tally's Day Book—useful for daily review and printing.
+    """
+    result, total_dr, total_cr = _day_book_rows_for_date(tenant, date)
     return {
-        'date':         str(date),
-        'entries':      result,
-        'total_debit':  total_dr,
+        'date': str(date),
+        'entries': result,
+        'total_debit': total_dr,
         'total_credit': total_cr,
-        'entry_count':  len(result),
+        'entry_count': len(result),
+    }
+
+
+def day_book_range(tenant, date_from, date_to):
+    """Day-book entries across a date range, grouped by date."""
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+
+    from datetime import timedelta
+
+    days = []
+    grand_debit = _zero()
+    grand_credit = _zero()
+    grand_entries = 0
+
+    current = date_from
+    while current <= date_to:
+        entries, day_dr, day_cr = _day_book_rows_for_date(tenant, current)
+        days.append({
+            'date': str(current),
+            'entries': entries,
+            'total_debit': day_dr,
+            'total_credit': day_cr,
+            'entry_count': len(entries),
+        })
+        grand_debit += day_dr
+        grand_credit += day_cr
+        grand_entries += len(entries)
+        current += timedelta(days=1)
+
+    return {
+        'date_from': str(date_from),
+        'date_to': str(date_to),
+        'days': days,
+        'total_debit': grand_debit,
+        'total_credit': grand_credit,
+        'entry_count': grand_entries,
     }
 
 

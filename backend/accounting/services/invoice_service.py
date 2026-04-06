@@ -17,6 +17,162 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 
+def _safe_decimal(value, default='0') -> Decimal:
+    """Parse unknown numeric input to Decimal safely for invoice rendering."""
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return Decimal(default)
+
+
+def _int_to_words(n: int) -> str:
+    """Convert an integer in range 0..999,999,999 to English words."""
+    if n == 0:
+        return 'zero'
+
+    ones = [
+        '', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
+        'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen',
+        'seventeen', 'eighteen', 'nineteen',
+    ]
+    tens = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety']
+
+    def _under_thousand(x: int) -> str:
+        parts = []
+        if x >= 100:
+            parts.append(f"{ones[x // 100]} hundred")
+            x %= 100
+        if x >= 20:
+            parts.append(tens[x // 10])
+            if x % 10:
+                parts.append(ones[x % 10])
+        elif x > 0:
+            parts.append(ones[x])
+        return ' '.join(parts)
+
+    scales = [
+        (1_000_000_000, 'billion'),
+        (1_000_000, 'million'),
+        (1_000, 'thousand'),
+        (1, ''),
+    ]
+
+    parts = []
+    remain = n
+    for divisor, label in scales:
+        chunk = remain // divisor
+        if chunk:
+            words = _under_thousand(chunk)
+            parts.append(f"{words} {label}".strip())
+            remain %= divisor
+    return ' '.join(parts)
+
+
+def _currency_amount_to_words(amount: Decimal, currency: str) -> str:
+    """Return currency amount in words, e.g. 'NPR one hundred rupees and ten paisa only'."""
+    quantized = _safe_decimal(amount).quantize(Decimal('0.01'))
+    whole = int(quantized)
+    fraction = int((quantized - Decimal(whole)) * 100)
+    whole_words = _int_to_words(whole)
+    fraction_words = _int_to_words(fraction) if fraction else ''
+
+    if currency.upper() == 'NPR':
+        base_unit = 'rupees'
+        sub_unit = 'paisa'
+    else:
+        base_unit = currency.lower()
+        sub_unit = 'cents'
+
+    if fraction:
+        return f"{currency.upper()} {whole_words} {base_unit} and {fraction_words} {sub_unit} only"
+    return f"{currency.upper()} {whole_words} {base_unit} only"
+
+
+def _invoice_line_rows(invoice) -> list[dict]:
+    """Normalize invoice lines for predictable PDF rendering."""
+    rows = []
+    for idx, raw in enumerate(invoice.line_items or [], start=1):
+        qty = _safe_decimal(raw.get('qty') or raw.get('quantity') or 1, default='1')
+        unit_price = _safe_decimal(raw.get('unit_price') or 0)
+        discount_pct = _safe_decimal(raw.get('discount') or 0)
+
+        computed_total = qty * unit_price * (Decimal('1') - (discount_pct / Decimal('100')))
+        line_total = _safe_decimal(raw.get('total'), default=str(computed_total))
+        if line_total < 0:
+            line_total = Decimal('0')
+
+        rows.append({
+            'sn': idx,
+            'description': raw.get('description') or raw.get('name') or 'Item',
+            'notes': raw.get('notes') or '',
+            'qty': qty,
+            'unit_price': unit_price,
+            'discount_pct': discount_pct,
+            'line_total': line_total.quantize(Decimal('0.01')),
+        })
+    return rows
+
+
+def _customer_address_lines(invoice) -> list[str]:
+    """Build bill-to address lines from customer profile fields with fallback."""
+    customer = getattr(invoice, 'customer', None)
+    if not customer:
+        return [invoice.bill_address] if invoice.bill_address else []
+
+    lines = []
+    locality_parts = [
+        customer.street,
+        f"Ward {customer.ward_no}" if customer.ward_no else '',
+        customer.municipality,
+        customer.district,
+        customer.province,
+    ]
+    locality = ', '.join([p for p in locality_parts if p])
+    if locality:
+        lines.append(locality)
+
+    if customer.email:
+        lines.append(customer.email)
+    if customer.phone:
+        lines.append(customer.phone)
+
+    if not lines and invoice.bill_address:
+        lines.append(invoice.bill_address)
+    return lines
+
+
+def _bill_to_payload(invoice) -> dict:
+    """Resolve bill-to identity from customer/party/invoice fallback fields."""
+    if invoice.customer_id and getattr(invoice, 'customer', None):
+        customer = invoice.customer
+        return {
+            'name': customer.name,
+            'pan': customer.pan_number or invoice.buyer_pan or '',
+            'lines': _customer_address_lines(invoice),
+        }
+
+    if invoice.party_id and getattr(invoice, 'party', None):
+        party = invoice.party
+        lines = []
+        if party.email:
+            lines.append(party.email)
+        if party.phone:
+            lines.append(party.phone)
+        if invoice.bill_address:
+            lines.append(invoice.bill_address)
+        return {
+            'name': party.name,
+            'pan': party.pan_number or invoice.buyer_pan or '',
+            'lines': lines,
+        }
+
+    return {
+        'name': 'Customer',
+        'pan': invoice.buyer_pan or '',
+        'lines': [invoice.bill_address] if invoice.bill_address else [],
+    }
+
+
 def _snapshot_cost_prices(line_items: list, tenant) -> list:
     """
     B24 — Return a new list of line_items with 'cost_price_snapshot' injected
@@ -114,14 +270,70 @@ def generate_pdf_bytes(invoice):
     try:
         from weasyprint import HTML
         from django.template.loader import render_to_string
+        from django.conf import settings
+        from core.nepali_date import ad_to_bs, fiscal_year_label_for
     except ImportError:
         return b"%PDF stub - install weasyprint"
 
+    invoice_date = invoice.date or invoice.created_at.date()
+    try:
+        invoice_date_bs = ad_to_bs(invoice_date).isoformat()
+    except Exception:
+        invoice_date_bs = ''
+    try:
+        invoice_fiscal_label = fiscal_year_label_for(invoice_date)
+    except Exception:
+        invoice_fiscal_label = ''
+
+    prepared_by_user = getattr(invoice, 'created_by', None)
+    prepared_by_name = ''
+    if prepared_by_user is not None:
+        prepared_by_name = (
+            prepared_by_user.get_full_name()
+            or getattr(prepared_by_user, 'email', '')
+            or getattr(prepared_by_user, 'username', '')
+        )
+
+    approved_by_user = getattr(invoice, 'finance_reviewed_by', None) or getattr(invoice, 'payment_received_by', None)
+    approved_by_name = ''
+    if approved_by_user is not None:
+        approved_by_name = (
+            approved_by_user.get_full_name()
+            or getattr(approved_by_user, 'email', '')
+            or getattr(approved_by_user, 'username', '')
+        )
+
+    approved_at = (
+        getattr(invoice, 'finance_reviewed_at', None)
+        or getattr(invoice, 'paid_at', None)
+        or getattr(invoice, 'payment_received_at', None)
+    )
+
+    period_start = invoice_date
+    period_end = invoice.due_date or invoice_date
+
+    context = {
+        'invoice': invoice,
+        'tenant': invoice.tenant,
+        'invoice_date': invoice_date,
+        'invoice_date_bs': invoice_date_bs,
+        'invoice_fiscal_label': invoice_fiscal_label,
+        'line_rows': _invoice_line_rows(invoice),
+        'bill_to': _bill_to_payload(invoice),
+        'amount_in_words': _currency_amount_to_words(invoice.total, invoice.tenant.currency or 'NPR'),
+        'period_start': period_start,
+        'period_end': period_end,
+        'prepared_by_name': prepared_by_name,
+        'prepared_by_at': invoice.created_at,
+        'approved_by_name': approved_by_name,
+        'approved_by_at': approved_at,
+    }
+
     html_string = render_to_string(
         'accounting/invoice_pdf.html',
-        {'invoice': invoice, 'tenant': invoice.tenant},
+        context,
     )
-    return HTML(string=html_string).write_pdf()
+    return HTML(string=html_string, base_url=getattr(settings, 'BASE_DIR', None)).write_pdf()
 
 
 def apply_credit_note(credit_note, target_invoice, created_by=None):

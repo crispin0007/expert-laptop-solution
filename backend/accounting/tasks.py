@@ -69,11 +69,14 @@ def task_generate_monthly_payslips(self):
         try:
             from accounting.services.payslip_service import PayslipService
             svc = PayslipService(tenant=tenant, user=None)
-            payslip = svc.generate(
+            payslip, created = svc.generate(
                 staff_id     = staff.pk,
                 period_start = first_of_prev,
                 period_end   = last_of_prev,
             )
+            if not created:
+                skipped_count += 1
+                continue
             log.info(
                 "Created payslip #%s for %s @ tenant=%s (net=%s)",
                 payslip.pk, staff.email, getattr(tenant, 'schema_name', tenant.pk), payslip.net_pay,

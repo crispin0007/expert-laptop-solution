@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from django.db.models import Sum, Value
+from django.db.models import Sum, Value, F
 from django.db.models.functions import Coalesce
 
 from core.repositories import BaseRepository
@@ -22,7 +22,12 @@ from accounting.models import Invoice
 
 
 # Reusable annotation that computes amount_paid in SQL — eliminates N+1 on list views.
-_AMOUNT_PAID_ANNOTATION = Coalesce(Sum('payments__amount'), Value(Decimal('0')))
+_AMOUNT_PAID_ANNOTATION = Coalesce(
+    Sum(
+        F('payments__amount') + Coalesce(F('payments__tds_withheld_amount'), Value(Decimal('0')))
+    ),
+    Value(Decimal('0')),
+)
 
 
 class InvoiceRepository(BaseRepository):

@@ -678,19 +678,21 @@ def get_deduction(
     if not policy.deduct_absent and not policy.deduct_late:
         return Decimal('0')
 
-    # Gap 2a: count actual working days in this pay period from shift (or policy) schedule.
+    # Count actual working days in this pay period from shift (or policy) schedule.
     shift   = get_active_shift_for_staff(tenant, staff, on_date=period_start)
     wd_list = (shift.work_days if shift and shift.work_days else None) \
               or policy.work_days \
               or list(_NEPAL_WORK_DAYS)
     actual_wdpm = _count_working_days(period_start, period_end, wd_list)
 
-    # Fall back to caller's hint if the period is shorter than a full month
-    # (e.g. mid-month joiner) and shift schedule gives 0 days.
-    if actual_wdpm == 0:
-        actual_wdpm = int(working_days_per_month) if working_days_per_month else 26
+    # Preserve payroll contract: explicit working_days_per_month from caller
+    # remains the primary denominator. Use computed days only as fallback.
+    requested_wdpm = int(working_days_per_month) if working_days_per_month else 0
+    wdpm_value = requested_wdpm if requested_wdpm > 0 else actual_wdpm
+    if wdpm_value <= 0:
+        wdpm_value = 26
 
-    wdpm = Decimal(str(actual_wdpm))
+    wdpm = Decimal(str(wdpm_value))
     if wdpm <= 0 or base_salary <= 0:
         return Decimal('0')
 
