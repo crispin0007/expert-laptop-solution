@@ -5,7 +5,21 @@ ENV PYTHONUNBUFFERED 1
 
 WORKDIR /usr/src/app
 
-RUN apt-get update && apt-get install -y build-essential libpq-dev gcc git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+	build-essential \
+	libpq-dev \
+	gcc \
+	git \
+	libcairo2 \
+	libpango-1.0-0 \
+	libpangocairo-1.0-0 \
+	libgdk-pixbuf-2.0-0 \
+	libglib2.0-0 \
+	libffi-dev \
+	shared-mime-info \
+	fonts-dejavu-core \
+	fonts-liberation \
+	&& rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
