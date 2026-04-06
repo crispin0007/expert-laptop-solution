@@ -10,7 +10,7 @@ from parties.services import _ensure_party_ledger_account
 
 
 class Command(BaseCommand):
-    help = 'Repair missing CoA ledger links for customer/supplier Party rows.'
+    help = 'Repair missing CoA ledger links for customer/supplier/staff Party rows.'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -30,7 +30,7 @@ class Command(BaseCommand):
         tenant_slug = options.get('tenant')
 
         qs = Party.objects.filter(
-            party_type__in=[Party.TYPE_CUSTOMER, Party.TYPE_SUPPLIER],
+            party_type__in=[Party.TYPE_CUSTOMER, Party.TYPE_SUPPLIER, Party.TYPE_STAFF],
             account__isnull=True,
             is_active=True,
         ).select_related('tenant', 'created_by')

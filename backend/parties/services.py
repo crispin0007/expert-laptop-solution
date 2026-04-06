@@ -60,10 +60,10 @@ def _next_party_account_code(tenant, *, prefix: str) -> str:
 
 
 def _ensure_party_ledger_account(party: Party, *, dry_run: bool = False) -> None:
-    """Create/link a CoA sub-ledger account for customer/supplier parties."""
+    """Create/link a CoA sub-ledger account for customer/supplier/staff parties."""
     if party is None or party.tenant_id is None:
         return
-    if party.party_type not in {Party.TYPE_CUSTOMER, Party.TYPE_SUPPLIER}:
+    if party.party_type not in {Party.TYPE_CUSTOMER, Party.TYPE_SUPPLIER, Party.TYPE_STAFF}:
         return
     if party.account_id:
         return
@@ -81,14 +81,36 @@ def _ensure_party_ledger_account(party: Party, *, dry_run: bool = False) -> None
         control_code = '1200'
         code_prefix = '12'
         account_type = Account.TYPE_ASSET
-    else:
+    elif party.party_type == Party.TYPE_SUPPLIER:
         group_slug = 'sundry_creditors'
         control_code = '2100'
         code_prefix = '21'
         account_type = Account.TYPE_LIABILITY
+    else:
+        group_slug = 'current_liabilities'
+        control_code = '2400'
+        code_prefix = '24'
+        account_type = Account.TYPE_LIABILITY
 
     group = AccountGroup.objects.filter(tenant=tenant, slug=group_slug).first()
     control_account = Account.objects.filter(tenant=tenant, code=control_code).first()
+
+    # Ensure Salary Payable control account exists for staff party sub-ledgers.
+    if party.party_type == Party.TYPE_STAFF and control_account is None:
+        liabilities_parent = Account.objects.filter(tenant=tenant, code='2000').first()
+        if liabilities_parent is not None and group is not None:
+            control_account = Account.objects.create(
+                tenant=tenant,
+                created_by=party.created_by,
+                code='2400',
+                name='Salary Payable',
+                type=Account.TYPE_LIABILITY,
+                group=group,
+                parent=liabilities_parent,
+                description='Salary payable control account.',
+                is_system=True,
+            )
+
     if group is None or control_account is None:
         return
 
@@ -187,3 +209,77 @@ def resolve_or_create_supplier_party(supplier, *, dry_run: bool = False) -> Reso
         fallback_label='Supplier',
     )
     return _resolve_or_create_party(supplier, spec=spec, dry_run=dry_run)
+
+
+def _staff_name(membership) -> str:
+    user = getattr(membership, 'user', None)
+    if user is None:
+        return ''
+    full_name = (getattr(user, 'full_name', '') or '').strip()
+    if full_name:
+        return full_name
+    display = (getattr(user, 'get_full_name', lambda: '')() or '').strip()
+    if display:
+        return display
+    return (getattr(user, 'email', '') or '').strip()
+
+
+def resolve_or_create_staff_party(membership, *, dry_run: bool = False) -> ResolveResult:
+    """Resolve or create a staff party for a TenantMembership.
+
+    Matching priority is tenant-scoped PAN, then email, then phone+name.
+    The operation is idempotent and safe to call repeatedly.
+    """
+    if membership.party_id:
+        _ensure_party_ledger_account(membership.party, dry_run=dry_run)
+        return ResolveResult(party=membership.party, action='already-linked')
+
+    tenant = membership.tenant
+    if tenant is None:
+        return ResolveResult(party=None, action='skipped', reason='staff membership has no tenant')
+
+    user = getattr(membership, 'user', None)
+    if user is None:
+        return ResolveResult(party=None, action='skipped', reason='staff membership has no user')
+
+    name = _staff_name(membership)
+    email = _norm(getattr(user, 'email', ''))
+    phone = _norm(getattr(user, 'office_phone', '') or getattr(user, 'phone', ''))
+    pan = _norm(getattr(membership, 'pan_number', ''))
+
+    candidates = Party.objects.filter(tenant=tenant, party_type=Party.TYPE_STAFF)
+    party = _find_candidate(candidates, pan=pan, email=email, phone=phone, name=name)
+
+    if party is not None and _party_in_use_conflict(party, 'staff_profile', membership.pk):
+        return ResolveResult(
+            party=None,
+            action='conflict',
+            reason='matched party already linked to another staff membership',
+        )
+
+    if party is None:
+        if dry_run:
+            return ResolveResult(party=None, action='would-create')
+        party = Party.objects.create(
+            tenant=tenant,
+            created_by=None,
+            name=name or f'Staff #{membership.pk}',
+            party_type=Party.TYPE_STAFF,
+            email=getattr(user, 'email', '') or '',
+            phone=getattr(user, 'office_phone', '') or getattr(user, 'phone', '') or '',
+            pan_number=getattr(membership, 'pan_number', '') or '',
+            is_active=bool(getattr(membership, 'is_active', True)),
+            notes='',
+        )
+        membership.party = party
+        membership.save(update_fields=['party'])
+        _ensure_party_ledger_account(party, dry_run=dry_run)
+        return ResolveResult(party=party, action='created-and-linked')
+
+    if dry_run:
+        return ResolveResult(party=party, action='would-link')
+
+    membership.party = party
+    membership.save(update_fields=['party'])
+    _ensure_party_ledger_account(party, dry_run=dry_run)
+    return ResolveResult(party=party, action='linked-existing')

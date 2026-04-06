@@ -93,6 +93,14 @@ class TenantMembership(models.Model):
         max_length=20, blank=True,
         help_text='Nepal PAN (9-digit) — used for TDS reporting',
     )
+    party = models.OneToOneField(
+        'parties.Party',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='staff_profile',
+        help_text='Optional canonical Party identity for staff accounting linkage.',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
