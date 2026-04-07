@@ -127,6 +127,7 @@ function SupplierCreateModal({ onClose, initial }: { onClose: () => void; initia
       toast.success(isEdit ? 'Supplier updated' : 'Supplier added')
       qc.invalidateQueries({ queryKey: ['inventory-suppliers'] })
       qc.invalidateQueries({ queryKey: ['inventory-suppliers-select'] })
+      qc.invalidateQueries({ queryKey: ['report'] })
       onClose()
     },
     onError: (e: { response?: { data?: { detail?: string } } }) =>

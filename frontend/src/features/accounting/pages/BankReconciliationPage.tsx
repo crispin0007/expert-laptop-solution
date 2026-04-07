@@ -48,7 +48,7 @@ export default function BankReconciliationPage() {
     enabled: !!selected,
   })
 
-  const detailLines = Array.isArray(detail?.lines) ? detail.lines : []
+  const detailLines = useMemo(() => Array.isArray(detail?.lines) ? detail.lines : [], [detail])
   const filteredDetailLines = useMemo(() => {
     const q = lineSearch.trim().toLowerCase()
     if (!q) return detailLines
@@ -61,32 +61,32 @@ export default function BankReconciliationPage() {
 
   const mutateCreate = useMutation({
     mutationFn: (d: typeof newRec) => apiClient.post(ACCOUNTING.BANK_RECONCILIATIONS, d),
-    onSuccess: () => { toast.success('Reconciliation created'); qc.invalidateQueries({ queryKey: ['bank-reconciliations'] }); setShowCreate(false); setNewRec({ bank_account: '', statement_date: '', opening_balance: '', closing_balance: '', notes: '' }) },
+    onSuccess: () => { toast.success('Reconciliation created'); qc.invalidateQueries({ queryKey: ['bank-reconciliations'] }); qc.invalidateQueries({ queryKey: ['report'] }); setShowCreate(false); setNewRec({ bank_account: '', statement_date: '', opening_balance: '', closing_balance: '', notes: '' }) },
     onError: () => toast.error('Failed to create'),
   })
   const mutateAddLine = useMutation({
     mutationFn: () => apiClient.post(ACCOUNTING.BANK_RECONCILIATION_ADD_LINE(selected!.id), newLine),
-    onSuccess: () => { toast.success('Line added'); qc.invalidateQueries({ queryKey: ['bank-reconciliation', selected?.id] }); setNewLine({ date: '', description: '', amount: '' }); setShowNew(false) },
+    onSuccess: () => { toast.success('Line added'); qc.invalidateQueries({ queryKey: ['bank-reconciliation', selected?.id] }); qc.invalidateQueries({ queryKey: ['report'] }); setNewLine({ date: '', description: '', amount: '' }); setShowNew(false) },
     onError: () => toast.error('Failed'),
   })
   const mutateMatch = useMutation({
     mutationFn: (lineId: number) => apiClient.post(ACCOUNTING.BANK_RECONCILIATION_MATCH_LINE(detail!.id), { line_id: lineId }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['bank-reconciliation', selected?.id] }) },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['bank-reconciliation', selected?.id] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: () => toast.error('Match failed'),
   })
   const mutateUnmatch = useMutation({
     mutationFn: (lineId: number) => apiClient.post(ACCOUNTING.BANK_RECONCILIATION_UNMATCH_LINE(detail!.id), { line_id: lineId }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['bank-reconciliation', selected?.id] }) },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['bank-reconciliation', selected?.id] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: () => toast.error('Unmatch failed'),
   })
   const mutateReconcile = useMutation({
     mutationFn: () => apiClient.post(ACCOUNTING.BANK_RECONCILIATION_RECONCILE(detail!.id)),
-    onSuccess: () => { toast.success('Reconciliation locked ✓'); qc.invalidateQueries({ queryKey: ['bank-reconciliation', selected?.id] }); qc.invalidateQueries({ queryKey: ['bank-reconciliations'] }) },
+    onSuccess: () => { toast.success('Reconciliation locked ✓'); qc.invalidateQueries({ queryKey: ['bank-reconciliation', selected?.id] }); qc.invalidateQueries({ queryKey: ['bank-reconciliations'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: (e: {response?: {data?: {detail?: string}}}) => toast.error(e?.response?.data?.detail ?? 'Failed'),
   })
   const mutateDeleteRec = useMutation({
     mutationFn: (id: number) => apiClient.delete(ACCOUNTING.BANK_RECONCILIATION_DETAIL(id)),
-    onSuccess: () => { toast.success('Reconciliation deleted'); qc.invalidateQueries({ queryKey: ['bank-reconciliations'] }); setSelected(null) },
+    onSuccess: () => { toast.success('Reconciliation deleted'); qc.invalidateQueries({ queryKey: ['bank-reconciliations'] }); qc.invalidateQueries({ queryKey: ['report'] }); setSelected(null) },
     onError: () => toast.error('Delete failed'),
   })
 

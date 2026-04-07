@@ -58,7 +58,10 @@ export const issueInvoice = (id: number) =>
   apiClient.post(ACCOUNTING.INVOICE_ISSUE(id)).then(normalizeData<Invoice>)
 
 export const markInvoicePaid = (id: number, payload: Payload) =>
-  apiClient.post(ACCOUNTING.INVOICE_MARK_PAID(id), payload).then(normalizeData<Invoice>)
+  apiClient.post(ACCOUNTING.INVOICE_MARK_PAID(id), payload).then((response: any) => {
+    const normalized = normalizeData<any>(response)
+    return normalized.invoice ?? normalized
+  })
 
 export const voidInvoice = (id: number) =>
   apiClient.post(ACCOUNTING.INVOICE_VOID(id)).then(normalizeData<Invoice>)

@@ -4,13 +4,22 @@ import apiClient from '../../../api/client'
 import { INVENTORY } from '../../../api/endpoints'
 import toast from 'react-hot-toast'
 import { usePermissions } from '../../../hooks/usePermissions'
+import NepaliDatePicker from '../../../components/NepaliDatePicker'
 import { formatBsDate, formatNpr, PO_STATUS, toPage } from '../utils'
-import { Modal, SectionCard, TableContainer, tableHeadClass, tableHeaderCellClass } from '../components/accountingShared'
+import { Modal, SectionCard, TableContainer, tableHeadClass, tableHeaderCellClass, Field, inputCls, selectCls } from '../components/accountingShared'
 import { Plus, Loader2, PackageCheck, Trash2, X, Package } from 'lucide-react'
 import type { ApiPage, PurchaseOrder, InventorySupplier, InventoryProduct } from '../types/accounting'
 
 const fmt = formatBsDate
 const npr = formatNpr
+
+const toNumber = (value: string | number, fallback = 0) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+const formatStatusLabel = (status: string) =>
+  status === '' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1)
 
 function PurchaseOrderReceiveModal({ po, onClose }: { po: PurchaseOrder; onClose: () => void }) {
   const qc = useQueryClient()
@@ -19,12 +28,23 @@ function PurchaseOrderReceiveModal({ po, onClose }: { po: PurchaseOrder; onClose
   )
   const [notes, setNotes] = useState('')
 
+  const receiveLines = po.items.map(i => ({
+    item_id: i.id,
+    quantity_received: Math.max(0, Math.min(toNumber(quantities[i.id] ?? '0'), i.pending_quantity)),
+  }))
+
+  const hasReceiveQuantity = receiveLines.some(line => line.quantity_received > 0)
+  const hasInvalidQuantity = po.items.some(item => {
+    const qty = toNumber(quantities[item.id] ?? '0', -1)
+    return qty < 0 || qty > item.pending_quantity
+  })
+
   const mutate = useMutation({
     mutationFn: () => apiClient.post(INVENTORY.PURCHASE_ORDER_RECEIVE(po.id), {
-      lines: po.items.map(i => ({ item_id: i.id, quantity_received: Number(quantities[i.id] ?? 0) })),
+      lines: receiveLines,
       notes,
     }),
-    onSuccess: () => { toast.success('Stock received'); qc.invalidateQueries({ queryKey: ['purchase-orders'] }); onClose() },
+    onSuccess: () => { toast.success('Stock received'); qc.invalidateQueries({ queryKey: ['purchase-orders'] }); qc.invalidateQueries({ queryKey: ['report'] }); onClose() },
     onError: () => toast.error('Receive failed'),
   })
 
@@ -45,32 +65,46 @@ function PurchaseOrderReceiveModal({ po, onClose }: { po: PurchaseOrder; onClose
               <th className="pb-2 text-right">Receive Now</th>
             </tr></thead>
             <tbody className="divide-y divide-gray-50">
-              {po.items.map(item => (
-                <tr key={item.id}>
-                  <td className="py-2 text-gray-700">{item.product_name}</td>
-                  <td className="py-2 text-right text-gray-500">{item.quantity_ordered}</td>
-                  <td className="py-2 text-right text-gray-500">{item.quantity_received}</td>
-                  <td className="py-2 text-right text-orange-600">{item.pending_quantity}</td>
-                  <td className="py-2 text-right">
-                    <input data-lpignore="true" type="number" min={0} max={item.pending_quantity}
-                      value={quantities[item.id] ?? ''}
-                      onChange={e => setQuantities(q => ({ ...q, [item.id]: e.target.value }))}
-                      className="w-20 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:border-indigo-400"
-                    />
-                  </td>
-                </tr>
-              ))}
+              {po.items.map(item => {
+                const qty = toNumber(quantities[item.id] ?? '0')
+                const invalid = qty < 0 || qty > item.pending_quantity
+                return (
+                  <tr key={item.id} className={invalid ? 'bg-red-50' : ''}>
+                    <td className="py-2 text-gray-700">{item.product_name}</td>
+                    <td className="py-2 text-right text-gray-500">{item.quantity_ordered}</td>
+                    <td className="py-2 text-right text-gray-500">{item.quantity_received}</td>
+                    <td className="py-2 text-right text-orange-600">{item.pending_quantity}</td>
+                    <td className="py-2 text-right">
+                      <input data-lpignore="true" type="number" min={0} max={item.pending_quantity}
+                        value={quantities[item.id] ?? ''}
+                        onChange={e => setQuantities(q => ({ ...q, [item.id]: e.target.value }))}
+                        className="w-20 text-right border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:border-indigo-400"
+                      />
+                      {invalid && (
+                        <p className="mt-1 text-[10px] text-red-600">Must be between 0 and {item.pending_quantity}</p>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-            <input data-lpignore="true" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional notes"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
-          </div>
+          {hasInvalidQuantity && (
+            <p className="text-xs text-red-600">One or more receive quantities must be between 0 and the pending quantity.</p>
+          )}
+          <Field label="Notes">
+            <input
+              data-lpignore="true"
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="Optional notes"
+              className={inputCls}
+            />
+          </Field>
         </div>
         <div className="px-6 py-4 border-t border-gray-100 flex gap-3 justify-end">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
-          <button onClick={() => mutate.mutate()} disabled={mutate.isPending}
+          <button onClick={() => mutate.mutate()} disabled={!hasReceiveQuantity || hasInvalidQuantity || mutate.isPending}
             className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center gap-2">
             {mutate.isPending ? <Loader2 size={14} className="animate-spin" /> : <PackageCheck size={14} />} Confirm Receipt
           </button>
@@ -98,26 +132,31 @@ function PurchaseOrderCreateModal({ onClose }: { onClose: () => void }) {
 
   const addItem = () => setItems(prev => [...prev, { product: '', qty: '1', unit_cost: '' }])
   const removeItem = (i: number) => setItems(prev => prev.filter((_, idx) => idx !== i))
-  const updateItem = (i: number, field: string, val: string) =>
+  const updateItem = (i: number, field: 'product' | 'qty' | 'unit_cost', val: string) =>
     setItems(prev => prev.map((it, idx) => idx === i ? { ...it, [field]: val } : it))
+
+  const validItems = items.filter(item => item.product && toNumber(item.qty, 0) >= 1)
+  const hasInvalidItem = items.some(item => item.product
+    ? toNumber(item.qty, -1) < 1 || toNumber(item.unit_cost, -1) < 0
+    : false
+  )
+  const subtotal = validItems.reduce((sum, item) => sum + toNumber(item.qty, 0) * toNumber(item.unit_cost, 0), 0)
 
   const mutate = useMutation({
     mutationFn: () => apiClient.post(INVENTORY.PURCHASE_ORDERS, {
       supplier: Number(supplierId),
       expected_delivery: expectedDelivery || null,
       notes,
-      items: items.filter(i => i.product).map(i => ({
+      items: validItems.map(i => ({
         product: Number(i.product),
-        quantity_ordered: Number(i.qty),
-        unit_cost: i.unit_cost || '0',
+        quantity_ordered: toNumber(i.qty, 0),
+        unit_cost: String(toNumber(i.unit_cost, 0).toFixed(2)),
       })),
     }),
-    onSuccess: () => { toast.success('Purchase order created'); qc.invalidateQueries({ queryKey: ['purchase-orders'] }); onClose() },
+    onSuccess: () => { toast.success('Purchase order created'); qc.invalidateQueries({ queryKey: ['purchase-orders'] }); qc.invalidateQueries({ queryKey: ['report'] }); onClose() },
     onError: (e: { response?: { data?: { detail?: string } } }) =>
       toast.error(e?.response?.data?.detail ?? 'Failed to create purchase order'),
   })
-
-  const subtotal = items.reduce((a, i) => a + (Number(i.qty) * Number(i.unit_cost || 0)), 0)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
@@ -128,25 +167,33 @@ function PurchaseOrderCreateModal({ onClose }: { onClose: () => void }) {
         </div>
         <div className="px-6 py-4 space-y-4 overflow-y-auto">
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Supplier *</label>
-              <select value={supplierId} onChange={e => setSupplierId(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400">
+            <Field label="Supplier *">
+              <select
+                value={supplierId}
+                onChange={e => setSupplierId(e.target.value)}
+                className={selectCls}
+              >
                 <option value="">Select supplier…</option>
                 {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Expected Delivery</label>
-              <input data-lpignore="true" type="date" value={expectedDelivery} onChange={e => setExpectedDelivery(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
-            </div>
+            </Field>
+            <Field label="Expected Delivery">
+              <NepaliDatePicker
+                value={expectedDelivery}
+                onChange={setExpectedDelivery}
+                className={inputCls}
+              />
+            </Field>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-            <input data-lpignore="true" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional notes"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
-          </div>
+          <Field label="Notes">
+            <input
+              data-lpignore="true"
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="Optional notes"
+              className={inputCls}
+            />
+          </Field>
           <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Line Items</span>
@@ -155,42 +202,55 @@ function PurchaseOrderCreateModal({ onClose }: { onClose: () => void }) {
               </button>
             </div>
             <div className="space-y-2">
-              {items.map((item, i) => (
-                <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                  <div className="col-span-5">
-                    <select value={item.product} onChange={e => updateItem(i, 'product', e.target.value)}
-                      className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-indigo-400">
-                      <option value="">Select product…</option>
-                      {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-span-2">
-                    <input data-lpignore="true" type="number" min={1} value={item.qty} onChange={e => updateItem(i, 'qty', e.target.value)} placeholder="Qty"
-                      className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-right focus:outline-none focus:border-indigo-400" />
-                  </div>
-                  <div className="col-span-3">
-                    <input data-lpignore="true" type="number" min={0} step="0.01" value={item.unit_cost} onChange={e => updateItem(i, 'unit_cost', e.target.value)} placeholder="Unit cost"
-                      className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-right focus:outline-none focus:border-indigo-400" />
-                  </div>
-                  <div className="col-span-1 text-right text-xs text-gray-500 tabular-nums">
-                    {npr(Number(item.qty || 0) * Number(item.unit_cost || 0))}
-                  </div>
-                  <div className="col-span-1 text-right">
-                    {items.length > 1 && (
-                      <button onClick={() => removeItem(i)} className="text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>
+              {items.map((item, i) => {
+                const qty = toNumber(item.qty, 0)
+                const cost = toNumber(item.unit_cost, 0)
+                const showError = item.product !== '' && (qty < 1 || cost < 0)
+                return (
+                  <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                    <div className="col-span-5">
+                      <select value={item.product} onChange={e => updateItem(i, 'product', e.target.value)}
+                        className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-indigo-400">
+                        <option value="">Select product…</option>
+                        {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="col-span-2">
+                      <input data-lpignore="true" type="number" min={1} value={item.qty} onChange={e => updateItem(i, 'qty', e.target.value)} placeholder="Qty"
+                        className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-right focus:outline-none focus:border-indigo-400" />
+                    </div>
+                    <div className="col-span-3">
+                      <input data-lpignore="true" type="number" min={0} step="0.01" value={item.unit_cost} onChange={e => updateItem(i, 'unit_cost', e.target.value)} placeholder="Unit cost"
+                        className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-right focus:outline-none focus:border-indigo-400" />
+                    </div>
+                    <div className="col-span-1 text-right text-xs text-gray-500 tabular-nums">
+                      {npr(qty * cost)}
+                    </div>
+                    <div className="col-span-1 text-right">
+                      {items.length > 1 && (
+                        <button onClick={() => removeItem(i)} className="text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>
+                      )}
+                    </div>
+                    {showError && (
+                      <div className="col-span-12 text-[10px] text-red-600">
+                        Quantity must be at least 1 and cost cannot be negative.
+                      </div>
                     )}
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
             <div className="mt-3 pt-3 border-t border-gray-100 text-right text-sm font-semibold text-gray-800">
               Total: {npr(subtotal)}
             </div>
+            {hasInvalidItem && (
+              <p className="mt-2 text-right text-xs text-red-600">Fix invalid line items before creating the purchase order.</p>
+            )}
           </div>
         </div>
         <div className="px-6 py-4 border-t border-gray-100 flex gap-3 justify-end shrink-0">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">Cancel</button>
-          <button onClick={() => mutate.mutate()} disabled={mutate.isPending || !supplierId}
+          <button onClick={() => mutate.mutate()} disabled={mutate.isPending || !supplierId || validItems.length === 0 || hasInvalidItem}
             className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center gap-2">
             {mutate.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Create PO
           </button>
@@ -306,12 +366,12 @@ export default function PurchaseOrdersPage() {
 
   const mutateSend = useMutation({
     mutationFn: (id: number) => apiClient.post(INVENTORY.PURCHASE_ORDER_SEND(id)),
-    onSuccess: () => { toast.success('PO sent to supplier'); qc.invalidateQueries({ queryKey: ['purchase-orders'] }) },
+    onSuccess: () => { toast.success('PO sent to supplier'); qc.invalidateQueries({ queryKey: ['purchase-orders'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: () => toast.error('Action failed'),
   })
   const mutateCancel = useMutation({
     mutationFn: (id: number) => apiClient.post(INVENTORY.PURCHASE_ORDER_CANCEL(id)),
-    onSuccess: () => { toast.success('PO cancelled'); qc.invalidateQueries({ queryKey: ['purchase-orders'] }) },
+    onSuccess: () => { toast.success('PO cancelled'); qc.invalidateQueries({ queryKey: ['purchase-orders'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: () => toast.error('Action failed'),
   })
 
@@ -325,7 +385,7 @@ export default function PurchaseOrdersPage() {
           {['', 'draft', 'sent', 'partial', 'received', 'cancelled'].map(s => (
             <button key={s} onClick={() => setStatusFilter(s)}
               className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${statusFilter === s ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-gray-200 text-gray-600 hover:border-indigo-400 hover:text-indigo-600'}`}>
-              {s === '' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
+              {formatStatusLabel(s)}
             </button>
           ))}
         </div>

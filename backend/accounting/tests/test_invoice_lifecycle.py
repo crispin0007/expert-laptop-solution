@@ -99,6 +99,66 @@ class TestInvoiceLifecycle:
         assert inv.total > 0
 
     @pytest.mark.django_db
+    def test_ticket_invoice_service_line_includes_amount_and_service_id(self, tenant, admin_user):
+        from inventory.models import Product
+        from tickets.models import Ticket
+        from accounting.services.ticket_invoice_service import generate_ticket_invoice
+
+        service_product = Product.objects.create(
+            tenant=tenant,
+            name='Service Charge',
+            sku='SRV-001',
+            unit_price=Decimal('1000.00'),
+            is_service=True,
+            is_active=True,
+        )
+        ticket = Ticket.objects.create(
+            tenant=tenant,
+            title='Test Ticket',
+            service_charge=Decimal('1500.00'),
+        )
+
+        invoice = generate_ticket_invoice(ticket, tenant, created_by=admin_user)
+        service_lines = [line for line in invoice.line_items if line.get('line_type') == 'service']
+
+        assert len(service_lines) == 1
+        assert service_lines[0]['amount'] == '1500.00'
+        assert str(service_lines[0].get('service_id')) == str(service_product.id)
+
+    @pytest.mark.django_db
+    def test_service_ledger_includes_ticket_invoice_service_revenue(self, tenant, admin_user):
+        from inventory.models import Product
+        from tickets.models import Ticket
+        from accounting.models import Invoice
+        from accounting.services.ticket_invoice_service import generate_ticket_invoice
+        from accounting.services.report_service import service_ledger
+
+        service_product = Product.objects.create(
+            tenant=tenant,
+            name='Service Charge',
+            sku='SRV-001',
+            unit_price=Decimal('1000.00'),
+            is_service=True,
+            is_active=True,
+        )
+        ticket = Ticket.objects.create(
+            tenant=tenant,
+            title='Service Ticket',
+            service_charge=Decimal('1200.00'),
+        )
+        invoice = generate_ticket_invoice(ticket, tenant, created_by=admin_user)
+        invoice.status = Invoice.STATUS_ISSUED
+        invoice.save(update_fields=['status'])
+
+        report = service_ledger(tenant, service_product.id, invoice.date, invoice.date)
+
+        assert report is not None
+        assert report['revenue_total'] == Decimal('1200.00')
+        assert len(report['rows']) == 1
+        assert report['rows'][0]['doc_type'] == 'Invoice'
+        assert report['rows'][0]['revenue'] == Decimal('1200.00')
+
+    @pytest.mark.django_db
     def test_invoice_number_uses_fiscal_year_prefix(self, tenant, admin_user):
         from accounting.models import Invoice
 

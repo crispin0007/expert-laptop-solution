@@ -30,7 +30,7 @@ export default function AllocateSupplierPaymentsPage() {
     onSuccess: () => {
       toast.success(`Payment ${selectedPayment?.payment_number} allocated to ${selectedBill?.bill_number}`)
       setSelectedPayment(null); setSelectedBill(null)
-      qc.invalidateQueries({ queryKey: ['payments'] }); qc.invalidateQueries({ queryKey: ['bills'] })
+      qc.invalidateQueries({ queryKey: ['payments'] }); qc.invalidateQueries({ queryKey: ['bills'] }); qc.invalidateQueries({ queryKey: ['report'] })
     },
     onError: () => toast.error('Allocation failed'),
   })

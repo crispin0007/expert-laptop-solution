@@ -151,6 +151,7 @@ function CashPaymentCreateModal({ onClose }: { onClose: () => void }) {
       toast.success('Cash transaction recorded')
       qc.invalidateQueries({ queryKey: ['cash-ledger'] })
       qc.invalidateQueries({ queryKey: ['payments'] })
+      qc.invalidateQueries({ queryKey: ['report'] })
       onClose()
     },
     onError: (e: { response?: { data?: { detail?: string } } }) =>
@@ -357,10 +358,13 @@ function CashPaymentCreateModal({ onClose }: { onClose: () => void }) {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {bankData?.results?.map(b => (
-                  <tr key={b.id} className="hover:bg-gray-50/50">
+                  <tr key={b.id}
+                    className="hover:bg-gray-50/50 cursor-pointer"
+                    onClick={() => { setSelectedBankId(String(b.id)); setSubTab('statement') }}
+                    title="Click to view bank statement"
+                  >
                     <td className="px-4 py-3 font-medium text-gray-800">
-                      <button onClick={() => { setSelectedBankId(String(b.id)); setSubTab('statement') }}
-                        className="text-indigo-600 hover:underline font-medium">{b.name}</button>
+                      <span className="text-indigo-600 hover:underline font-medium">{b.name}</span>
                     </td>
                     <td className="px-4 py-3 text-gray-600">{b.bank_name}</td>
                     <td className="px-4 py-3 font-mono text-xs text-gray-500">{b.account_number}</td>
@@ -369,15 +373,15 @@ function CashPaymentCreateModal({ onClose }: { onClose: () => void }) {
                     <td className="px-4 py-3 font-semibold text-indigo-700">{npr(b.current_balance)}</td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1">
-                        <button onClick={() => { setSelectedBankId(String(b.id)); setSubTab('statement') }}
+                        <button onClick={(e) => { e.stopPropagation(); setSelectedBankId(String(b.id)); setSubTab('statement') }}
                           title="View Statement" className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"><BookOpen size={13} /></button>
                         {can('can_manage_accounting') && (
                           <>
-                            <button onClick={() => setEditBank(b)} title="Edit" className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"><Pencil size={13} /></button>
+                            <button onClick={(e) => { e.stopPropagation(); setEditBank(b) }} title="Edit" className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"><Pencil size={13} /></button>
                             {b.linked_account_is_system ? (
                               <button title="System-linked bank account cannot be deleted" className="p-1 text-gray-300 cursor-not-allowed rounded transition-colors" disabled><Trash2 size={13} /></button>
                             ) : (
-                              <button onClick={() => confirm({ title: 'Delete Bank Account', message: `Delete "${b.name}"? Linked payments and reconciliations may be affected.`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDeleteBank.mutate(b.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
+                              <button onClick={(e) => { e.stopPropagation(); confirm({ title: 'Delete Bank Account', message: `Delete "${b.name}"? Linked payments and reconciliations may be affected.`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDeleteBank.mutate(b.id) }) }} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
                             )}
                           </>
                         )}

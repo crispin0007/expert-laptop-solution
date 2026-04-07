@@ -4,6 +4,7 @@ import apiClient from '../../../api/client'
 import { ACCOUNTING } from '../../../api/endpoints'
 import toast from 'react-hot-toast'
 import DateDisplay from '../../../components/DateDisplay'
+import NepaliDatePicker from '../../../components/NepaliDatePicker'
 import { ArrowUpRight, Loader2, Save, Clock } from 'lucide-react'
 import type { ApiPage, BankAccount, Invoice, Payment } from '../types/accounting'
 import { formatNpr, toPage } from '../utils'
@@ -60,6 +61,7 @@ export default function QuickReceiptPage() {
       setAmount(''); setReference(''); setNotes(''); setInvoiceId(''); setTdsRatePct('0'); setTdsReference('')
       qc.invalidateQueries({ queryKey: ['payments'] })
       qc.invalidateQueries({ queryKey: ['invoices'] })
+      qc.invalidateQueries({ queryKey: ['report'] })
     },
     onError: () => toast.error('Failed to record receipt'),
   })
@@ -73,8 +75,11 @@ export default function QuickReceiptPage() {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Date *</label>
-            <input data-lpignore="true" type="date" value={date} onChange={e => setDate(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+            <NepaliDatePicker
+              value={date}
+              onChange={setDate}
+              className="w-full"
+            />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Method *</label>

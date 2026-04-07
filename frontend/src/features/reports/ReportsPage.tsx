@@ -5,7 +5,7 @@
  * Layout: left category sidebar + right content panel (report grid ▶ params ▶ output).
  */
 import { useState, useRef, useEffect, Fragment } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import apiClient from '../../api/client'
 import { ACCOUNTING, INVENTORY, CUSTOMERS } from '../../api/endpoints'
 import toast from 'react-hot-toast'
@@ -2197,6 +2197,8 @@ export default function ReportsPage() {
     staleTime: 60_000,
   })
 
+  const qc = useQueryClient()
+
   const { data: reportData, isLoading, isError, error, refetch } = useQuery<Record<string, unknown>>({
     queryKey: ['report', reportKey, dateFrom, dateTo, customerId, supplierId, costCentreId, compareEnabled, compareFrom, compareTo],
     queryFn: () => apiClient.get(report.endpoint + buildParams()).then(r => r.data?.data ?? r.data),
@@ -2566,7 +2568,10 @@ ${el.innerHTML}
                 )}
 
                 <button
-                  onClick={() => refetch()}
+                  onClick={() => {
+                    qc.invalidateQueries({ queryKey: ['report'] })
+                    refetch()
+                  }}
                   disabled={isLoading || (report.needsCostCentre && !costCentreId)}
                   className="px-5 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-2 disabled:opacity-60"
                 >

@@ -87,6 +87,7 @@ function InlineEditRow({
     onSuccess: () => {
       toast.success('Account updated')
       qc.invalidateQueries({ queryKey: ['accounts'] })
+      qc.invalidateQueries({ queryKey: ['report'] })
       onSave()
     },
     onError: (e: { response?: { data?: { detail?: string; code?: string[] } } }) =>
@@ -210,6 +211,7 @@ function InlineAddRow({
     onSuccess: () => {
       toast.success('Account created')
       qc.invalidateQueries({ queryKey: ['accounts'] })
+      qc.invalidateQueries({ queryKey: ['report'] })
       onSave()
     },
     onError: (e: { response?: { data?: { detail?: string; code?: string[]; group?: string[] } } }) =>
@@ -222,13 +224,6 @@ function InlineAddRow({
     }
     return groups[0]?.id ?? ''
   }, [groups, parentAccount, shouldInheritParentGroup])
-
-  useEffect(() => {
-    if (groupId) return
-    if (autoGroupId) {
-      setGroupId(autoGroupId)
-    }
-  }, [autoGroupId, groupId])
 
   function submit(e?: React.FormEvent) {
     e?.preventDefault()
@@ -351,7 +346,7 @@ export default function AccountsPage() {
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
   const [expandedAccounts, setExpandedAccounts] = useState<Set<number>>(new Set())
 
-  const allAccounts = data ?? []
+  const allAccounts = useMemo(() => data ?? [], [data])
 
   const defaultParentIdByType = useMemo(() => {
     const byCode = new Map(allAccounts.map(a => [a.code, a.id]))
@@ -394,6 +389,7 @@ export default function AccountsPage() {
     onSuccess: () => {
       toast.success('Account deleted')
       qc.invalidateQueries({ queryKey: ['accounts'] })
+      qc.invalidateQueries({ queryKey: ['report'] })
     },
     onError: (e: { response?: { data?: { detail?: string } } }) =>
       toast.error(e?.response?.data?.detail ?? 'Cannot delete this account'),
@@ -402,7 +398,10 @@ export default function AccountsPage() {
   const toggleActiveMutation = useMutation({
     mutationFn: ({ id, is_active }: { id: number; is_active: boolean }) =>
       apiClient.patch(`${ACCOUNTING.ACCOUNTS}${id}/`, { is_active }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['accounts'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['accounts'] })
+      qc.invalidateQueries({ queryKey: ['report'] })
+    },
     onError: () => toast.error('Failed to update account status'),
   })
 

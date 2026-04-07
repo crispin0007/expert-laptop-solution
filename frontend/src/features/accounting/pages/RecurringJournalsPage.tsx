@@ -31,7 +31,7 @@ export default function RecurringJournalsPage() {
   const runMutation = useMutation({
     mutationFn: (id: number) => runRecurringJournal(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['recurring-journals', fyYear] })
+      qc.invalidateQueries({ queryKey: ['recurring-journals', fyYear] }); qc.invalidateQueries({ queryKey: ['report'] })
       setSelectedJournal(null)
     },
   })
@@ -143,7 +143,7 @@ export default function RecurringJournalsPage() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
-                  {['Name', 'Frequency', 'Next Run', 'Last Run', 'Active', 'Created'].map(h => (
+                  {['Name', 'Frequency', 'Next Run', 'Last Run', 'Active', 'Created', 'Actions'].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -163,6 +163,20 @@ export default function RecurringJournalsPage() {
                     <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{fmt(journal.last_run_at)}</td>
                     <td className="px-4 py-3"><Badge status={journal.is_active ? 'posted' : 'void'} /></td>
                     <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{fmt(journal.created_at)}</td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          runMutation.mutate(journal.id)
+                        }}
+                        disabled={runMutation.isPending}
+                        className="px-3 py-1.5 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                      >
+                        <span className="inline-flex items-center gap-1">
+                          <Play size={12} /> Run
+                        </span>
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

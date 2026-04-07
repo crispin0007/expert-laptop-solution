@@ -8,11 +8,12 @@ import { usePermissions } from '../../../hooks/usePermissions'
 import NepaliDatePicker from '../../../components/NepaliDatePicker'
 import Modal from '../../../components/Modal'
 import { useFyStore } from '../../../store/fyStore'
+import type { BankAccount } from '../types/accounting'
 import { AlertCircle, Loader2 } from 'lucide-react'
 import { AccountingField, accountingInputCls, accountingSelectCls } from '../components/AccountingFormHelpers'
 import { AccountingLineItemsEditor, emptyAccountingLineItem, type AccountingLineItemDraft } from '../components/AccountingLineItemsEditor'
-import { createInvoice, fetchInvoiceDetail, fetchInvoices, updateInvoice, fetchInvoicePdf } from '../services'
-import { SectionCard, TableContainer, tableHeadClass, tableHeaderCellClass } from '../components/accountingShared'
+import { createInvoice, fetchInvoiceDetail, fetchInvoices, updateInvoice, fetchInvoicePdf, issueInvoice, markInvoicePaid, fetchBankAccounts } from '../services'
+import { SectionCard, TableContainer, tableHeadClass, tableHeaderCellClass, Field, inputCls } from '../components/accountingShared'
 import { toPage } from '../utils/accountingUtils'
 
 interface InvoiceItem {
@@ -114,6 +115,7 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
     onSuccess: () => {
       toast.success('Invoice created')
       qc.invalidateQueries({ queryKey: ['invoices'] })
+      qc.invalidateQueries({ queryKey: ['report'] })
       onClose()
     },
     onError: (e: { response?: { data?: { detail?: string } } }) =>
@@ -207,7 +209,7 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
   )
 }
 
-function InvoiceDetailModal({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
+function InvoiceDetailModal({ inv, onClose, onIssue, onRecordPayment }: { inv: Invoice; onClose: () => void; onIssue: () => void; onRecordPayment: () => void }) {
   const handlePrint = async () => {
     const popup = window.open('', '_blank', 'noopener,noreferrer')
     if (!popup) {
@@ -270,8 +272,16 @@ function InvoiceDetailModal({ inv, onClose }: { inv: Invoice; onClose: () => voi
             </div>
           </div>
         </div>
-        <div className="flex items-center justify-between gap-3">
-          <button type="button" onClick={handlePrint} className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700">Print PDF</button>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={handlePrint} className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700">Print PDF</button>
+            {inv.status === 'draft' && (
+              <button type="button" onClick={onIssue} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700">Issue Invoice</button>
+            )}
+            {inv.status === 'issued' && Number(inv.amount_due) > 0 && (
+              <button type="button" onClick={onRecordPayment} className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700">Record Payment</button>
+            )}
+          </div>
           <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border border-gray-200 text-sm text-gray-700 hover:bg-gray-50">Close</button>
         </div>
       </div>
@@ -301,6 +311,7 @@ function InvoiceEditModal({ inv, onClose }: { inv: Invoice; onClose: () => void 
     onSuccess: () => {
       toast.success('Invoice updated')
       qc.invalidateQueries({ queryKey: ['invoices'] })
+      qc.invalidateQueries({ queryKey: ['report'] })
       onClose()
     },
     onError: (e: { response?: { data?: { detail?: string } } }) =>
@@ -379,6 +390,7 @@ function InvoiceEditModal({ inv, onClose }: { inv: Invoice; onClose: () => void 
 }
 
 export default function InvoicesPage() {
+  const qc = useQueryClient()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const { can } = usePermissions()
@@ -388,6 +400,7 @@ export default function InvoicesPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [editInvoice, setEditInvoice] = useState<Invoice | null>(null)
   const [detailInvoice, setDetailInvoice] = useState<Invoice | null>(null)
+  const [markPaidInvoice, setMarkPaidInvoice] = useState<Invoice | null>(null)
   const focusInvoiceId = Number(searchParams.get('focus_invoice_id') ?? 0)
 
   const { data } = useQuery<ApiPage<Invoice>>({
@@ -400,6 +413,36 @@ export default function InvoicesPage() {
       const qs = params.toString()
       return fetchInvoices(qs)
     },
+  })
+
+  const { data: invoiceBankAccounts = [] } = useQuery<BankAccount[]>({
+    queryKey: ['bank-accounts-invoice-paid'],
+    queryFn: () => fetchBankAccounts('page_size=100').then(r => r.results ?? []),
+    enabled: Boolean(markPaidInvoice),
+  })
+
+  const issueInvoiceMutation = useMutation({
+    mutationFn: (id: number) => issueInvoice(id),
+    onSuccess: (updated) => {
+      toast.success('Invoice issued')
+      qc.invalidateQueries({ queryKey: ['invoices'] })
+      qc.invalidateQueries({ queryKey: ['report'] })
+      if (detailInvoice?.id === updated.id) setDetailInvoice(updated)
+    },
+    onError: () => toast.error('Failed to issue invoice'),
+  })
+
+  const markPaidInvoiceMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: number; payload: { method: string; bank_account: number | null } }) =>
+      markInvoicePaid(id, payload),
+    onSuccess: (updated) => {
+      toast.success('Invoice marked as paid')
+      qc.invalidateQueries({ queryKey: ['invoices'] })
+      qc.invalidateQueries({ queryKey: ['report'] })
+      setMarkPaidInvoice(null)
+      if (detailInvoice?.id === updated.id) setDetailInvoice(updated)
+    },
+    onError: () => toast.error('Failed to record payment'),
   })
 
   useEffect(() => {
@@ -473,6 +516,12 @@ export default function InvoicesPage() {
                 <td className="px-4 py-3 text-xs text-right">{Number(inv.amount_due) > 0 ? npr(inv.amount_due) : '—'}</td>
                 <td className="px-4 py-3 text-right text-xs space-x-2">
                   <button type="button" onClick={() => setDetailInvoice(inv)} className="text-indigo-600 hover:text-indigo-800">View</button>
+                  {can('can_manage_accounting') && inv.status === 'draft' && (
+                    <button type="button" onClick={() => issueInvoiceMutation.mutate(inv.id)} className="text-blue-600 hover:text-blue-800">Issue</button>
+                  )}
+                  {can('can_manage_accounting') && inv.status === 'issued' && Number(inv.amount_due) > 0 && (
+                    <button type="button" onClick={() => setMarkPaidInvoice(inv)} className="text-green-600 hover:text-green-800">Payment</button>
+                  )}
                   {can('can_manage_accounting') && <button type="button" onClick={() => setEditInvoice(inv)} className="text-gray-600 hover:text-gray-900">Edit</button>}
                 </td>
               </tr>
@@ -482,8 +531,109 @@ export default function InvoicesPage() {
         </SectionCard>
 
       {showCreate && <InvoiceCreateModal onClose={() => setShowCreate(false)} />}
-      {detailInvoice && <InvoiceDetailModal inv={detailInvoice} onClose={() => setDetailInvoice(null)} />}
+      {detailInvoice && (
+        <InvoiceDetailModal
+          inv={detailInvoice}
+          onClose={() => setDetailInvoice(null)}
+          onIssue={() => issueInvoiceMutation.mutate(detailInvoice.id)}
+          onRecordPayment={() => setMarkPaidInvoice(detailInvoice)}
+        />
+      )}
       {editInvoice && <InvoiceEditModal inv={editInvoice} onClose={() => setEditInvoice(null)} />}
+      {markPaidInvoice && (
+        <PaymentPickerModal
+          title={`Record Payment — ${markPaidInvoice.invoice_number}`}
+          amount={markPaidInvoice.amount_due}
+          description="This will record a payment and mark the invoice as paid."
+          bankAccounts={invoiceBankAccounts}
+          onClose={() => setMarkPaidInvoice(null)}
+          onSubmit={(method, bankId) => markPaidInvoiceMutation.mutate({ id: markPaidInvoice.id, payload: { method, bank_account: method === 'cash' ? null : bankId } })}
+          isPending={markPaidInvoiceMutation.isPending}
+        />
+      )}
     </div>
+  )
+}
+
+function PaymentPickerModal({
+  title,
+  amount,
+  description,
+  bankAccounts,
+  onClose,
+  onSubmit,
+  isPending,
+}: {
+  title: string
+  amount: string
+  description?: string
+  bankAccounts: BankAccount[]
+  onClose: () => void
+  onSubmit: (method: string, bankId: number | null) => void
+  isPending: boolean
+}) {
+  const [method, setMethod] = useState<'cash' | 'bank_transfer' | 'cheque'>('cash')
+  const [bankId, setBankId] = useState<number | null>(null)
+
+  return (
+    <Modal open={true} title={title} onClose={onClose}>
+      <form
+        className="space-y-4"
+        onSubmit={e => {
+          e.preventDefault()
+          if (method !== 'cash' && !bankId) {
+            toast.error('Please select a bank account')
+            return
+          }
+          onSubmit(method, method === 'cash' ? null : bankId)
+        }}
+      >
+        <p className="text-sm text-gray-600">
+          Amount: <span className="font-semibold text-indigo-700">{new Intl.NumberFormat('ne-NP', { style: 'currency', currency: 'NPR' }).format(Number(amount))}</span>
+        </p>
+        <Field label="Payment Method *">
+          <div className="flex gap-3">
+            {[
+              { value: 'cash', label: 'Cash' },
+              { value: 'bank_transfer', label: 'Bank Transfer' },
+              { value: 'cheque', label: 'Cheque' },
+            ].map(opt => (
+              <label key={opt.value} className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  data-lpignore="true"
+                  type="radio"
+                  name="payment_method"
+                  value={opt.value}
+                  checked={method === opt.value}
+                  onChange={() => {
+                    setMethod(opt.value as typeof method)
+                    if (opt.value === 'cash') setBankId(null)
+                  }}
+                  className="accent-indigo-600"
+                />
+                <span className="text-sm text-gray-700">{opt.label}</span>
+              </label>
+            ))}
+          </div>
+        </Field>
+        {method !== 'cash' && (
+          <Field label="Bank Account *">
+            <select className={inputCls} value={bankId ?? ''} onChange={e => setBankId(Number(e.target.value) || null)} required>
+              <option value="">— Select bank account —</option>
+              {bankAccounts.map(b => (
+                <option key={b.id} value={b.id}>{b.name} — {b.bank_name} ({b.account_number})</option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {description && <p className="text-xs text-gray-400">{description}</p>}
+        <div className="flex justify-end gap-2 pt-1">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Cancel</button>
+          <button type="submit" disabled={isPending} className="px-4 py-2 text-sm rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-60">
+            {isPending ? 'Processing…' : 'Confirm Payment'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   )
 }

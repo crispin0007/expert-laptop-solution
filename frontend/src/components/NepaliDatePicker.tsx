@@ -60,7 +60,7 @@ const YEAR_RANGE_END = 2095;
 
 // ─── AD mode (native input) ─────────────────────────────────────────────────
 
-function AdDatePicker({ value, onChange, label, required, disabled, className, error }: Props) {
+function AdDatePicker({ value, onChange, label, placeholder, required, disabled, className, minAdDate, maxAdDate, error }: Props) {
   const bsHint = (() => {
     if (!value) return ''
     try {
@@ -82,8 +82,11 @@ function AdDatePicker({ value, onChange, label, required, disabled, className, e
         value={value ?? ''}
         onChange={e => onChange(e.target.value)}
         disabled={disabled}
-        className="border border-gray-300 rounded-md bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 py-1.5 px-2 disabled:bg-gray-50 disabled:text-gray-400"
+        min={minAdDate}
+        max={maxAdDate}
+        className="w-full border border-gray-300 rounded-md bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 py-1.5 px-2 disabled:bg-gray-50 disabled:text-gray-400"
       />
+      {!value && placeholder && <p className="text-xs text-gray-400">{placeholder}</p>}
       {bsHint && <p className="text-xs text-gray-400">{bsHint}</p>}
       {error && <p className="text-xs text-red-600">{error}</p>}
     </div>
@@ -193,7 +196,14 @@ function BsDatePicker({
   }
 
   const selectBase =
-    'border border-gray-300 rounded-md bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 py-1.5 px-2 disabled:bg-gray-50 disabled:text-gray-400';
+    'appearance-none bg-transparent text-sm text-gray-800 focus:outline-none py-1.5 px-2 disabled:bg-gray-50 disabled:text-gray-400';
+
+  const selectGroup =
+    'flex items-center gap-0 border border-gray-300 rounded-md overflow-hidden bg-white shadow-sm';
+
+  const firstSelect = 'w-full sm:w-24 rounded-none';
+  const middleSelect = 'w-full sm:w-32 rounded-none border-l border-gray-200';
+  const lastSelect = 'w-full sm:w-16 rounded-none border-l border-gray-200';
 
   // Derive the current AD date for display
   let adDisplay = '';
@@ -214,10 +224,10 @@ function BsDatePicker({
       )}
 
       {/* Selects */}
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className={selectGroup}>
         {/* Year */}
         <select
-          className={`${selectBase} w-24`}
+          className={`${selectBase} ${firstSelect}`}
           value={bsYear}
           onChange={handleYear}
           disabled={disabled}
@@ -231,7 +241,7 @@ function BsDatePicker({
 
         {/* Month */}
         <select
-          className={`${selectBase} w-32`}
+          className={`${selectBase} ${middleSelect}`}
           value={bsMonth}
           onChange={handleMonth}
           disabled={disabled}
@@ -244,7 +254,7 @@ function BsDatePicker({
 
         {/* Day */}
         <select
-          className={`${selectBase} w-16`}
+          className={`${selectBase} ${lastSelect}`}
           value={bsDay}
           onChange={handleDay}
           disabled={disabled}
@@ -254,8 +264,9 @@ function BsDatePicker({
             <option key={i + 1} value={i + 1}>{i + 1}</option>
           ))}
         </select>
+      </div>
 
-        {/* Today shortcut */}
+      <div className="flex items-center justify-between gap-3">
         {!disabled && (
           <button
             type="button"
@@ -265,16 +276,11 @@ function BsDatePicker({
             Today
           </button>
         )}
+        {adDisplay && (
+          <p className="text-xs text-gray-400">AD: {adDisplay}</p>
+        )}
       </div>
 
-      {/* Secondary: AD hint */}
-      {adDisplay && (
-        <p className="text-xs text-gray-400">
-          AD: {adDisplay}
-        </p>
-      )}
-
-      {/* Placeholder when nothing is selected */}
       {!value && !adDisplay && (
         <p className="text-xs text-gray-400">{placeholder}</p>
       )}

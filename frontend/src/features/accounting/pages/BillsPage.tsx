@@ -31,6 +31,7 @@ export default function BillsPage() {
   const [search, setSearch] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [editBill, setEditBill] = useState<Bill | null>(null)
+  const [detailBill, setDetailBill] = useState<Bill | null>(null)
   const [markPaidBill, setMarkPaidBill] = useState<Bill | null>(null)
   const [billReceiptPayment, setBillReceiptPayment] = useState<Payment | null>(null)
   const [focusedBillId, setFocusedBillId] = useState<number | null>(null)
@@ -56,12 +57,12 @@ export default function BillsPage() {
 
   const approve = useMutation({
     mutationFn: (id: number) => approveBill(id),
-    onSuccess: () => { toast.success('Bill approved'); qc.invalidateQueries({ queryKey: ['bills'] }) },
+    onSuccess: () => { toast.success('Bill approved'); qc.invalidateQueries({ queryKey: ['bills'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: () => toast.error('Action failed'),
   })
   const voidBillMutation = useMutation({
     mutationFn: (id: number) => voidBill(id),
-    onSuccess: () => { toast.success('Bill voided'); qc.invalidateQueries({ queryKey: ['bills'] }) },
+    onSuccess: () => { toast.success('Bill voided'); qc.invalidateQueries({ queryKey: ['bills'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: () => toast.error('Action failed'),
   })
   const markPaid = useMutation({
@@ -71,13 +72,13 @@ export default function BillsPage() {
       toast.success('Bill marked as paid')
       setMarkPaidBill(null)
       if ((res as any)?.payment) setBillReceiptPayment((res as any).payment)
-      qc.invalidateQueries({ queryKey: ['bills'] })
+      qc.invalidateQueries({ queryKey: ['bills'] }); qc.invalidateQueries({ queryKey: ['report'] })
     },
     onError: () => toast.error('Action failed'),
   })
   const mutateDelete = useMutation({
     mutationFn: (id: number) => deleteBill(id),
-    onSuccess: () => { toast.success('Bill deleted'); qc.invalidateQueries({ queryKey: ['bills'] }) },
+    onSuccess: () => { toast.success('Bill deleted'); qc.invalidateQueries({ queryKey: ['bills'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: (e: { response?: { data?: { detail?: string } } }) =>
       toast.error(e?.response?.data?.detail ?? 'Failed to delete bill'),
   })
@@ -95,6 +96,7 @@ export default function BillsPage() {
   return (
     <div className="space-y-4">
       {showCreate && <BillCreateModal onClose={() => setShowCreate(false)} />}
+      {detailBill && <BillDetailModal bill={detailBill} onClose={() => setDetailBill(null)} />}
       {editBill && <BillEditModal bill={editBill} onClose={() => setEditBill(null)} />}
       {markPaidBill && (
         <PaymentPickerModal
@@ -154,7 +156,8 @@ export default function BillsPage() {
                     <tr
                       key={bill.id}
                       id={`bill-row-${bill.id}`}
-                      className={`hover:bg-gray-50/50 ${isOverdue ? 'bg-amber-50/50' : ''} ${focusedBillId === bill.id ? 'bg-indigo-50 ring-1 ring-indigo-200' : ''}`}
+                      onClick={() => setDetailBill(bill)}
+                      className={`hover:bg-gray-50/50 cursor-pointer ${isOverdue ? 'bg-amber-50/50' : ''} ${focusedBillId === bill.id ? 'bg-indigo-50 ring-1 ring-indigo-200' : ''}`}
                     >
                       <td className="px-4 py-3 font-mono text-xs font-medium text-indigo-600">{bill.bill_number}</td>
                       <td className={tableCellClass}>{bill.supplier_name}</td>
@@ -170,25 +173,25 @@ export default function BillsPage() {
                       <td className="px-4 py-3">
                         <div className="flex gap-1 items-center">
                           {can('can_manage_accounting') && (
-                            <button onClick={() => setEditBill(bill)} title="Edit Bill"
+                            <button onClick={(e) => { e.stopPropagation(); setEditBill(bill) }} title="Edit Bill"
                               className="p-1.5 rounded hover:bg-indigo-50 text-indigo-400 transition-colors">
                               <Pencil size={14} />
                             </button>
                           )}
                           {can('can_manage_accounting') && (
-                            <button onClick={() => { confirm({ title: 'Delete Bill', message: `Delete ${bill.bill_number}? This cannot be undone.`, variant: 'danger', confirmLabel: 'Delete' }).then(ok => { if (ok) mutateDelete.mutate(bill.id) }) }}
+                            <button onClick={(e) => { e.stopPropagation(); confirm({ title: 'Delete Bill', message: `Delete ${bill.bill_number}? This cannot be undone.`, variant: 'danger', confirmLabel: 'Delete' }).then(ok => { if (ok) mutateDelete.mutate(bill.id) }) }}
                               title="Delete Bill" className="p-1.5 rounded hover:bg-red-50 text-red-400 transition-colors">
                               <Trash2 size={14} />
                             </button>
                           )}
                           {bill.status === 'draft' && (
-                            <button onClick={() => approve.mutate(bill.id)} className="px-2 py-1 text-xs bg-indigo-50 text-indigo-700 rounded hover:bg-indigo-100">Approve</button>
+                            <button onClick={(e) => { e.stopPropagation(); approve.mutate(bill.id) }} className="px-2 py-1 text-xs bg-indigo-50 text-indigo-700 rounded hover:bg-indigo-100">Approve</button>
                           )}
                           {bill.status === 'approved' && (
-                            <button onClick={() => setMarkPaidBill(bill)} className="px-2 py-1 text-xs bg-green-50 text-green-700 rounded hover:bg-green-100">Mark Paid</button>
+                            <button onClick={(e) => { e.stopPropagation(); setMarkPaidBill(bill) }} className="px-2 py-1 text-xs bg-green-50 text-green-700 rounded hover:bg-green-100">Mark Paid</button>
                           )}
                           {bill.status !== 'void' && bill.status !== 'paid' && (
-                            <button onClick={() => { confirm({ title: 'Void Bill', message: 'Void this bill?', variant: 'danger', confirmLabel: 'Void' }).then(ok => { if (ok) voidBillMutation.mutate(bill.id) }) }} className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded hover:bg-red-100">Void</button>
+                            <button onClick={(e) => { e.stopPropagation(); confirm({ title: 'Void Bill', message: 'Void this bill?', variant: 'danger', confirmLabel: 'Void' }).then(ok => { if (ok) voidBillMutation.mutate(bill.id) }) }} className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded hover:bg-red-100">Void</button>
                           )}
                         </div>
                       </td>
@@ -372,6 +375,93 @@ function BillCreateModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </form>
+    </Modal>
+  )
+}
+
+function BillDetailModal({ bill, onClose }: { bill: Bill; onClose: () => void }) {
+  const received = Number(bill.amount_paid || '0')
+  const balance = Number(bill.amount_due || '0')
+
+  return (
+    <Modal title={`Bill ${bill.bill_number}`} onClose={onClose}>
+      <div className="space-y-4 text-sm">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Supplier</p>
+            <p className="font-semibold text-gray-800">{bill.supplier_name || '—'}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Status</p>
+            <p className="font-semibold text-gray-800 capitalize">{bill.status}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Bill Date</p>
+            <p className="font-semibold text-gray-800">{fmt(bill.date)}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Due Date</p>
+            <p className="font-semibold text-gray-800">{fmt(bill.due_date)}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+            <p className="text-xs text-blue-600">Total</p>
+            <p className="font-bold text-blue-800 tabular-nums">{formatNpr(bill.total)}</p>
+          </div>
+          <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3">
+            <p className="text-xs text-emerald-600">Paid</p>
+            <p className="font-bold text-emerald-800 tabular-nums">{received > 0 ? formatNpr(received.toString()) : '—'}</p>
+          </div>
+          <div className="bg-orange-50 border border-orange-100 rounded-lg p-3">
+            <p className="text-xs text-orange-600">Balance</p>
+            <p className="font-bold text-orange-800 tabular-nums">{balance > 0 ? formatNpr(balance.toString()) : '—'}</p>
+          </div>
+        </div>
+
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase tracking-wide">Line Items</div>
+          <div className="max-h-72 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs text-gray-500">Description</th>
+                  <th className="px-3 py-2 text-right text-xs text-gray-500">Qty</th>
+                  <th className="px-3 py-2 text-right text-xs text-gray-500">Unit Price</th>
+                  <th className="px-3 py-2 text-right text-xs text-gray-500">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {(bill.line_items ?? []).map((item: any, idx) => (
+                  <tr key={idx} className="hover:bg-gray-50">
+                    <td className="px-3 py-2 text-gray-700">{item.description || item.name || '—'}</td>
+                    <td className="px-3 py-2 text-right text-gray-600">{item.qty ?? item.quantity ?? '—'}</td>
+                    <td className="px-3 py-2 text-right text-gray-600 tabular-nums">{formatNpr(String(item.unit_price ?? item.unit_cost ?? '0'))}</td>
+                    <td className="px-3 py-2 text-right text-gray-800 tabular-nums">{formatNpr(String(item.total ?? item.line_total ?? Number(item.qty || 0) * Number(item.unit_price || item.unit_cost || 0)))}</td>
+                  </tr>
+                ))}
+                {!(bill.line_items?.length) && (
+                  <tr>
+                    <td colSpan={4} className="px-3 py-6 text-center text-sm text-gray-400">No line items available.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {bill.notes && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-sm text-gray-700">
+            <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Notes</p>
+            <p>{bill.notes}</p>
+          </div>
+        )}
+
+        <div className="flex justify-end">
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Close</button>
+        </div>
+      </div>
     </Modal>
   )
 }

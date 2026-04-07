@@ -45,6 +45,7 @@ function JournalEditModal({ je, onClose }: { je: JournalEntry; onClose: () => vo
     onSuccess: () => {
       toast.success('Journal entry updated')
       qc.invalidateQueries({ queryKey: ['journals'] })
+      qc.invalidateQueries({ queryKey: ['report'] })
       onClose()
     },
     onError: (e: { response?: { data?: { detail?: string } } }) =>
@@ -201,6 +202,7 @@ function JournalCreateModal({ onClose }: { onClose: () => void }) {
     onSuccess: () => {
       toast.success('Journal entry created')
       qc.invalidateQueries({ queryKey: ['journals'] })
+      qc.invalidateQueries({ queryKey: ['report'] })
       onClose()
     },
     onError: (e: { response?: { data?: { detail?: string } } }) =>
@@ -405,13 +407,13 @@ export default function JournalsPage() {
   })
   const mutatePost = useMutation({
     mutationFn: (id: number) => apiClient.post(ACCOUNTING.JOURNAL_POST(id)),
-    onSuccess: () => { toast.success('Entry posted'); qc.invalidateQueries({ queryKey: ['journals'] }) },
+    onSuccess: () => { toast.success('Entry posted'); qc.invalidateQueries({ queryKey: ['journals'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: (e: { response?: { data?: { detail?: string } } }) =>
       toast.error(e?.response?.data?.detail ?? 'Post failed'),
   })
   const mutateDelete = useMutation({
     mutationFn: (id: number) => apiClient.delete(ACCOUNTING.JOURNAL_DETAIL(id)),
-    onSuccess: () => { toast.success('Journal entry deleted'); qc.invalidateQueries({ queryKey: ['journals'] }) },
+    onSuccess: () => { toast.success('Journal entry deleted'); qc.invalidateQueries({ queryKey: ['journals'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: (e: { response?: { data?: { detail?: string } } }) =>
       toast.error(e?.response?.data?.detail ?? 'Delete failed'),
   })

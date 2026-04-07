@@ -4,6 +4,7 @@ import apiClient from '../../../api/client'
 import { ACCOUNTING } from '../../../api/endpoints'
 import toast from 'react-hot-toast'
 import DateDisplay from '../../../components/DateDisplay'
+import NepaliDatePicker from '../../../components/NepaliDatePicker'
 import { Modal, Spinner } from '../components/accountingShared'
 import { useAccountingFy } from '../hooks'
 import { addFyParam, formatNpr, toPage, CHEQUE_STATUS_COLORS } from '../utils'
@@ -23,6 +24,7 @@ export default function ChequeRegisterPage() {
 
   const [view, setView] = useState<ChequeView>('register')
   const [filterType, setFilterType] = useState<'all' | 'incoming' | 'outgoing'>('all')
+  const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null)
   const [updateTarget, setUpdateTarget] = useState<Payment | null>(null)
   const [newChequeStatus, setNewChequeStatus] = useState('')
 
@@ -74,7 +76,7 @@ export default function ChequeRegisterPage() {
     onSuccess: () => {
       toast.success('Cheque issued and journal entry created')
       resetIssue(); setView('register')
-      qc.invalidateQueries({ queryKey: ['payments', 'cheque'] })
+      qc.invalidateQueries({ queryKey: ['payments', 'cheque'] }); qc.invalidateQueries({ queryKey: ['report'] })
     },
     onError: (e: { message?: string }) => toast.error(e?.message ?? 'Failed to issue cheque'),
   })
@@ -94,7 +96,7 @@ export default function ChequeRegisterPage() {
     onSuccess: () => {
       toast.success('Cheque received and journal entry created')
       resetReceive(); setView('register')
-      qc.invalidateQueries({ queryKey: ['payments', 'cheque'] })
+      qc.invalidateQueries({ queryKey: ['payments', 'cheque'] }); qc.invalidateQueries({ queryKey: ['report'] })
     },
     onError: (e: { message?: string }) => toast.error(e?.message ?? 'Failed to record cheque'),
   })
@@ -104,7 +106,7 @@ export default function ChequeRegisterPage() {
     onSuccess: () => {
       toast.success('Cheque status updated')
       setUpdateTarget(null); setNewChequeStatus('')
-      qc.invalidateQueries({ queryKey: ['payments', 'cheque'] })
+      qc.invalidateQueries({ queryKey: ['payments', 'cheque'] }); qc.invalidateQueries({ queryKey: ['report'] })
     },
     onError: (e: { message?: string }) => toast.error(e?.message ?? 'Failed to update status'),
   })
@@ -151,7 +153,11 @@ export default function ChequeRegisterPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Cheque Date *</label>
-              <input data-lpignore="true" type="date" value={issDate} onChange={e => setIssDate(e.target.value)} className={inputCls2} />
+              <NepaliDatePicker
+                value={issDate}
+                onChange={setIssDate}
+                className={inputCls2}
+              />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Bank Account</label>
@@ -205,7 +211,11 @@ export default function ChequeRegisterPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Cheque Date *</label>
-              <input data-lpignore="true" type="date" value={rcvDate} onChange={e => setRcvDate(e.target.value)} className={inputCls2} />
+              <NepaliDatePicker
+                value={rcvDate}
+                onChange={setRcvDate}
+                className={inputCls2}
+              />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Deposit to Bank</label>
@@ -277,7 +287,12 @@ export default function ChequeRegisterPage() {
                 {payments.length === 0 ? (
                   <tr><td colSpan={8} className="py-12 text-center text-sm text-gray-400">No cheques found for this period.</td></tr>
                 ) : payments.map(p => (
-                  <tr key={p.id} className="hover:bg-gray-50/60">
+                  <tr
+                    key={p.id}
+                    className="hover:bg-gray-50/60 cursor-pointer"
+                    title="Click to view cheque details"
+                    onClick={() => setSelectedPayment(p)}
+                  >
                     <td className="px-4 py-3 font-mono text-xs text-indigo-600">{p.reference || p.payment_number}</td>
                     <td className="px-4 py-3 text-gray-600"><DateDisplay adDate={p.date} /></td>
                     <td className="px-4 py-3 text-xs font-medium text-gray-700 max-w-[140px] truncate" title={paymentPartyName(p) !== '—' ? paymentPartyName(p) : (p.notes || '—')}>
@@ -299,7 +314,7 @@ export default function ChequeRegisterPage() {
                     </td>
                     <td className="px-4 py-3">
                       {p.method === 'cheque' && (
-                        <button onClick={() => { setUpdateTarget(p); setNewChequeStatus(p.cheque_status || 'issued') }}
+                        <button onClick={(e) => { e.stopPropagation(); setUpdateTarget(p); setNewChequeStatus(p.cheque_status || 'issued') }}
                           className="text-xs text-indigo-600 hover:text-indigo-800 underline whitespace-nowrap">
                           Update
                         </button>
@@ -311,6 +326,76 @@ export default function ChequeRegisterPage() {
             </table>
           )}
         </div>
+      )}
+
+      {selectedPayment && (
+        <Modal title={`Cheque ${selectedPayment.reference || selectedPayment.payment_number}`} onClose={() => setSelectedPayment(null)}>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Party</p>
+                <p className="text-sm font-semibold text-gray-800">{paymentPartyName(selectedPayment)}</p>
+              </div>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Amount</p>
+                <p className="text-sm font-bold text-gray-800 tabular-nums">{npr(selectedPayment.amount)}</p>
+              </div>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Date</p>
+                <p className="text-sm font-semibold text-gray-800"><DateDisplay adDate={selectedPayment.date} /></p>
+              </div>
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs text-gray-500">Method</p>
+                <p className="text-sm font-semibold text-gray-800 capitalize">{selectedPayment.method.replace('_', ' ')}</p>
+              </div>
+            </div>
+
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Cheque Details</p>
+              </div>
+              <div className="divide-y divide-gray-100">
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Cheque Number</span>
+                  <span className="font-mono text-indigo-600">{selectedPayment.reference || selectedPayment.payment_number}</span>
+                </div>
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Bank Account</span>
+                  <span className="text-gray-800">{selectedPayment.bank_account_name || '—'}</span>
+                </div>
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Status</span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${CHEQUE_STATUS_COLORS[selectedPayment.cheque_status] ?? 'bg-gray-100 text-gray-500'}`}>
+                    {selectedPayment.cheque_status ? selectedPayment.cheque_status.charAt(0).toUpperCase() + selectedPayment.cheque_status.slice(1) : '—'}
+                  </span>
+                </div>
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Reference</span>
+                  <span className="text-gray-800">{selectedPayment.reference || '—'}</span>
+                </div>
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Created By</span>
+                  <span className="text-gray-800">{selectedPayment.created_by_name || '—'}</span>
+                </div>
+                <div className="px-4 py-2 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">Created At</span>
+                  <span className="text-gray-800">{selectedPayment.created_at ? <DateDisplay adDate={selectedPayment.created_at} /> : '—'}</span>
+                </div>
+              </div>
+            </div>
+
+            {selectedPayment.notes && (
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Notes</p>
+                <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectedPayment.notes}</p>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2 border-t border-gray-100">
+              <button onClick={() => setSelectedPayment(null)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">Close</button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {updateTarget && (

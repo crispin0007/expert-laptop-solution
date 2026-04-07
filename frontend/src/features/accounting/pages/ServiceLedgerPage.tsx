@@ -23,11 +23,19 @@ export default function ServiceLedgerPage() {
   const [dateTo, setDateTo]       = useState(() => new Date().toISOString().slice(0, 10))
   const [submitted, setSubmitted] = useState(false)
 
-  const { data: report, isLoading, isFetching } = useQuery<ServiceLedgerReport>({
+  const { data: report, isLoading, isFetching } = useQuery<ServiceLedgerReport, Error, ServiceLedgerReport>({
     queryKey: ['service-ledger', serviceId, dateFrom, dateTo],
-    queryFn: () => apiClient.get(
-      `${ACCOUNTING.REPORT_SERVICE_LEDGER}?service_id=${serviceId}&date_from=${dateFrom}&date_to=${dateTo}`
-    ).then(r => r.data?.data ?? r.data),
+    queryFn: async () => {
+      try {
+        const r = await apiClient.get(
+          `${ACCOUNTING.REPORT_SERVICE_LEDGER}?service_id=${serviceId}&date_from=${dateFrom}&date_to=${dateTo}`
+        )
+        return r.data?.data ?? r.data
+      } catch {
+        toast.error('Failed to load service ledger. Please verify the selected service and date range.')
+        throw new Error('Service ledger load failed')
+      }
+    },
     enabled: submitted && !!serviceId,
   })
 

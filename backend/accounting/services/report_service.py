@@ -3597,6 +3597,40 @@ def cost_centre_pl(tenant, cost_centre_id, date_from, date_to):
     }
 
 
+def _line_amount(line):
+    """Compute line amount from explicit amount or unit price / qty / discount."""
+    raw_amount = line.get('amount')
+    if raw_amount not in (None, '', 0):
+        try:
+            return Decimal(str(raw_amount))
+        except Exception:
+            pass
+    try:
+        qty = Decimal(str(line.get('qty', 1)))
+        unit_price = Decimal(str(line.get('unit_price', 0)))
+        discount_pct = Decimal(str(line.get('discount', 0)))
+        return max(qty * unit_price * (Decimal('1') - discount_pct / Decimal('100')), Decimal('0'))
+    except Exception:
+        return _zero()
+
+
+def _service_line_matches(line, service, service_id, fallback=False):
+    """Return True when an invoice service line should count for the selected service."""
+    service_id_value = line.get('service_id')
+    if service_id_value not in (None, '', 0):
+        return str(service_id_value) == str(service_id)
+
+    if fallback:
+        return True
+
+    description = (line.get('description') or '').strip().lower()
+    service_name = (service.name or '').strip().lower()
+    if service_name and service_name in description:
+        return True
+
+    return False
+
+
 # ── Service Ledger ────────────────────────────────────────────────────────────
 
 def service_ledger(tenant, service_id, date_from, date_to):
@@ -3616,18 +3650,26 @@ def service_ledger(tenant, service_id, date_from, date_to):
     cost_total = _zero()
 
     # Revenue from invoice lines that reference this service
+    service_line_fallback = Product.objects.filter(
+        tenant=tenant,
+        is_service=True,
+        is_deleted=False,
+    ).count() == 1
+
     for inv in Invoice.objects.filter(
         tenant=tenant,
         status__in=['issued', 'paid'],
-        created_at__date__gte=date_from,
-        created_at__date__lte=date_to,
+        date__gte=date_from,
+        date__lte=date_to,
     ).select_related('customer'):
         for line in (inv.line_items or []):
-            if (line.get('line_type') == 'service'
-                    and str(line.get('service_id', '')) == str(service_id)):
-                amt = Decimal(str(line.get('amount') or 0))
+            if line.get('line_type') == 'service' and _service_line_matches(
+                line, service, service_id,
+                fallback=service_line_fallback,
+            ):
+                amt = _line_amount(line)
                 rows.append({
-                    'date':        inv.created_at.date().isoformat(),
+                    'date':        inv.date.isoformat() if inv.date else inv.created_at.date().isoformat(),
                     'doc_type':    'Invoice',
                     'doc_number':  inv.invoice_number,
                     'party':       inv.customer.name if inv.customer else '—',
@@ -3695,19 +3737,38 @@ def service_report(tenant, date_from, date_to):
     }
 
     # Revenue from invoice lines
+    fallback_service = None
+    if len(service_map) == 1:
+        fallback_service = next(iter(service_map.values()))
+
     for inv in Invoice.objects.filter(
         tenant=tenant,
         status__in=['issued', 'paid'],
-        created_at__date__gte=date_from,
-        created_at__date__lte=date_to,
+        date__gte=date_from,
+        date__lte=date_to,
     ):
         for line in (inv.line_items or []):
-            if line.get('line_type') == 'service':
-                sid = line.get('service_id')
-                if sid and int(sid) in service_map:
-                    amt = Decimal(str(line.get('amount') or 0))
-                    service_map[int(sid)]['revenue']       += amt
-                    service_map[int(sid)]['invoice_count'] += 1
+            if line.get('line_type') != 'service':
+                continue
+
+            sid = line.get('service_id')
+            amt = _line_amount(line)
+            if sid and int(sid) in service_map:
+                service_map[int(sid)]['revenue']       += amt
+                service_map[int(sid)]['invoice_count'] += 1
+                continue
+
+            if sid in (None, '') and fallback_service is not None:
+                fallback_service['revenue']       += amt
+                fallback_service['invoice_count'] += 1
+                continue
+
+            description = (line.get('description') or '').strip().lower()
+            for svc_id, svc_data in service_map.items():
+                if svc_data['name'].strip().lower() and svc_data['name'].strip().lower() in description:
+                    svc_data['revenue']       += amt
+                    svc_data['invoice_count'] += 1
+                    break
 
     # Cost from expenses
     for exp in Expense.objects.filter(

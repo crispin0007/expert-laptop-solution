@@ -28,6 +28,7 @@ export default function CreditNotesPage() {
   const { fyYear } = useAccountingFy()
   const [editCn, setEditCn] = useState<CreditNote | null>(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [selectedCreditNote, setSelectedCreditNote] = useState<CreditNote | null>(null)
   const [focusedCreditNoteId, setFocusedCreditNoteId] = useState<number | null>(null)
   const focusCreditNoteId = Number(searchParams.get('focus_credit_note_id') ?? 0)
 
@@ -38,17 +39,17 @@ export default function CreditNotesPage() {
 
   const mutateIssue = useMutation({
     mutationFn: (id: number) => apiClient.post(ACCOUNTING.CREDIT_NOTE_ISSUE(id)),
-    onSuccess: () => { toast.success('Credit note issued'); qc.invalidateQueries({ queryKey: ['credit-notes'] }) },
+    onSuccess: () => { toast.success('Credit note issued'); qc.invalidateQueries({ queryKey: ['credit-notes'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: () => toast.error('Action failed'),
   })
   const mutateVoid = useMutation({
     mutationFn: (id: number) => apiClient.post(ACCOUNTING.CREDIT_NOTE_VOID(id)),
-    onSuccess: () => { toast.success('Credit note voided'); qc.invalidateQueries({ queryKey: ['credit-notes'] }) },
+    onSuccess: () => { toast.success('Credit note voided'); qc.invalidateQueries({ queryKey: ['credit-notes'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: () => toast.error('Action failed'),
   })
   const mutateDelete = useMutation({
     mutationFn: (id: number) => apiClient.delete(ACCOUNTING.CREDIT_NOTE_DETAIL(id)),
-    onSuccess: () => { toast.success('Credit note deleted'); qc.invalidateQueries({ queryKey: ['credit-notes'] }) },
+    onSuccess: () => { toast.success('Credit note deleted'); qc.invalidateQueries({ queryKey: ['credit-notes'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: (e: { response?: { data?: { detail?: string } } }) =>
       toast.error(e?.response?.data?.detail ?? 'Failed to delete credit note'),
   })
@@ -91,7 +92,8 @@ export default function CreditNotesPage() {
                   <tr
                     key={cn.id}
                     id={`credit-note-row-${cn.id}`}
-                    className={`hover:bg-gray-50/50 ${focusedCreditNoteId === cn.id ? 'bg-indigo-50 ring-1 ring-indigo-200' : ''}`}
+                    className={`hover:bg-gray-50/50 cursor-pointer ${focusedCreditNoteId === cn.id ? 'bg-indigo-50 ring-1 ring-indigo-200' : ''}`}
+                    onClick={() => setSelectedCreditNote(cn)}
                   >
                     <td className="px-4 py-3 font-mono text-xs font-medium text-indigo-600">{cn.credit_note_number}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{cn.invoice_number ?? '—'}</td>
@@ -107,16 +109,16 @@ export default function CreditNotesPage() {
                           </button>
                         )}
                         {cn.status === 'draft' && can('can_manage_accounting') && (
-                          <button onClick={() => { confirm({ title: 'Delete Credit Note', message: `Delete ${cn.credit_note_number}? This cannot be undone.`, variant: 'danger', confirmLabel: 'Delete' }).then(ok => { if (ok) mutateDelete.mutate(cn.id) }) }}
+                          <button onClick={(e) => { e.stopPropagation(); confirm({ title: 'Delete Credit Note', message: `Delete ${cn.credit_note_number}? This cannot be undone.`, variant: 'danger', confirmLabel: 'Delete' }).then(ok => { if (ok) mutateDelete.mutate(cn.id) }) }}
                             title="Delete" className="p-1.5 rounded hover:bg-red-50 text-red-400 transition-colors">
                             <Trash2 size={14} />
                           </button>
                         )}
                         {cn.status === 'draft' && (
-                          <button onClick={() => mutateIssue.mutate(cn.id)} className="px-2 py-1 text-xs bg-blue-50 text-blue-700 rounded hover:bg-blue-100">Issue</button>
+                          <button onClick={(e) => { e.stopPropagation(); mutateIssue.mutate(cn.id) }} className="px-2 py-1 text-xs bg-blue-50 text-blue-700 rounded hover:bg-blue-100">Issue</button>
                         )}
                         {cn.status !== 'void' && (
-                          <button onClick={() => { confirm({ title: 'Void Credit Note', message: 'Void this credit note?', variant: 'danger', confirmLabel: 'Void' }).then(ok => { if (ok) mutateVoid.mutate(cn.id) }) }} className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded hover:bg-red-100">Void</button>
+                          <button onClick={(e) => { e.stopPropagation(); confirm({ title: 'Void Credit Note', message: 'Void this credit note?', variant: 'danger', confirmLabel: 'Void' }).then(ok => { if (ok) mutateVoid.mutate(cn.id) }) }} className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded hover:bg-red-100">Void</button>
                         )}
                       </div>
                     </td>
@@ -127,7 +129,63 @@ export default function CreditNotesPage() {
           {!data?.results?.length && <EmptyState message="No credit notes yet." />}
         </SectionCard>
       )}
+      {selectedCreditNote && <CreditNoteDetailModal creditNote={selectedCreditNote} onClose={() => setSelectedCreditNote(null)} />}
     </div>
+  )
+}
+
+function CreditNoteDetailModal({ creditNote, onClose }: { creditNote: CreditNote; onClose: () => void }) {
+  return (
+    <Modal title={`Credit Note ${creditNote.credit_note_number}`} onClose={onClose}>
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Invoice</p>
+            <p className="text-sm font-semibold text-gray-800">{creditNote.invoice_number || '—'}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Status</p>
+            <p className="text-sm font-semibold text-gray-800 capitalize">{creditNote.status}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Total</p>
+            <p className="text-sm font-semibold text-gray-800 tabular-nums">{npr(creditNote.total)}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Issued</p>
+            <p className="text-sm font-semibold text-gray-800">{creditNote.issued_at ? fmt(creditNote.issued_at) : '—'}</p>
+          </div>
+        </div>
+
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-700">
+          <p className="font-semibold mb-2">Reason</p>
+          <p>{creditNote.reason || 'No reason provided.'}</p>
+        </div>
+
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
+            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Line Items</p>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {(creditNote.line_items ?? []).length > 0 ? (
+              (creditNote.line_items as any[]).map((item, idx) => (
+                <div key={idx} className="px-4 py-3 grid grid-cols-[1fr_auto_auto] gap-3 text-sm text-gray-700">
+                  <p>{item.description || 'Line item'}</p>
+                  <p className="font-semibold">{item.qty ?? 1}×</p>
+                  <p className="font-semibold tabular-nums">{npr(String(item.unit_price || '0'))}</p>
+                </div>
+              ))
+            ) : (
+              <div className="px-4 py-3 text-sm text-gray-500">No line items available.</div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex justify-end pt-2 border-t border-gray-100">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">Close</button>
+        </div>
+      </div>
+    </Modal>
   )
 }
 
@@ -148,7 +206,7 @@ function CreditNoteCreateModal({ onClose }: { onClose: () => void }) {
 
   const mutation = useMutation({
     mutationFn: (payload: unknown) => apiClient.post(ACCOUNTING.CREDIT_NOTES, payload),
-    onSuccess: () => { toast.success('Credit note created'); qc.invalidateQueries({ queryKey: ['credit-notes'] }); onClose() },
+    onSuccess: () => { toast.success('Credit note created'); qc.invalidateQueries({ queryKey: ['credit-notes'] }); qc.invalidateQueries({ queryKey: ['report'] }); onClose() },
     onError: (e: { response?: { data?: { detail?: string } } }) =>
       toast.error(e?.response?.data?.detail ?? 'Failed to create credit note'),
   })
@@ -299,7 +357,7 @@ function CreditNoteEditModal({ cn, onClose }: { cn: CreditNote; onClose: () => v
     mutationFn: (payload: unknown) => apiClient.patch(ACCOUNTING.CREDIT_NOTE_DETAIL(cn.id), payload),
     onSuccess: () => {
       toast.success('Credit note updated')
-      qc.invalidateQueries({ queryKey: ['credit-notes'] })
+      qc.invalidateQueries({ queryKey: ['credit-notes'] }); qc.invalidateQueries({ queryKey: ['report'] })
       onClose()
     },
     onError: (e: { response?: { data?: { detail?: string } } }) =>

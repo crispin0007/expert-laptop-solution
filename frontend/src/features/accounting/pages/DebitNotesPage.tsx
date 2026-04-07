@@ -28,6 +28,7 @@ export default function DebitNotesPage() {
   const [statusFilter, setStatusFilter] = useState('')
   const { fyYear } = useAccountingFy()
   const [showCreate, setShowCreate] = useState(false)
+  const [detailDn, setDetailDn] = useState<DebitNote | null>(null)
   const [editDn, setEditDn] = useState<DebitNote | null>(null)
   const [focusedDebitNoteId, setFocusedDebitNoteId] = useState<number | null>(null)
   const focusDebitNoteId = Number(searchParams.get('focus_debit_note_id') ?? 0)
@@ -37,11 +38,11 @@ export default function DebitNotesPage() {
     queryFn: () => apiClient.get(addFyParam(ACCOUNTING.DEBIT_NOTES + (statusFilter ? `?status=${statusFilter}` : ''), fyYear)).then(r => toPage<DebitNote>(r.data)),
   })
 
-  const mutateIssue = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.DEBIT_NOTE_ISSUE(id)), onSuccess: () => { toast.success('Debit note issued'); qc.invalidateQueries({ queryKey: ['debit-notes'] }) }, onError: (e: {response?: {data?: {detail?: string}}}) => toast.error(e?.response?.data?.detail ?? 'Failed') })
-  const mutateVoid  = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.DEBIT_NOTE_VOID(id)),  onSuccess: () => { toast.success('Debit note voided');  qc.invalidateQueries({ queryKey: ['debit-notes'] }) }, onError: () => toast.error('Failed') })
+  const mutateIssue = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.DEBIT_NOTE_ISSUE(id)), onSuccess: () => { toast.success('Debit note issued'); qc.invalidateQueries({ queryKey: ['debit-notes'] }); qc.invalidateQueries({ queryKey: ['report'] }) }, onError: (e: {response?: {data?: {detail?: string}}}) => toast.error(e?.response?.data?.detail ?? 'Failed') })
+  const mutateVoid  = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.DEBIT_NOTE_VOID(id)),  onSuccess: () => { toast.success('Debit note voided');  qc.invalidateQueries({ queryKey: ['debit-notes'] }); qc.invalidateQueries({ queryKey: ['report'] }) }, onError: () => toast.error('Failed') })
   const mutateDelete = useMutation({
     mutationFn: (id: number) => apiClient.delete(ACCOUNTING.DEBIT_NOTE_DETAIL(id)),
-    onSuccess: () => { toast.success('Debit note deleted'); qc.invalidateQueries({ queryKey: ['debit-notes'] }) },
+    onSuccess: () => { toast.success('Debit note deleted'); qc.invalidateQueries({ queryKey: ['debit-notes'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: (e: { response?: { data?: { detail?: string } } }) => toast.error(e?.response?.data?.detail ?? 'Failed to delete'),
   })
 
@@ -58,6 +59,7 @@ export default function DebitNotesPage() {
   return (
     <div className="space-y-4">
       {showCreate && <DebitNoteCreateModal onClose={() => setShowCreate(false)} />}
+      {detailDn && <DebitNoteDetailModal dn={detailDn} onClose={() => setDetailDn(null)} />}
       {editDn && <DebitNoteEditModal dn={editDn} onClose={() => setEditDn(null)} />}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
@@ -106,7 +108,8 @@ export default function DebitNotesPage() {
                     <tr
                       key={dn.id}
                       id={`debit-note-row-${dn.id}`}
-                      className={`hover:bg-gray-50 transition-colors ${focusedDebitNoteId === dn.id ? 'bg-indigo-50 ring-1 ring-indigo-200' : ''}`}
+                      onClick={() => setDetailDn(dn)}
+                      className={`hover:bg-gray-50 transition-colors cursor-pointer ${focusedDebitNoteId === dn.id ? 'bg-indigo-50 ring-1 ring-indigo-200' : ''}`}
                     >
                       <td className="px-4 py-3 font-mono font-semibold text-gray-700 whitespace-nowrap">{dn.debit_note_number}</td>
                       <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{dn.bill_number}</td>
@@ -121,22 +124,22 @@ export default function DebitNotesPage() {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1">
                           {dn.status === 'draft' && can('can_manage_accounting') && (
-                            <button onClick={() => setEditDn(dn)} title="Edit"
+                            <button onClick={(e) => { e.stopPropagation(); setEditDn(dn) }} title="Edit"
                               className="p-1.5 rounded hover:bg-indigo-50 text-indigo-400 transition-colors">
                               <Pencil size={13} />
                             </button>
                           )}
                           {dn.status === 'draft' && can('can_manage_accounting') && (
-                            <button onClick={() => confirm({ title: 'Delete Debit Note', message: `Delete ${dn.debit_note_number}?`, variant: 'danger', confirmLabel: 'Delete' }).then(ok => { if (ok) mutateDelete.mutate(dn.id) })}
+                            <button onClick={(e) => { e.stopPropagation(); confirm({ title: 'Delete Debit Note', message: `Delete ${dn.debit_note_number}?`, variant: 'danger', confirmLabel: 'Delete' }).then(ok => { if (ok) mutateDelete.mutate(dn.id) }) }}
                               title="Delete" className="p-1.5 rounded hover:bg-red-50 text-red-400 transition-colors">
                               <Trash2 size={13} />
                             </button>
                           )}
                           {dn.status === 'draft' && (
-                            <button onClick={() => mutateIssue.mutate(dn.id)} className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors whitespace-nowrap">Issue</button>
+                            <button onClick={(e) => { e.stopPropagation(); mutateIssue.mutate(dn.id) }} className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors whitespace-nowrap">Issue</button>
                           )}
                           {dn.status !== 'void' && dn.status !== 'applied' && (
-                            <button onClick={() => mutateVoid.mutate(dn.id)} className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors whitespace-nowrap">Void</button>
+                            <button onClick={(e) => { e.stopPropagation(); mutateVoid.mutate(dn.id) }} className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors whitespace-nowrap">Void</button>
                           )}
                         </div>
                       </td>
@@ -265,6 +268,73 @@ function DebitNoteCreateModal({ onClose }: { onClose: () => void }) {
   )
 }
 
+function DebitNoteDetailModal({ dn, onClose }: { dn: DebitNote; onClose: () => void }) {
+  return (
+    <Modal title={`Debit Note ${dn.debit_note_number}`} onClose={onClose}>
+      <div className="space-y-4 text-sm">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Debit Note</p>
+            <p className="font-semibold text-gray-800">{dn.debit_note_number}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Status</p>
+            <p className="font-semibold text-gray-800 capitalize">{dn.status}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Bill</p>
+            <p className="font-semibold text-gray-800">{dn.bill_number}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Total</p>
+            <p className="font-semibold text-gray-800">{npr(dn.total)}</p>
+          </div>
+        </div>
+
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase tracking-wide">Reason</div>
+          <div className="px-4 py-3 text-sm text-gray-700">{dn.reason || '—'}</div>
+        </div>
+
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase tracking-wide">Line Items</div>
+          <div className="max-h-64 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs text-gray-500">Description</th>
+                  <th className="px-3 py-2 text-right text-xs text-gray-500">Qty</th>
+                  <th className="px-3 py-2 text-right text-xs text-gray-500">Unit Price</th>
+                  <th className="px-3 py-2 text-right text-xs text-gray-500">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {(dn.line_items ?? []).map((item: any, idx: number) => (
+                  <tr key={idx} className="hover:bg-gray-50">
+                    <td className="px-3 py-2 text-gray-700">{item.description || item.name || '—'}</td>
+                    <td className="px-3 py-2 text-right text-gray-600">{item.qty ?? item.quantity ?? '—'}</td>
+                    <td className="px-3 py-2 text-right text-gray-600 tabular-nums">{npr(String(item.unit_price ?? item.unit_cost ?? '0'))}</td>
+                    <td className="px-3 py-2 text-right text-gray-800 tabular-nums">{npr(String(item.total ?? item.line_total ?? Number(item.qty || 0) * Number(item.unit_price || item.unit_cost || 0)))}</td>
+                  </tr>
+                ))}
+                {!(dn.line_items?.length) && (
+                  <tr>
+                    <td colSpan={4} className="px-3 py-6 text-center text-sm text-gray-400">No line items available.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="flex justify-end">
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Close</button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 function DebitNoteEditModal({ dn, onClose }: { dn: DebitNote; onClose: () => void }) {
   const qc = useQueryClient()
   const [reason, setReason] = useState(dn.reason ?? '')
@@ -282,7 +352,7 @@ function DebitNoteEditModal({ dn, onClose }: { dn: DebitNote; onClose: () => voi
 
   const mutation = useMutation({
     mutationFn: (payload: unknown) => apiClient.patch(ACCOUNTING.DEBIT_NOTE_DETAIL(dn.id), payload),
-    onSuccess: () => { toast.success('Debit note updated'); qc.invalidateQueries({ queryKey: ['debit-notes'] }); onClose() },
+    onSuccess: () => { toast.success('Debit note updated'); qc.invalidateQueries({ queryKey: ['debit-notes'] }); qc.invalidateQueries({ queryKey: ['report'] }); onClose() },
     onError: (e: { response?: { data?: { detail?: string } } }) => toast.error(e?.response?.data?.detail ?? 'Failed to update'),
   })
 

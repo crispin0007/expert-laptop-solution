@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useConfirm } from '../../../components/ConfirmDialog'
+import NepaliDatePicker from '../../../components/NepaliDatePicker'
 import toast from 'react-hot-toast'
 import { Search, Plus, CheckCircle2, XCircle, ArrowRightCircle } from 'lucide-react'
 import { useAccountingFy } from '../hooks'
@@ -22,6 +23,57 @@ const EXPENSE_CATEGORIES = [
   { value: 'custom', label: 'Custom' },
 ] as const
 
+function ExpenseDetailModal({ expense, onClose }: { expense: Expense; onClose: () => void }) {
+  return (
+    <Modal title={`Expense ${expense.id}`} onClose={onClose}>
+      <div className="space-y-4 text-sm">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Category</p>
+            <p className="font-semibold text-gray-800">{expense.category_display || expense.category}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Status</p>
+            <p className="font-semibold text-gray-800 capitalize">{expense.status_display || expense.status}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Date</p>
+            <p className="font-semibold text-gray-800">{formatBsDate(expense.date)}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Amount</p>
+            <p className="font-semibold text-gray-800">{formatNpr(expense.amount)}</p>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div>
+            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Description</p>
+            <p className="text-sm text-gray-700">{expense.description || '—'}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Notes</p>
+            <p className="text-sm text-gray-700">{expense.notes || '—'}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+              <p className="text-xs text-gray-500">Account</p>
+              <p className="text-sm text-gray-700">{expense.account_name || '—'}</p>
+            </div>
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+              <p className="text-xs text-gray-500">Payment Account</p>
+              <p className="text-sm text-gray-700">{expense.payment_account_name || '—'}</p>
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Close</button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 export default function ExpensesPage() {
   const qc = useQueryClient()
   const confirm = useConfirm()
@@ -29,6 +81,7 @@ export default function ExpensesPage() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [showCreate, setShowCreate] = useState(false)
+  const [detailExpense, setDetailExpense] = useState<Expense | null>(null)
   const [newExpense, setNewExpense] = useState({
     category: 'other',
     custom_category: '',
@@ -52,6 +105,7 @@ export default function ExpensesPage() {
         notes: '',
       })
       qc.invalidateQueries({ queryKey: ['expenses'] })
+      qc.invalidateQueries({ queryKey: ['report'] })
     },
     onError: () => toast.error('Failed to create expense'),
   })
@@ -70,17 +124,17 @@ export default function ExpensesPage() {
 
   const approve = useMutation({
     mutationFn: (id: number) => approveExpense(id),
-    onSuccess: () => { toast('Expense approved', { icon: '✅' }); qc.invalidateQueries({ queryKey: ['expenses'] }) },
+    onSuccess: () => { toast('Expense approved', { icon: '✅' }); qc.invalidateQueries({ queryKey: ['expenses'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: () => toast.error('Action failed'),
   })
   const reject = useMutation({
     mutationFn: (id: number) => rejectExpense(id),
-    onSuccess: () => { toast('Expense rejected', { icon: '✅' }); qc.invalidateQueries({ queryKey: ['expenses'] }) },
+    onSuccess: () => { toast('Expense rejected', { icon: '✅' }); qc.invalidateQueries({ queryKey: ['expenses'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: () => toast.error('Action failed'),
   })
   const post = useMutation({
     mutationFn: (id: number) => postExpense(id),
-    onSuccess: () => { toast('Expense posted', { icon: '✅' }); qc.invalidateQueries({ queryKey: ['expenses'] }) },
+    onSuccess: () => { toast('Expense posted', { icon: '✅' }); qc.invalidateQueries({ queryKey: ['expenses'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: () => toast.error('Action failed'),
   })
 
@@ -184,13 +238,10 @@ export default function ExpensesPage() {
                 />
               </Field>
               <Field label="Date">
-                <input
-                  data-lpignore="true"
-                  type="date"
+                <NepaliDatePicker
                   value={newExpense.date}
-                  onChange={e => setNewExpense(prev => ({ ...prev, date: e.target.value }))}
+                  onChange={value => setNewExpense(prev => ({ ...prev, date: value }))}
                   className={inputCls}
-                  required
                 />
               </Field>
             </div>
@@ -213,6 +264,7 @@ export default function ExpensesPage() {
           </form>
         </Modal>
       )}
+      {detailExpense && <ExpenseDetailModal expense={detailExpense} onClose={() => setDetailExpense(null)} />}
       {isLoading ? <Spinner /> : (
         <SectionCard>
           <TableContainer className="min-w-[900px]">
@@ -225,7 +277,7 @@ export default function ExpensesPage() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {data?.results?.length ? data.results.map(expense => (
-                <tr key={expense.id} className="hover:bg-gray-50/50">
+                <tr key={expense.id} onClick={() => setDetailExpense(expense)} className="hover:bg-gray-50/50 cursor-pointer">
                   <td className="px-4 py-3 text-sm text-gray-700">{expense.category_display || expense.category || '—'}</td>
                   <td className="px-4 py-3 text-sm text-gray-500 max-w-[240px] truncate">{expense.description || expense.notes || '—'}</td>
                   <td className="px-4 py-3 text-xs text-gray-500">{formatBsDate(expense.date)}</td>
@@ -237,7 +289,7 @@ export default function ExpensesPage() {
                   <td className="px-4 py-3 space-x-1 text-right">
                     {expense.status === 'draft' && (
                       <button
-                        onClick={() => approve.mutate(expense.id)}
+                        onClick={(e) => { e.stopPropagation(); approve.mutate(expense.id) }}
                         className="px-2 py-1 text-xs bg-indigo-50 text-indigo-700 rounded hover:bg-indigo-100"
                         title="Approve expense"
                       >
@@ -247,14 +299,14 @@ export default function ExpensesPage() {
                     {expense.status === 'submitted' && (
                       <>
                         <button
-                          onClick={() => confirm({ title: 'Reject Expense', message: `Reject ${expense.category_display || 'expense'}?`, variant: 'danger', confirmLabel: 'Reject' }).then(ok => { if (ok) reject.mutate(expense.id) })}
+                          onClick={(e) => { e.stopPropagation(); confirm({ title: 'Reject Expense', message: `Reject ${expense.category_display || 'expense'}?`, variant: 'danger', confirmLabel: 'Reject' }).then(ok => { if (ok) reject.mutate(expense.id) }) }}
                           className="px-2 py-1 text-xs bg-red-50 text-red-700 rounded hover:bg-red-100"
                           title="Reject expense"
                         >
                           <XCircle size={14} />
                         </button>
                         <button
-                          onClick={() => approve.mutate(expense.id)}
+                          onClick={(e) => { e.stopPropagation(); approve.mutate(expense.id) }}
                           className="px-2 py-1 text-xs bg-green-50 text-green-700 rounded hover:bg-green-100"
                           title="Approve expense"
                         >
@@ -264,7 +316,7 @@ export default function ExpensesPage() {
                     )}
                     {expense.status === 'approved' && (
                       <button
-                        onClick={() => post.mutate(expense.id)}
+                        onClick={(e) => { e.stopPropagation(); post.mutate(expense.id) }}
                         className="px-2 py-1 text-xs bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100"
                         title="Post expense"
                       >

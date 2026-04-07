@@ -34,6 +34,7 @@ export default function QuotationsPage() {
   const [statusFilter, setStatusFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [editQuotation, setEditQuotation] = useState<Quotation | null>(null)
+  const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
   const { fyYear } = useAccountingFy()
 
   const { data, isLoading } = useQuery<ApiPage<Quotation>>({
@@ -44,13 +45,14 @@ export default function QuotationsPage() {
   const mutateSend    = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.QUOTATION_SEND(id)),    onSuccess: () => { toast.success('Quotation sent'); qc.invalidateQueries({ queryKey: ['quotations'] }) }, onError: () => toast.error('Action failed') })
   const mutateAccept  = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.QUOTATION_ACCEPT(id)),  onSuccess: () => { toast.success('Quotation accepted'); qc.invalidateQueries({ queryKey: ['quotations'] }) }, onError: () => toast.error('Action failed') })
   const mutateDecline = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.QUOTATION_DECLINE(id)), onSuccess: () => { toast.success('Quotation declined'); qc.invalidateQueries({ queryKey: ['quotations'] }) }, onError: () => toast.error('Action failed') })
-  const mutateConvert = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.QUOTATION_CONVERT(id)), onSuccess: () => { toast.success('Converted to invoice'); qc.invalidateQueries({ queryKey: ['quotations'] }); qc.invalidateQueries({ queryKey: ['invoices'] }) }, onError: (e: {response?: {data?: {detail?: string}}}) => toast.error(e?.response?.data?.detail ?? 'Convert failed') })
+  const mutateConvert = useMutation({ mutationFn: (id: number) => apiClient.post(ACCOUNTING.QUOTATION_CONVERT(id)), onSuccess: () => { toast.success('Converted to invoice'); qc.invalidateQueries({ queryKey: ['quotations'] }); qc.invalidateQueries({ queryKey: ['invoices'] }); qc.invalidateQueries({ queryKey: ['report'] }) }, onError: (e: {response?: {data?: {detail?: string}}}) => toast.error(e?.response?.data?.detail ?? 'Convert failed') })
   const mutateDelete  = useMutation({ mutationFn: (id: number) => apiClient.delete(ACCOUNTING.QUOTATION_DETAIL(id)), onSuccess: () => { toast.success('Quotation deleted'); qc.invalidateQueries({ queryKey: ['quotations'] }) }, onError: () => toast.error('Delete failed') })
 
   return (
     <div className="space-y-4">
       {showCreate && <QuotationCreateModal onClose={() => setShowCreate(false)} />}
       {editQuotation && <QuotationEditModal quo={editQuotation} onClose={() => setEditQuotation(null)} />}
+      {selectedQuotation && <QuotationDetailModal quotation={selectedQuotation} onClose={() => setSelectedQuotation(null)} />}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
           {['', 'draft', 'sent', 'accepted', 'declined', 'expired'].map(s => (
@@ -89,7 +91,7 @@ export default function QuotationsPage() {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {data?.results?.map(q => (
-                    <tr key={q.id} className="hover:bg-gray-50 transition-colors">
+                    <tr key={q.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => setSelectedQuotation(q)}>
                       <td className="px-4 py-3 font-mono font-semibold text-gray-700 whitespace-nowrap">{q.quotation_number}</td>
                       <td className="px-4 py-3 text-gray-600">{q.customer_name || <span className="text-gray-400">—</span>}</td>
                       <td className="px-4 py-3 font-semibold text-gray-800 whitespace-nowrap">{npr(q.total)}</td>
@@ -105,24 +107,24 @@ export default function QuotationsPage() {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1 flex-wrap">
                           {q.status === 'draft' && can('can_manage_accounting') && (
-                            <button onClick={() => setEditQuotation(q)} title="Edit" className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"><Pencil size={13} /></button>
+                            <button onClick={(e) => { e.stopPropagation(); setEditQuotation(q) }} title="Edit" className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"><Pencil size={13} /></button>
                           )}
                           {q.status === 'draft' && (
-                            <button onClick={() => mutateSend.mutate(q.id)} className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors whitespace-nowrap">Send</button>
+                            <button onClick={(e) => { e.stopPropagation(); mutateSend.mutate(q.id) }} className="px-2 py-1 text-xs bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 transition-colors whitespace-nowrap">Send</button>
                           )}
                           {q.status === 'sent' && (
                             <>
-                              <button onClick={() => mutateAccept.mutate(q.id)} className="px-2 py-1 text-xs bg-emerald-50 text-emerald-700 rounded-md hover:bg-emerald-100 transition-colors whitespace-nowrap">Accept</button>
-                              <button onClick={() => mutateDecline.mutate(q.id)} className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors whitespace-nowrap">Decline</button>
+                              <button onClick={(e) => { e.stopPropagation(); mutateAccept.mutate(q.id) }} className="px-2 py-1 text-xs bg-emerald-50 text-emerald-700 rounded-md hover:bg-emerald-100 transition-colors whitespace-nowrap">Accept</button>
+                              <button onClick={(e) => { e.stopPropagation(); mutateDecline.mutate(q.id) }} className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition-colors whitespace-nowrap">Decline</button>
                             </>
                           )}
                           {q.status === 'accepted' && !q.converted_invoice && (
-                            <button onClick={() => mutateConvert.mutate(q.id)} disabled={mutateConvert.isPending} className="px-2 py-1 text-xs bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition-colors whitespace-nowrap disabled:opacity-50">
+                            <button onClick={(e) => { e.stopPropagation(); mutateConvert.mutate(q.id) }} disabled={mutateConvert.isPending} className="px-2 py-1 text-xs bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition-colors whitespace-nowrap disabled:opacity-50">
                               {mutateConvert.isPending ? 'Converting…' : 'Convert → Invoice'}
                             </button>
                           )}
                           {(q.status === 'draft' || q.status === 'declined' || q.status === 'expired') && can('can_manage_accounting') && (
-                            <button onClick={() => confirm({ title: 'Delete Quotation', message: `Delete ${q.quotation_number}?`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDelete.mutate(q.id) })} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
+                            <button onClick={(e) => { e.stopPropagation(); confirm({ title: 'Delete Quotation', message: `Delete ${q.quotation_number}?`, confirmLabel: 'Delete', variant: 'danger' as const }).then(ok => { if (ok) mutateDelete.mutate(q.id) }) }} title="Delete" className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"><Trash2 size={13} /></button>
                           )}
                         </div>
                       </td>
@@ -138,6 +140,69 @@ export default function QuotationsPage() {
 }
 
 // ─── Quotation Create Modal ──────────────────────────────────────────────────
+
+function QuotationDetailModal({ quotation, onClose }: { quotation: Quotation; onClose: () => void }) {
+  return (
+    <Modal title={`Quotation ${quotation.quotation_number}`} onClose={onClose}>
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Customer</p>
+            <p className="text-sm font-semibold text-gray-800">{quotation.customer_name || '—'}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Status</p>
+            <p className="text-sm font-semibold text-gray-800 capitalize">{quotation.status}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Valid Until</p>
+            <p className="text-sm font-semibold text-gray-800">{quotation.valid_until ? fmt(quotation.valid_until) : '—'}</p>
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs text-gray-500">Total</p>
+            <p className="text-sm font-semibold text-gray-800 tabular-nums">{npr(quotation.total)}</p>
+          </div>
+        </div>
+
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
+            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Line Items</p>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {(quotation.line_items ?? []).map((item, idx) => (
+              <div key={idx} className="px-4 py-3 grid grid-cols-[1fr_auto_auto] gap-3 text-sm text-gray-700">
+                <p>{(item as any).description || 'Item'}</p>
+                <p className="font-semibold">{(item as any).qty ?? 1}×</p>
+                <p className="font-semibold tabular-nums">{npr(String((item as any).unit_price || '0'))}</p>
+              </div>
+            ))}
+            {(quotation.line_items ?? []).length === 0 && (
+              <div className="px-4 py-3 text-sm text-gray-500">No line items available.</div>
+            )}
+          </div>
+        </div>
+
+        {quotation.notes && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Notes</p>
+            <p className="text-sm text-gray-700 whitespace-pre-wrap">{quotation.notes}</p>
+          </div>
+        )}
+
+        {quotation.terms && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Terms</p>
+            <p className="text-sm text-gray-700 whitespace-pre-wrap">{quotation.terms}</p>
+          </div>
+        )}
+
+        <div className="flex justify-end pt-2 border-t border-gray-100">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">Close</button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
 
 function QuotationCreateModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()

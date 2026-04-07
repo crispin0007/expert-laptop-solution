@@ -352,14 +352,16 @@ class PaymentSerializer(NepaliModelSerializer):
     bank_account_name = serializers.CharField(source='bank_account.name',     read_only=True, default='')
     created_by_name   = serializers.CharField(source='created_by.full_name',  read_only=True, default='')
     account_name      = serializers.CharField(source='account.name',           read_only=True, default='')
+    customer_name     = serializers.CharField(source='invoice.customer.name', read_only=True, default='')
+    supplier_name     = serializers.SerializerMethodField()
 
     class Meta:
         model  = Payment
         fields = (
             'id', 'payment_number', 'date', 'type', 'method', 'amount',
             'bank_account', 'bank_account_name',
-            'invoice', 'invoice_number',
-            'bill', 'bill_number',
+            'invoice', 'invoice_number', 'customer_name',
+            'bill', 'bill_number', 'supplier_name',
             'account', 'account_name',
             'reference', 'notes',
             'tds_rate', 'tds_withheld_amount', 'net_receipt_amount', 'tds_reference',
@@ -415,6 +417,13 @@ class PaymentSerializer(NepaliModelSerializer):
                 raise serializers.ValidationError({'tds_rate': 'tds_rate must be less than 1 (e.g. 0.10 for 10%).'})
 
         return attrs
+
+    def get_supplier_name(self, obj):
+        if obj.bill_id and obj.bill is not None:
+            if getattr(obj.bill, 'supplier', None) is not None:
+                return obj.bill.supplier.name
+            return getattr(obj.bill, 'supplier_name', '')
+        return ''
 
 
 # ─── Credit Notes ────────────────────────────────────────────────────────────

@@ -15,7 +15,12 @@ export default function DomainSetup() {
   const [domainInput, setDomainInput] = useState('')
 
   const handleSetup = async () => {
-    const d = domainInput.trim().toLowerCase().replace(/^https?:\/\//, '')
+    const d = domainInput
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/\/+$/, '')
+      .replace(/\.+$/, '')
     if (!d) { toast.error('Enter a domain name'); return }
     try {
       await setupMutation.mutateAsync({ domain: d })
@@ -113,7 +118,18 @@ export default function DomainSetup() {
                     <code className="block text-sm bg-white border border-gray-200 rounded px-3 py-1.5">TXT</code>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 mb-1">Name / Host</p>
+                    <p className="text-xs text-gray-500 mb-1">Host</p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 block text-sm bg-white border border-gray-200 rounded px-3 py-1.5 truncate">
+                        _nexus-verify
+                      </code>
+                      <button onClick={() => copy('_nexus-verify')} className="text-gray-400 hover:text-indigo-600">
+                        <Copy size={14} />
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1">Full record name</p>
                     <div className="flex items-center gap-2">
                       <code className="flex-1 block text-sm bg-white border border-gray-200 rounded px-3 py-1.5 truncate">
                         _nexus-verify.{domain.domain}

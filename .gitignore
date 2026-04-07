@@ -91,3 +91,7 @@ celerybeat.pid
 
 # Gunicorn runtime socket
 gunicorn.ctl
+
+# Local logs and backups
+backend/logs/
+backups/

@@ -9,8 +9,8 @@ import { addFyParam, formatBsDate, formatNpr, toPage } from '../utils'
 import { TrendingUp, Users, CalendarDays } from 'lucide-react'
 import type { ApiPage, Payment } from '../types/accounting'
 
-function paymentPartyName(p: Payment): string {
-  return p.party_name || p.supplier_name || p.customer_name || '—'
+function paymentCustomerName(p: Payment): string {
+  return p.customer_name || p.party || p.party_name || p.supplier_name || '—'
 }
 
 const fmt = (value: string | null | undefined) => value ? formatBsDate(value) : '—'
@@ -33,8 +33,8 @@ export default function CustomerPaymentsPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                <p className="text-xs text-gray-500">Party</p>
-                <p className="text-sm font-semibold text-gray-800">{paymentPartyName(selectedPayment)}</p>
+                <p className="text-xs text-gray-500">Customer</p>
+                <p className="text-sm font-semibold text-gray-800">{paymentCustomerName(selectedPayment)}</p>
               </div>
               <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
                 <p className="text-xs text-gray-500">Amount</p>
@@ -116,7 +116,7 @@ export default function CustomerPaymentsPage() {
         {isLoading ? <div className="py-12"><Spinner /></div> : (
           <TableContainer className="min-w-[720px]">
             <thead className={tableHeadClass}>
-              <tr>{['Receipt #', 'Date', 'Invoice', 'Method', 'Amount', 'Bank', 'Ref'].map(h => (
+              <tr>{['Receipt #', 'Customer', 'Date', 'Invoice', 'Method', 'Amount', 'Bank', 'Ref'].map(h => (
                 <th key={h} className={tableHeaderCellClass}>{h}</th>
               ))}</tr>
             </thead>
@@ -131,6 +131,7 @@ export default function CustomerPaymentsPage() {
                   title="Click to view receipt details"
                 >
                   <td className="px-4 py-3 font-mono text-xs text-indigo-600">{p.payment_number}</td>
+                  <td className="px-4 py-3 text-gray-700">{paymentCustomerName(p)}</td>
                   <td className="px-4 py-3 text-gray-600"><DateDisplay adDate={p.date} /></td>
                   <td className="px-4 py-3 text-xs text-gray-500">{p.invoice_number || '—'}</td>
                   <td className="px-4 py-3 text-xs capitalize text-gray-500">{(p.method ?? '').replace('_', ' ')}</td>

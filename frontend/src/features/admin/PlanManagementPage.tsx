@@ -300,6 +300,7 @@ export default function PlanManagementPage() {
       apiClient.post(PLANS.TOGGLE_MODULE(planId), { module_key: moduleKey, enabled }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['plans'] })
+      qc.refetchQueries({ queryKey: ['plans'] })
       toast.success('Plan updated')
     },
     onError: () => toast.error('Failed to update plan'),
@@ -347,7 +348,10 @@ export default function PlanManagementPage() {
         <CreatePlanModal
           modules={allModules}
           onClose={() => setShowCreate(false)}
-          onCreated={() => qc.invalidateQueries({ queryKey: ['plans'] })}
+          onCreated={() => {
+        qc.invalidateQueries({ queryKey: ['plans'] })
+        qc.refetchQueries({ queryKey: ['plans'] })
+      }}
         />
       )}
 

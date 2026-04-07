@@ -36,6 +36,27 @@ from django.db import transaction
 from django.utils import timezone
 
 
+def _find_default_service_product_id(tenant):
+    """Return a tenant service product id when a clear default exists."""
+    from inventory.models import Product
+
+    service_qs = Product.objects.filter(
+        tenant=tenant,
+        is_service=True,
+        is_deleted=False,
+        is_active=True,
+    )
+    if service_qs.count() == 1:
+        return service_qs.first().pk
+
+    default_names = ['service charge', 'service', 'service fee']
+    for name in default_names:
+        match = service_qs.filter(name__iexact=name).first()
+        if match:
+            return match.pk
+    return None
+
+
 # ─── Generate invoice from ticket ────────────────────────────────────────────
 
 def generate_ticket_invoice(ticket, tenant, due_date=None, notes='', created_by=None):
@@ -66,21 +87,30 @@ def generate_ticket_invoice(ticket, tenant, due_date=None, notes='', created_by=
     ticket_type = ticket.ticket_type
     is_free     = ticket_type.is_free_service if ticket_type else False
 
+    default_service_id = _find_default_service_product_id(tenant)
     line_items = []
 
     # ── Service charge line ───────────────────────────────────────────────────
     service_value = Decimal(str(ticket.service_charge or '0'))
     if service_value > 0:
-        line_items.append({
+        service_line = {
             'line_type':   'service',
             'description': f"Service Charge – {ticket.ticket_number}",
             'qty':         1,
             'unit_price':  str(service_value),
             'discount':    '0',
-        })
+            'amount':      str(service_value.quantize(Decimal('0.01'))),
+        }
+        if default_service_id is not None:
+            service_line['service_id'] = default_service_id
+        line_items.append(service_line)
 
     # ── Product lines ─────────────────────────────────────────────────────────
     for tp in TicketProduct.objects.filter(ticket=ticket).select_related('product'):
+        qty = Decimal(str(tp.quantity or 0))
+        unit_price = Decimal(str(tp.unit_price or 0))
+        discount_pct = Decimal(str(tp.discount or 0))
+        line_total = max(qty * unit_price * (Decimal('1') - discount_pct / Decimal('100')), Decimal('0'))
         line_items.append({
             'line_type':   'product',
             'product_id':  tp.product.pk,    # stored for COGS journal lookup
@@ -88,6 +118,7 @@ def generate_ticket_invoice(ticket, tenant, due_date=None, notes='', created_by=
             'qty':         tp.quantity,
             'unit_price':  str(tp.unit_price),
             'discount':    str(tp.discount),
+            'amount':      str(line_total.quantize(Decimal('0.01'))),
         })
 
     if not line_items and not is_free:

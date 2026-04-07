@@ -2506,6 +2506,38 @@ class TestN2SupplierTDSPayments:
         assert tds_credit == Decimal('1000.00')
 
     @pytest.mark.django_db
+    def test_outgoing_bill_payment_serializer_exposes_supplier_name(self, tenant, admin_user):
+        """Outgoing bill payment responses should include the supplier name."""
+        from accounting.models import Bill, Payment
+        from accounting.serializers import PaymentSerializer
+
+        bill = Bill.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            supplier_name='Test Supplier',
+            line_items=[],
+            subtotal=Decimal('1000.00'),
+            discount=Decimal('0.00'),
+            vat_rate=Decimal('0.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('1000.00'),
+            status=Bill.STATUS_APPROVED,
+        )
+
+        payment = Payment.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            date=datetime.date.today(),
+            type=Payment.TYPE_OUTGOING,
+            method='bank_transfer',
+            amount=Decimal('1000.00'),
+            bill=bill,
+        )
+
+        serialized = PaymentSerializer(payment).data
+        assert serialized['supplier_name'] == 'Test Supplier'
+
+    @pytest.mark.django_db
     def test_outgoing_bill_payment_rejects_tds_rate_mismatch(self, tenant, admin_user):
         """Payment must reject TDS rate different from bill.tds_rate when bill has one."""
         from accounting.models import Bill

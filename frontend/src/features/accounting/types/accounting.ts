@@ -79,6 +79,7 @@ export interface Payment {
   account_name: string
   reference: string
   notes: string
+  party?: string
   party_name?: string
   supplier_name?: string
   customer_name?: string

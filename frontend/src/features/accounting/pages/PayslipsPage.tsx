@@ -8,6 +8,7 @@ import { usePermissions } from '../../../hooks/usePermissions'
 import { useAccountingFy } from '../hooks'
 import { addFyParam, formatNpr, toPage } from '../utils'
 import { adStringToBsDisplay, currentFiscalYear, fiscalYearAdParams } from '../../../utils/nepaliDate'
+import NepaliDatePicker from '../../../components/NepaliDatePicker'
 import { Modal, Spinner, EmptyState, Badge, Field, inputCls } from '../components/accountingShared'
 import { Plus, Pencil, Trash2, ChevronRight, CheckCircle } from 'lucide-react'
 import { CoinDetailDrawer } from '../CoinsPage'
@@ -35,12 +36,18 @@ function PayslipEditModal({ ps, onClose }: { ps: Payslip; onClose: () => void })
       <form className="space-y-4" onSubmit={e => { e.preventDefault(); mutateSave.mutate(form) }}>
         <div className="grid grid-cols-2 gap-4">
           <Field label="Period Start">
-            <input data-lpignore="true" type="date" className={inputCls} value={form.period_start}
-              onChange={e => setForm(f => ({ ...f, period_start: e.target.value }))} />
+            <NepaliDatePicker
+              value={form.period_start}
+              onChange={value => setForm(f => ({ ...f, period_start: value }))}
+              className={inputCls}
+            />
           </Field>
           <Field label="Period End">
-            <input data-lpignore="true" type="date" className={inputCls} value={form.period_end}
-              onChange={e => setForm(f => ({ ...f, period_end: e.target.value }))} />
+            <NepaliDatePicker
+              value={form.period_end}
+              onChange={value => setForm(f => ({ ...f, period_end: value }))}
+              className={inputCls}
+            />
           </Field>
         </div>
         <div className="grid grid-cols-3 gap-3">
@@ -301,7 +308,7 @@ export default function PayslipsPage() {
 
   const mutateIssue = useMutation({
     mutationFn: (id: number) => apiClient.post(ACCOUNTING.PAYSLIP_ISSUE(id)),
-    onSuccess: () => { toast.success('Payslip issued'); qc.invalidateQueries({ queryKey: ['payslips'] }) },
+    onSuccess: () => { toast.success('Payslip issued'); qc.invalidateQueries({ queryKey: ['payslips'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: () => toast.error('Action failed'),
   })
   const mutatePay = useMutation({
@@ -311,23 +318,23 @@ export default function PayslipsPage() {
       toast.success('Payslip marked as paid')
       setMarkPaidPayslip(null)
       if (res.data?.payment) setPayslipReceiptPayment(res.data.payment)
-      qc.invalidateQueries({ queryKey: ['payslips'] })
+      qc.invalidateQueries({ queryKey: ['payslips'] }); qc.invalidateQueries({ queryKey: ['report'] })
     },
     onError: () => toast.error('Action failed'),
   })
   const mutateApprove = useMutation({
     mutationFn: (id: number) => apiClient.post(ACCOUNTING.COIN_APPROVE(id)),
-    onSuccess: () => { toast.success('Coin approved'); qc.invalidateQueries({ queryKey: ['coins'] }) },
+    onSuccess: () => { toast.success('Coin approved'); qc.invalidateQueries({ queryKey: ['coins'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: () => toast.error('Action failed'),
   })
   const mutateReject = useMutation({
     mutationFn: (id: number) => apiClient.post(ACCOUNTING.COIN_REJECT(id)),
-    onSuccess: () => { toast.success('Coin rejected'); qc.invalidateQueries({ queryKey: ['coins'] }) },
+    onSuccess: () => { toast.success('Coin rejected'); qc.invalidateQueries({ queryKey: ['coins'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: () => toast.error('Action failed'),
   })
   const mutateDeletePayslip = useMutation({
     mutationFn: (id: number) => apiClient.delete(ACCOUNTING.PAYSLIP_DETAIL(id)),
-    onSuccess: () => { toast.success('Payslip deleted'); qc.invalidateQueries({ queryKey: ['payslips'] }) },
+    onSuccess: () => { toast.success('Payslip deleted'); qc.invalidateQueries({ queryKey: ['payslips'] }); qc.invalidateQueries({ queryKey: ['report'] }) },
     onError: () => toast.error('Delete failed'),
   })
   const mutateSalaryCreate = useMutation({
@@ -373,7 +380,7 @@ export default function PayslipsPage() {
       }),
     onSuccess: () => {
       toast.success('Payslip generated')
-      qc.invalidateQueries({ queryKey: ['payslips'] })
+      qc.invalidateQueries({ queryKey: ['payslips'] }); qc.invalidateQueries({ queryKey: ['report'] })
       qc.invalidateQueries({ queryKey: ['tds'] })
       setShowGenerate(false)
       setGenForm({ staff: '', period_start: fyrStart, period_end: today, base_salary: '0', bonus: '0', deductions: '0', tds_rate: '0', employee_pan: '' })
@@ -454,10 +461,18 @@ export default function PayslipsPage() {
             </Field>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Period Start *">
-                <input data-lpignore="true" type="date" className={inputCls} value={genForm.period_start} onChange={e => setGenForm(f => ({ ...f, period_start: e.target.value }))} />
+                <NepaliDatePicker
+                  value={genForm.period_start}
+                  onChange={value => setGenForm(f => ({ ...f, period_start: value }))}
+                  className={inputCls}
+                />
               </Field>
               <Field label="Period End *">
-                <input data-lpignore="true" type="date" className={inputCls} value={genForm.period_end} onChange={e => setGenForm(f => ({ ...f, period_end: e.target.value }))} />
+                <NepaliDatePicker
+                  value={genForm.period_end}
+                  onChange={value => setGenForm(f => ({ ...f, period_end: value }))}
+                  className={inputCls}
+                />
               </Field>
             </div>
             <div className="grid grid-cols-3 gap-3">
@@ -729,7 +744,11 @@ export default function PayslipsPage() {
                   </Field>
                 </div>
                 <Field label="Effective From *">
-                  <input data-lpignore="true" type="date" className={inputCls} value={salaryForm.effective_from} onChange={e => setSalaryForm(f => ({ ...f, effective_from: e.target.value }))} />
+                  <NepaliDatePicker
+                    value={salaryForm.effective_from}
+                    onChange={value => setSalaryForm(f => ({ ...f, effective_from: value }))}
+                    className={inputCls}
+                  />
                 </Field>
                 <Field label="Notes">
                   <textarea className={inputCls} rows={2} value={salaryForm.notes}

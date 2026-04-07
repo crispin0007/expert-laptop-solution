@@ -4,6 +4,7 @@ import apiClient from '../../../api/client'
 import { ACCOUNTING } from '../../../api/endpoints'
 import toast from 'react-hot-toast'
 import DateDisplay from '../../../components/DateDisplay'
+import NepaliDatePicker from '../../../components/NepaliDatePicker'
 import { toPage } from '../utils'
 import { ArrowRightLeft, Clock, Loader2 } from 'lucide-react'
 import type { ApiPage, BankAccount, JournalEntry } from '../types/accounting'
@@ -51,6 +52,7 @@ export default function CashTransfersPage() {
       setToAcc('')
       qc.invalidateQueries({ queryKey: ['journals', 'cash-transfer'] })
       qc.invalidateQueries({ queryKey: ['bank-accounts'] })
+      qc.invalidateQueries({ queryKey: ['report'] })
     },
     onError: (e: { message?: string }) => toast.error(e?.message ?? 'Transfer failed'),
   })
@@ -65,8 +67,11 @@ export default function CashTransfersPage() {
         <h3 className="font-semibold text-gray-900 flex items-center gap-2"><ArrowRightLeft size={16} className="text-indigo-500" /> Internal Fund Transfer</h3>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Date *</label>
-          <input data-lpignore="true" type="date" value={date} onChange={e => setDate(e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-400" />
+          <NepaliDatePicker
+            value={date}
+            onChange={setDate}
+            className="w-full"
+          />
         </div>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">From Account *</label>

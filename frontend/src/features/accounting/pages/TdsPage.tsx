@@ -32,7 +32,7 @@ export default function TdsPage() {
   const markDeposited = useMutation({
     mutationFn: (id: number) => markTdsDeposited(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tds', fyYear] })
+      qc.invalidateQueries({ queryKey: ['tds', fyYear] }); qc.invalidateQueries({ queryKey: ['report'] })
       setSelectedEntry(null)
     },
   })

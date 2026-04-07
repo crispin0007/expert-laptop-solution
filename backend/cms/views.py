@@ -575,6 +575,7 @@ class CMSCustomDomainView(TenantMixin, APIView):
 
     def post(self, request):
         domain = (request.data.get('domain') or '').strip().lower()
+        domain = domain.rstrip('/').rstrip('.')
         if not domain:
             return ApiResponse.error('domain is required.')
 
@@ -1026,7 +1027,7 @@ class CMSInquiryListView(TenantMixin, APIView):
     permission_classes = [permissions.IsAuthenticated, make_role_permission(*MANAGER_ROLES)]
 
     def get(self, request):
-        site = services.get_or_create_site(request.tenant)
+        site, _ = services.get_or_create_site(request.tenant)
         status_filter = request.query_params.get('status') or None
         qs = services.list_inquiries(site, status=status_filter)
         paginator = NexusCursorPagination()
@@ -1040,7 +1041,7 @@ class CMSInquiryDetailView(TenantMixin, APIView):
     permission_classes = [permissions.IsAuthenticated, make_role_permission(*MANAGER_ROLES)]
 
     def _get_inquiry(self, request, pk: int):
-        site = services.get_or_create_site(request.tenant)
+        site, _ = services.get_or_create_site(request.tenant)
         try:
             return CMSInquiry.objects.get(pk=pk, site=site, is_deleted=False)
         except CMSInquiry.DoesNotExist:
@@ -1076,7 +1077,7 @@ class CMSInquiryConvertView(TenantMixin, APIView):
     permission_classes = [permissions.IsAuthenticated, make_role_permission(*MANAGER_ROLES)]
 
     def post(self, request, pk: int):
-        site = services.get_or_create_site(request.tenant)
+        site, _ = services.get_or_create_site(request.tenant)
         try:
             inquiry = CMSInquiry.objects.get(pk=pk, site=site, is_deleted=False)
         except CMSInquiry.DoesNotExist:
@@ -1098,7 +1099,7 @@ class CMSAnalyticsView(TenantMixin, APIView):
     permission_classes = [permissions.IsAuthenticated, make_role_permission(*MANAGER_ROLES)]
 
     def get(self, request):
-        site = services.get_or_create_site(request.tenant)
+        site, _ = services.get_or_create_site(request.tenant)
         try:
             days = max(1, min(int(request.query_params.get('days', 30)), 365))
         except (ValueError, TypeError):
@@ -1127,7 +1128,7 @@ class PublicInquirySubmitView(APIView):
         except Exception:
             return ApiResponse.error(message='Site not found', status_code=404)
 
-        site = services.get_or_create_site(tenant)
+        site, _ = services.get_or_create_site(tenant)
         if not site.is_published:
             return ApiResponse.error(message='Site not found', status_code=404)
 
@@ -1153,7 +1154,7 @@ class PublicRecordPageViewView(APIView):
         try:
             from tenants.models import Tenant
             tenant = Tenant.objects.get(subdomain=subdomain, is_active=True)
-            site = services.get_or_create_site(tenant)
+            site, _ = services.get_or_create_site(tenant)
             services.record_page_view(site, slug)
         except Exception:
             pass  # tracking must never break the site
@@ -1176,7 +1177,7 @@ class PublicSitemapView(APIView):
             from django.http import HttpResponse
             return HttpResponse('Not found', status=404, content_type='text/plain')
 
-        site = services.get_or_create_site(tenant)
+        site, _ = services.get_or_create_site(tenant)
         base_url = request.build_absolute_uri('/').rstrip('/')
         xml = services.generate_sitemap_xml(site, base_url)
 
@@ -1200,7 +1201,7 @@ class PublicRobotsView(APIView):
             from django.http import HttpResponse
             return HttpResponse('User-agent: *\nDisallow: /\n', content_type='text/plain')
 
-        site = services.get_or_create_site(tenant)
+        site, _ = services.get_or_create_site(tenant)
         base_url = request.build_absolute_uri('/').rstrip('/')
         txt = services.generate_robots_txt(site, base_url)
 
