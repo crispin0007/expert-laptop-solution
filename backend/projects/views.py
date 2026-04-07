@@ -246,7 +246,9 @@ class ProjectProductViewSet(NexusViewSet):
 
             if existing:
                 existing.quantity_planned += qty
-                existing.save(update_fields=['quantity_planned', 'updated_at'])
+                if serializer.validated_data.get('unit_price') is not None:
+                    existing.unit_price = serializer.validated_data['unit_price']
+                existing.save(update_fields=['quantity_planned', 'unit_price', 'updated_at'])
                 out = self.get_serializer(existing)
                 return ApiResponse.success(data=out.data)
 

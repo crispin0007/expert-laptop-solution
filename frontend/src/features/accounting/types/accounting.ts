@@ -6,9 +6,11 @@ export interface InvoiceItem {
   unit_price: string
   discount?: string
   total?: string
+  amount?: string
   line_type?: string
   cost_price_snapshot?: string
   product_id?: number
+  service_id?: number
 }
 
 export interface Invoice {

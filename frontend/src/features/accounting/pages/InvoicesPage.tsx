@@ -24,9 +24,11 @@ interface InvoiceItem {
   unit_price: string
   discount?: string
   total?: string
+  amount?: string
   line_type?: string
   cost_price_snapshot?: string
   product_id?: number
+  service_id?: number
 }
 
 interface Invoice {
@@ -136,7 +138,15 @@ function InvoiceCreateModal({ onClose }: { onClose: () => void }) {
       apply_vat: applyVat,
       line_items: lines
         .filter(l => l.description && l.unit_price)
-        .map(l => ({ description: l.description, qty: Number(l.qty), unit_price: l.unit_price, discount: l.discount || '0', line_type: l.line_type || 'service' })),
+        .map(l => ({
+          description: l.description,
+          qty: Number(l.qty),
+          unit_price: l.unit_price,
+          discount: l.discount || '0',
+          line_type: l.line_type || 'service',
+          product_id: l.product_id,
+          service_id: l.service_id,
+        })),
     })
   }
 
@@ -272,6 +282,26 @@ function InvoiceDetailModal({ inv, onClose, onIssue, onRecordPayment }: { inv: I
             </div>
           </div>
         </div>
+        <div className="bg-gray-50 rounded-xl border border-gray-100 p-4 text-sm">
+          <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">Line Items</div>
+          <div className="space-y-3">
+            {inv.line_items.length > 0 ? inv.line_items.map((li, idx) => (
+              <div key={idx} className="flex justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-gray-700 truncate">{li.description || li.name || 'Item'}</div>
+                  <div className="text-xs text-gray-500">
+                    {li.qty ?? li.quantity ?? 1} × Rs. {parseFloat(li.unit_price).toFixed(2)}
+                  </div>
+                </div>
+                <div className="text-right text-gray-900 font-medium">
+                  {(li.amount ?? li.total) ? `Rs. ${parseFloat(String(li.amount ?? li.total)).toFixed(2)}` : '—'}
+                </div>
+              </div>
+            )) : (
+              <div className="text-gray-400">No line items available.</div>
+            )}
+          </div>
+        </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={handlePrint} className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700">Print PDF</button>
@@ -295,12 +325,20 @@ function InvoiceEditModal({ inv, onClose }: { inv: Invoice; onClose: () => void 
   const [date, setDate] = useState(inv.date ?? new Date().toISOString().slice(0, 10))
   const [dueDate, setDueDate] = useState(inv.due_date ?? '')
   const [notes, setNotes] = useState(inv.notes ?? '')
-  const [lines, setLines] = useState<AccountingLineItemDraft[]>(() => inv.line_items.length > 0 ? inv.line_items.map((l: InvoiceItem) => ({ description: l.description || l.name || '', qty: String(l.qty ?? l.quantity ?? 1), unit_price: String(l.unit_price || ''), discount: String(l.discount || '0'), line_type: (l.line_type as 'service' | 'product') || 'service' })) : [emptyAccountingLineItem()])
+  const [lines, setLines] = useState<AccountingLineItemDraft[]>(() => inv.line_items.length > 0 ? inv.line_items.map((l: InvoiceItem) => ({ description: l.description || l.name || '', qty: String(l.qty ?? l.quantity ?? 1), unit_price: String(l.unit_price || ''), discount: String(l.discount || '0'), line_type: (l.line_type as 'service' | 'product') || 'service', product_id: l.product_id, service_id: l.service_id })) : [emptyAccountingLineItem()])
 
   const { data: customers } = useQuery<ApiPage<Customer>>({
     queryKey: ['customers', 'all'],
     queryFn: () => apiClient.get('/customers/?page_size=200').then((r: any) => toPage<Customer>(r.data)),
   })
+  const { data: editInvProducts = [] } = useQuery<InventoryProduct[]>({
+    queryKey: ['inventory-products-all'],
+    queryFn: () => apiClient.get(`${INVENTORY.PRODUCTS}?page_size=500`).then((r: any) => {
+      const d = r.data?.data ?? r.data
+      return Array.isArray(d) ? d : d.results ?? []
+    }),
+  })
+
   const { data: editInvServices = [] } = useQuery<ServiceItem[]>({
     queryKey: ['services-all'],
     queryFn: () => apiClient.get(INVENTORY.SERVICES + '?all=true').then((r: any) => r.data?.data ?? r.data?.results ?? r.data ?? []),
@@ -331,7 +369,15 @@ function InvoiceEditModal({ inv, onClose }: { inv: Invoice; onClose: () => void 
       notes,
       line_items: lines
         .filter(l => l.description && l.unit_price)
-        .map(l => ({ description: l.description, qty: Number(l.qty), unit_price: l.unit_price, discount: l.discount || '0', line_type: l.line_type || 'service' })),
+        .map(l => ({
+          description: l.description,
+          qty: Number(l.qty),
+          unit_price: l.unit_price,
+          discount: l.discount || '0',
+          line_type: l.line_type || 'service',
+          product_id: l.product_id,
+          service_id: l.service_id,
+        })),
     })
   }
 
@@ -369,7 +415,7 @@ function InvoiceEditModal({ inv, onClose }: { inv: Invoice; onClose: () => void 
           <AccountingLineItemsEditor
             lines={lines}
             onChange={setLines}
-            products={[]}
+            products={editInvProducts}
             services={editInvServices}
             showDiscount
           />

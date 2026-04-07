@@ -168,6 +168,7 @@ class ProjectProduct(TenantModel):
         on_delete=models.CASCADE,
         related_name='project_usages',
     )
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     quantity_planned = models.PositiveIntegerField(default=1)
     note = models.TextField(blank=True)
     serial_number = models.ForeignKey(

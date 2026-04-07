@@ -90,6 +90,10 @@ def _apply_invoice_stock_movements(invoice, tenant) -> None:
     Runs inside a transaction so that either ALL movements are created or none —
     no partial state on error.  The idempotency guard (check before atomic block)
     prevents duplicate movements on retries.
+
+    Ticket- and project-backed invoices may already have consumed stock via
+    existing ticket/project movements. In that case we skip invoice stock
+    movements for matched product lines to avoid double-reducing stock.
     """
     product_lines = [
         item for item in (invoice.line_items or [])
@@ -97,6 +101,36 @@ def _apply_invoice_stock_movements(invoice, tenant) -> None:
         and item.get('product_id')
         and int(item.get('qty', 0)) > 0
     ]
+    if not product_lines:
+        return
+
+    ticket_product_ids = set()
+    project_product_ids = set()
+    if invoice.ticket_id:
+        ticket_product_ids.update(
+            StockMovement.objects.filter(
+                tenant=tenant,
+                reference_type='ticket',
+                reference_id=invoice.ticket_id,
+                movement_type=StockMovement.MOVEMENT_OUT,
+            ).values_list('product_id', flat=True)
+        )
+    if invoice.project_id:
+        project_product_ids.update(
+            StockMovement.objects.filter(
+                tenant=tenant,
+                reference_type='project',
+                reference_id=invoice.project_id,
+                movement_type=StockMovement.MOVEMENT_OUT,
+            ).values_list('product_id', flat=True)
+        )
+
+    reduced_product_ids = ticket_product_ids | project_product_ids
+    if reduced_product_ids:
+        product_lines = [
+            item for item in product_lines
+            if int(item['product_id']) not in reduced_product_ids
+        ]
     if not product_lines:
         return
 

@@ -121,7 +121,7 @@ export default function FinanceReviewPage() {
                     )}
                   </span>
                   <span className="text-gray-700 font-medium">
-                    {li.total ? `Rs. ${parseFloat(li.total).toFixed(2)}` : ''}
+                    {(li.amount ?? li.total) ? `Rs. ${parseFloat(String(li.amount ?? li.total)).toFixed(2)}` : ''}
                   </span>
                 </div>
               ))}

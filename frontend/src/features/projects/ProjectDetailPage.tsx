@@ -79,6 +79,7 @@ interface ProjectProduct {
   product_name: string
   quantity_planned: number
   note: string
+  unit_price?: string
 }
 
 interface Product {
@@ -553,6 +554,8 @@ export default function ProjectDetailPage() {
   const [phoneValue, setPhoneValue] = useState('')
   const [editingStatus, setEditingStatus] = useState(false)
   const [ppQty, setPpQty] = useState(1)
+  const [selectedProjectProduct, setSelectedProjectProduct] = useState<Product | null>(null)
+  const [ppPrice, setPpPrice] = useState('')
   const attachFileRef = useRef<HTMLInputElement>(null)
   const [uploadingAttach, setUploadingAttach] = useState(false)
 
@@ -789,12 +792,16 @@ export default function ProjectDetailPage() {
 
   const addProductMutation = useMutation({
     mutationFn: (product: Product) => apiClient.post(PROJECTS.PROJECT_PRODUCTS(projectId), {
-      product: product.id, quantity_planned: ppQty,
+      product: product.id,
+      quantity_planned: ppQty,
+      unit_price: ppPrice,
     }),
     onSuccess: (res) => {
       const msg = res.status === 200 ? 'Quantity updated' : 'Product added'
       toast.success(msg)
       setPpQty(1)
+      setSelectedProjectProduct(null)
+      setPpPrice('')
       qc.invalidateQueries({ queryKey: ['project-products', id] })
     },
     onError: (err: any) => {
@@ -1687,9 +1694,14 @@ export default function ProjectDetailPage() {
               <ul className="space-y-1.5 mb-3">
                 {projectProducts.map(pp => (
                   <li key={pp.id} className="flex items-center justify-between text-xs group">
-                    <span className="font-medium text-gray-700 truncate">{pp.product_name}</span>
+                    <div className="truncate">
+                      <span className="font-medium text-gray-700 truncate">{pp.product_name}</span>
+                      <span className="text-gray-400 ml-2">×{pp.quantity_planned}</span>
+                    </div>
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <span className="text-gray-400">×{pp.quantity_planned}</span>
+                      {pp.unit_price ? (
+                        <span className="text-gray-500">Rs. {parseFloat(pp.unit_price).toFixed(2)}</span>
+                      ) : null}
                       {canManage && (
                         <button onClick={() => removeProductMutation.mutate(pp.id)}
                           className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition">
@@ -1702,16 +1714,47 @@ export default function ProjectDetailPage() {
               </ul>
             )}
             {canManage ? (
-              <div className="space-y-2 pt-2 border-t border-gray-100">
-                <ProductSearchInput onSelect={p => addProductMutation.mutate(p)} />
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-gray-500">Qty:</label>
-                  <input
-                    type="number" min={1} value={ppQty}
-                    onChange={e => setPpQty(Math.max(1, Number(e.target.value)))}
-                    className="w-16 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
+              <div className="space-y-3 pt-2 border-t border-gray-100">
+                {selectedProjectProduct ? (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 border border-indigo-200 bg-indigo-50 rounded-lg px-3 py-1 text-sm">
+                      <span className="font-medium text-gray-800">{selectedProjectProduct.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedProjectProduct(null); setPpPrice('') }}
+                        className="text-gray-500 hover:text-gray-700"
+                      >×</button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-gray-500">Qty:</label>
+                      <input
+                        type="number" min={1} value={ppQty}
+                        onChange={e => setPpQty(Math.max(1, Number(e.target.value)))}
+                        className="w-16 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-gray-500">Unit Price:</label>
+                      <input
+                        type="number" min={0} step="0.01" value={ppPrice}
+                        onChange={e => setPpPrice(e.target.value)}
+                        className="w-28 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => selectedProjectProduct && addProductMutation.mutate(selectedProjectProduct)}
+                      disabled={!selectedProjectProduct || !ppPrice || Number(ppPrice) < 0 || addProductMutation.isPending}
+                      className="h-9 inline-flex items-center gap-1 px-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition text-sm"
+                    >
+                      {addProductMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                      Add
+                    </button>
+                  </div>
+                ) : (
+                  <ProductSearchInput onSelect={p => { setSelectedProjectProduct(p); setPpPrice(p.unit_price); }} />
+                )}
               </div>
             ) : (
               <p className="text-[11px] text-gray-400 italic pt-1 border-t border-gray-50">

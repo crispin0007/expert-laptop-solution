@@ -139,6 +139,7 @@ interface TicketInvoiceLineItem {
   unit_price: string
   discount?: string
   total?: string
+  amount?: string
 }
 
 interface TicketInvoice {
@@ -432,6 +433,7 @@ function TicketProductsPanel({
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [showDropdown, setShowDropdown] = useState(false)
   const [qty, setQty] = useState(1)
+  const [unitPrice, setUnitPrice] = useState('')
   const [selectedSerial, setSelectedSerial] = useState<number | ''>('')
   const dropdownRef = useRef<HTMLDivElement>(null)
 
@@ -496,12 +498,14 @@ function TicketProductsPanel({
       apiClient.post(TICKETS.TICKET_PRODUCTS(ticketId), {
         product: selectedProduct!.id,
         quantity: qty,
+        unit_price: unitPrice,
         ...(selectedSerial !== '' ? { serial_number: selectedSerial } : {}),
       }),
     onSuccess: () => {
       toast.success('Product added')
       setSelectedProduct(null)
       setProductSearch('')
+      setUnitPrice('')
       setQty(1)
       setSelectedSerial('')
       setShowDropdown(false)
@@ -583,7 +587,7 @@ function TicketProductsPanel({
               <div className="flex items-center gap-2 border border-amber-300 bg-amber-50 rounded-lg px-3 py-1.5 text-sm">
                 <span className="flex-1 text-gray-800">{selectedProduct.name}</span>
                 <button
-                  onClick={() => { setSelectedProduct(null); setProductSearch('') }}
+                  onClick={() => { setSelectedProduct(null); setProductSearch(''); setUnitPrice('') }}
                   className="text-gray-400 hover:text-gray-600 leading-none"
                 >×</button>
               </div>
@@ -610,7 +614,7 @@ function TicketProductsPanel({
                         <button
                           key={p.id}
                           type="button"
-                          onClick={() => { setSelectedProduct(p); setShowDropdown(false); setSelectedSerial('') }}
+                          onClick={() => { setSelectedProduct(p); setUnitPrice(p.unit_price); setShowDropdown(false); setSelectedSerial('') }}
                           className="w-full text-left px-3 py-2 text-sm hover:bg-amber-50 flex justify-between items-center"
                         >
                           <span className="font-medium text-gray-800">{p.name}</span>
@@ -640,6 +644,18 @@ function TicketProductsPanel({
               </select>
             </div>
           )}
+          <div className="w-28">
+            <label className="block text-xs text-gray-500 mb-1">Unit Price</label>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={unitPrice}
+              onChange={e => setUnitPrice(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+              placeholder="0.00"
+            />
+          </div>
           <div className="w-20">
             <label className="block text-xs text-gray-500 mb-1">Qty</label>
             <input
@@ -652,7 +668,7 @@ function TicketProductsPanel({
           </div>
           <button
             onClick={() => addMutation.mutate()}
-            disabled={!selectedProduct || addMutation.isPending || (selectedProduct.has_warranty && selectedSerial === '')}
+            disabled={!selectedProduct || !unitPrice || Number(unitPrice) < 0 || addMutation.isPending || (selectedProduct.has_warranty && selectedSerial === '')}
             className="flex items-center gap-1 px-3 py-1.5 text-sm bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50 transition"
           >
             {addMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
@@ -878,7 +894,7 @@ function TicketInvoicePanel({ ticketId, ticketStatus, serviceChargeOnTicket }: {
               )}
             </span>
             <span className="text-gray-600 font-medium">
-              {li.total ? `Rs. ${parseFloat(li.total).toFixed(2)}` : ''}
+              {(li.amount ?? li.total) ? `Rs. ${parseFloat(String(li.amount ?? li.total)).toFixed(2)}` : ''}
             </span>
           </div>
         ))}

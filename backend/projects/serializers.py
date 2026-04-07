@@ -34,14 +34,19 @@ class ProjectTaskSerializer(NepaliModelSerializer):
 
 class ProjectProductSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
-    unit_price = serializers.CharField(source='product.unit_price', read_only=True)
     is_service = serializers.BooleanField(source='product.is_service', read_only=True)
+    unit_price = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
 
     class Meta:
         model = ProjectProduct
         fields = ('id', 'project', 'product', 'product_name', 'unit_price', 'is_service',
                   'quantity_planned', 'note')
-        read_only_fields = ('project', 'product_name', 'unit_price', 'is_service')
+        read_only_fields = ('project', 'product_name', 'is_service')
+
+    def validate(self, attrs):
+        if attrs.get('unit_price') is None and attrs.get('product'):
+            attrs['unit_price'] = attrs['product'].unit_price
+        return attrs
 
 
 class ProjectListSerializer(NepaliModelSerializer):

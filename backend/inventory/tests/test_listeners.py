@@ -163,6 +163,145 @@ def test_invoice_sent_skips_service_lines():
     assert StockMovement.objects.filter(tenant=tenant, reference_id=invoice.pk).count() == 0
 
 
+@pytest.mark.django_db
+def test_invoice_sent_skips_ticket_backed_product_lines():
+    """Ticket-backed invoice product lines already reduced on ticket do not double-stock-out."""
+    tenant = _tenant('inv-ticket-skip')
+    admin = _user('admin@inv-ticket-skip.com')
+    _member(admin, tenant, role='admin')
+    product = _product(tenant, admin, 'Spare Part', Decimal('1200'))
+    extra_product = _product(tenant, admin, 'Accessory', Decimal('250'))
+
+    from tickets.models import Ticket, TicketProduct
+    from accounting.models import Invoice
+
+    ticket = Ticket.objects.create(
+        tenant=tenant,
+        created_by=admin,
+        title='Ticket stock test',
+    )
+    TicketProduct.objects.create(
+        tenant=tenant,
+        ticket=ticket,
+        product=product,
+        quantity=2,
+        unit_price=product.unit_price,
+        discount=Decimal('0'),
+    )
+
+    assert StockMovement.objects.filter(
+        tenant=tenant,
+        reference_type='ticket',
+        reference_id=ticket.pk,
+        product=product,
+        movement_type=StockMovement.MOVEMENT_OUT,
+    ).count() == 1
+
+    invoice = Invoice.objects.create(
+        tenant=tenant,
+        created_by=admin,
+        status='sent',
+        ticket=ticket,
+        line_items=[
+            {
+                'line_type': 'product',
+                'product_id': product.pk,
+                'description': product.name,
+                'qty': 2,
+                'unit_price': str(product.unit_price),
+            },
+            {
+                'line_type': 'product',
+                'product_id': extra_product.pk,
+                'description': extra_product.name,
+                'qty': 1,
+                'unit_price': str(extra_product.unit_price),
+            },
+        ],
+        subtotal=Decimal('2650'),
+        vat_amount=Decimal('0'),
+        total=Decimal('2650'),
+    )
+
+    EventBus.publish('invoice.sent', {'id': invoice.pk, 'tenant_id': tenant.pk}, tenant=tenant)
+
+    invoice_movements = StockMovement.objects.filter(
+        tenant=tenant,
+        reference_type='invoice',
+        reference_id=invoice.pk,
+        movement_type=StockMovement.MOVEMENT_OUT,
+    )
+    assert invoice_movements.count() == 1
+    assert invoice_movements.filter(product=extra_product).exists()
+    assert not invoice_movements.filter(product=product).exists()
+
+
+@pytest.mark.django_db
+def test_invoice_sent_skips_project_backed_product_lines():
+    """Project-backed invoice product lines already reduced on project do not double-stock-out."""
+    from projects.models import Project, ProjectProduct
+    from accounting.models import Invoice
+
+    tenant = _tenant('inv-project-skip')
+    admin = _user('admin@inv-project-skip.com')
+    _member(admin, tenant, role='admin')
+    product = _product(tenant, admin, 'Cable', Decimal('200'))
+    extra_product = _product(tenant, admin, 'Connector', Decimal('30'))
+
+    project = Project.objects.create(
+        tenant=tenant,
+        created_by=admin,
+        name='Project stock test',
+        status='active',
+    )
+    ProjectProduct.objects.create(
+        tenant=tenant,
+        project=project,
+        product=product,
+        quantity_planned=3,
+    )
+
+    EventBus.publish('project.completed', {'id': project.pk, 'tenant_id': tenant.pk}, tenant=tenant)
+
+    invoice = Invoice.objects.create(
+        tenant=tenant,
+        created_by=admin,
+        status='sent',
+        project=project,
+        line_items=[
+            {
+                'line_type': 'product',
+                'product_id': product.pk,
+                'description': product.name,
+                'qty': 3,
+                'unit_price': str(product.unit_price),
+            },
+            {
+                'line_type': 'product',
+                'product_id': extra_product.pk,
+                'description': extra_product.name,
+                'qty': 2,
+                'unit_price': str(extra_product.unit_price),
+            },
+        ],
+        subtotal=Decimal('660'),
+        vat_amount=Decimal('0'),
+        total=Decimal('660'),
+    )
+
+    EventBus.publish('invoice.sent', {'id': invoice.pk, 'tenant_id': tenant.pk}, tenant=tenant)
+
+    invoice_movements = StockMovement.objects.filter(
+        tenant=tenant,
+        reference_type='invoice',
+        reference_id=invoice.pk,
+        movement_type=StockMovement.MOVEMENT_OUT,
+    )
+    assert invoice_movements.count() == 1
+    assert invoice_movements.filter(product=extra_product).exists()
+    assert not invoice_movements.filter(product=product).exists()
+
+
 # ─── invoice.cancelled listener ───────────────────────────────────────────────
 
 @pytest.mark.django_db
