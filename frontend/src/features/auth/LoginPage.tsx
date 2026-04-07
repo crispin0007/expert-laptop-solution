@@ -5,7 +5,7 @@ import { useAuthStore } from '../../store/authStore'
 import { useTenantStore } from '../../store/tenantStore'
 import apiClient from '../../api/client'
 import toast from 'react-hot-toast'
-import { ShieldCheck, ArrowLeft, KeyRound, AlertTriangle } from 'lucide-react'
+import { ShieldCheck, ArrowLeft, KeyRound } from 'lucide-react'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -15,8 +15,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [tenantName, setTenantName] = useState<string | null>(null)
-  /** true = public-info returned 404/4xx for the current subdomain → workspace doesn't exist */
-  const [workspaceNotFound, setWorkspaceNotFound] = useState(false)
+  const [isLoadingPublicInfo, setIsLoadingPublicInfo] = useState(true)
 
   // 2FA pending state
   const [twoFAToken, setTwoFAToken] = useState<string | null>(null)
@@ -29,28 +28,48 @@ export default function LoginPage() {
   useEffect(() => { clearTenant() }, [clearTenant])
 
   useEffect(() => {
-    // Only fetch tenant branding when on a tenant subdomain.
-    // On localhost / bare IP (super-admin root domain) this endpoint always
-    // returns 404 by design — skip the call to avoid console noise.
     const hostname = window.location.hostname
     const isRootDomain =
       hostname === 'localhost' ||
-      /^\d+\.\d+\.\d+\.\d+$/.test(hostname) ||   // bare IP
+      /^\d+\.\d+\.\d+\.\d+$/.test(hostname) ||
       hostname === (import.meta.env.VITE_ROOT_DOMAIN ?? '')
 
-    if (isRootDomain) return
+    if (isRootDomain) {
+      setTenantName('NEXUS BMS')
+      setIsLoadingPublicInfo(false)
+      return
+    }
 
-    apiClient.get('/tenants/public-info/')
-      .then((r) => { if (r.data?.name) setTenantName(r.data.name) })
-      .catch((err) => {
-        // 404 = this subdomain has no matching tenant workspace.
-        // Any other error (network, 5xx) is also treated as "not found" to
-        // prevent the login form appearing on a broken/unknown subdomain.
-        const status = err?.response?.status
-        if (!status || status === 404 || status === 401) {
-          setWorkspaceNotFound(true)
+    let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+
+    const loadPublicInfo = async () => {
+      try {
+        const response = await apiClient.get('/tenants/public-info/')
+        if (cancelled) return
+
+        if (response.data?.name) {
+          setTenantName(response.data.name)
+          setIsLoadingPublicInfo(false)
+          return
         }
-      })
+      } catch {
+        // ignore failures and retry automatically
+      }
+
+      if (!cancelled) {
+        retryTimer = window.setTimeout(loadPublicInfo, 5000)
+      }
+    }
+
+    loadPublicInfo()
+
+    return () => {
+      cancelled = true
+      if (retryTimer) {
+        clearTimeout(retryTimer)
+      }
+    }
   }, [])
 
   async function handleSubmit(e: FormEvent) {
@@ -89,22 +108,19 @@ export default function LoginPage() {
     navigate('/')
   }
 
-  // ── Workspace not found ───────────────────────────────────────────────────
-  if (workspaceNotFound) {
-    const slug = window.location.hostname.split('.')[0]
+  // ── Public info loading ──────────────────────────────────────────────────
+  if (isLoadingPublicInfo) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
-        <div className="bg-white rounded-2xl shadow-lg p-10 w-full max-w-md text-center">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-amber-50 mb-6">
-            <AlertTriangle size={28} className="text-amber-500" />
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4 text-center">
+        <div className="max-w-md">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-white/10 mx-auto mb-6 border border-white/10">
+            <div className="h-10 w-10 rounded-full border-4 border-slate-700 border-t-transparent animate-spin" />
           </div>
-          <h1 className="text-xl font-bold text-gray-900 mb-2">Workspace not found</h1>
-          <p className="text-sm text-gray-500 mb-1">
-            <span className="font-mono font-medium text-gray-700">{slug}</span> is not a registered workspace.
+          <h1 className="text-3xl font-semibold text-white">Loading your workspace</h1>
+          <p className="mt-4 text-sm text-slate-300">
+            Please wait while we establish a heavy-duty connection and land your secure workspace environment.
           </p>
-          <p className="text-sm text-gray-400">
-            Check the URL or contact your administrator.
-          </p>
+         
         </div>
       </div>
     )

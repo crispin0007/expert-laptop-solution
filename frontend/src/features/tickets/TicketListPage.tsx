@@ -290,7 +290,7 @@ function StaffTicketHistoryDrawer({ staff, onClose }: Readonly<{ staff: StaffAva
             <div className="divide-y divide-gray-100">
               {tickets.map(ticket => (
                 <a key={ticket.id} href={`/tickets/${ticket.id}`} target="_blank" rel="noreferrer"
-                  className="flex items-start gap-3 px-5 py-3.5 hover:bg-gray-50 transition group">
+                  className={`flex items-start gap-3 px-5 py-3.5 transition group ${ticket.status === 'closed' ? 'bg-rose-50 hover:bg-rose-100' : ticket.status === 'resolved' ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-gray-50'}`}>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-mono text-xs text-indigo-500 font-medium">{ticket.ticket_number}</span>
@@ -730,7 +730,7 @@ export default function TicketListPage() {
               <tr
                 key={ticket.id}
                 onClick={() => navigate(`/tickets/${ticket.id}`)}
-                className="hover:bg-indigo-50 transition-colors cursor-pointer"
+                className={`transition-colors cursor-pointer ${ticket.status === 'closed' ? 'bg-rose-50 hover:bg-rose-100' : ticket.status === 'resolved' ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-indigo-50'}`}
               >
                 <td className="px-4 py-3.5 font-mono text-indigo-600 font-medium text-xs">
                   {ticket.ticket_number}
