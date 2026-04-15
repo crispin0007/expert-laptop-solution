@@ -280,6 +280,7 @@ class TicketComment(TenantModel):
     author_override = models.CharField(max_length=128, blank=True, default='')
     body = models.TextField()
     is_internal = models.BooleanField(default=False)  # internal notes hidden from customer
+    is_deleted = models.BooleanField(default=False)
     attachment_files = models.JSONField(default=list, blank=True)  # [{file_url, file_name, file_size}]
 
     class Meta:
