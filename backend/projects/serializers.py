@@ -33,19 +33,41 @@ class ProjectTaskSerializer(NepaliModelSerializer):
 
 
 class ProjectProductSerializer(serializers.ModelSerializer):
-    product_name = serializers.CharField(source='product.name', read_only=True)
-    is_service = serializers.BooleanField(source='product.is_service', read_only=True)
+    product_name = serializers.SerializerMethodField()
+    product_sku = serializers.SerializerMethodField()
+    manual_name = serializers.CharField(required=False, allow_blank=True)
+    manual_sku = serializers.CharField(source='product_sku', required=False, allow_blank=True)
     unit_price = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
+    is_service = serializers.BooleanField(source='product.is_service', read_only=True)
 
     class Meta:
         model = ProjectProduct
-        fields = ('id', 'project', 'product', 'product_name', 'unit_price', 'is_service',
-                  'quantity_planned', 'note')
-        read_only_fields = ('project', 'product_name', 'is_service')
+        fields = (
+            'id', 'project', 'product', 'product_name', 'product_sku',
+            'manual_name', 'manual_sku', 'unit_price', 'is_service',
+            'quantity_planned', 'note',
+        )
+        read_only_fields = ('project', 'product_name', 'product_sku', 'is_service')
+
+    def get_product_name(self, obj):
+        if obj.product:
+            return obj.product.name
+        return obj.manual_name
+
+    def get_product_sku(self, obj):
+        if obj.product:
+            return obj.product.sku
+        return obj.product_sku
 
     def validate(self, attrs):
-        if attrs.get('unit_price') is None and attrs.get('product'):
-            attrs['unit_price'] = attrs['product'].unit_price
+        product = attrs.get('product')
+        manual_name = (attrs.get('manual_name') or '').strip()
+        if not product and not manual_name:
+            raise serializers.ValidationError('Either product or manual_name is required.')
+        if product and attrs.get('unit_price') is None:
+            attrs['unit_price'] = product.unit_price
+        if not product and attrs.get('unit_price') is None:
+            raise serializers.ValidationError('unit_price is required for manual project requirements.')
         return attrs
 
 
@@ -146,8 +168,10 @@ class ProjectSerializer(NepaliModelSerializer):
 
 
 class ProjectProductRequestSerializer(serializers.ModelSerializer):
-    product_name = serializers.CharField(source='product.name', read_only=True)
-    product_sku = serializers.CharField(source='product.sku', read_only=True)
+    product_name = serializers.SerializerMethodField()
+    product_sku = serializers.SerializerMethodField()
+    manual_name = serializers.CharField(required=False, allow_blank=True)
+    manual_sku = serializers.CharField(source='product_sku', required=False, allow_blank=True)
     requested_by_name = serializers.SerializerMethodField()
     reviewed_by_name = serializers.SerializerMethodField()
 
@@ -155,7 +179,8 @@ class ProjectProductRequestSerializer(serializers.ModelSerializer):
         model = ProjectProductRequest
         fields = (
             'id', 'project', 'product', 'product_name', 'product_sku',
-            'quantity', 'note', 'status',
+            'manual_name', 'manual_sku', 'quantity', 'unit_price', 'create_inventory',
+            'note', 'status',
             'requested_by', 'requested_by_name',
             'reviewed_by', 'reviewed_by_name', 'reviewed_at',
             'rejection_reason', 'created_at',
@@ -166,6 +191,25 @@ class ProjectProductRequestSerializer(serializers.ModelSerializer):
             'rejection_reason', 'created_at',
             'product_name', 'product_sku',
         )
+
+    def get_product_name(self, obj):
+        if obj.product:
+            return obj.product.name
+        return obj.manual_name
+
+    def get_product_sku(self, obj):
+        if obj.product:
+            return obj.product.sku
+        return obj.product_sku
+
+    def validate(self, attrs):
+        product = attrs.get('product')
+        manual_name = (attrs.get('manual_name') or '').strip()
+        if not product and not manual_name:
+            raise serializers.ValidationError('Either product or manual_name is required.')
+        if attrs.get('unit_price') is None:
+            raise serializers.ValidationError('unit_price is required for project requests.')
+        return attrs
 
     def get_requested_by_name(self, obj):
         if obj.requested_by:

@@ -233,22 +233,40 @@ class ProjectProductViewSet(NexusViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        product = serializer.validated_data['product']
+        product = serializer.validated_data.get('product')
+        manual_name = serializer.validated_data.get('manual_name', '').strip()
         qty = serializer.validated_data.get('quantity_planned', 1)
 
         with transaction.atomic():
-            existing = (
-                ProjectProduct.objects
-                .select_for_update()
-                .filter(tenant=self.tenant, project=project, product=product)
-                .first()
-            )
+            if product:
+                existing = (
+                    ProjectProduct.objects
+                    .select_for_update()
+                    .filter(tenant=self.tenant, project=project, product=product)
+                    .first()
+                )
+            else:
+                existing = (
+                    ProjectProduct.objects
+                    .select_for_update()
+                    .filter(
+                        tenant=self.tenant,
+                        project=project,
+                        product__isnull=True,
+                        manual_name=manual_name,
+                    )
+                    .first()
+                )
 
             if existing:
                 existing.quantity_planned += qty
                 if serializer.validated_data.get('unit_price') is not None:
                     existing.unit_price = serializer.validated_data['unit_price']
-                existing.save(update_fields=['quantity_planned', 'unit_price', 'updated_at'])
+                if manual_name:
+                    existing.manual_name = manual_name
+                if serializer.validated_data.get('product_sku') is not None:
+                    existing.product_sku = serializer.validated_data['product_sku']
+                existing.save(update_fields=['quantity_planned', 'unit_price', 'manual_name', 'product_sku', 'updated_at'])
                 out = self.get_serializer(existing)
                 return ApiResponse.success(data=out.data)
 
@@ -256,11 +274,23 @@ class ProjectProductViewSet(NexusViewSet):
                 serializer.save(tenant=self.tenant, created_by=request.user, project=project)
             except IntegrityError:
                 # Lost the race — retry as update.
-                existing = ProjectProduct.objects.get(
-                    tenant=self.tenant, project=project, product=product
-                )
+                if product:
+                    existing = ProjectProduct.objects.get(
+                        tenant=self.tenant, project=project, product=product
+                    )
+                else:
+                    existing = ProjectProduct.objects.get(
+                        tenant=self.tenant, project=project,
+                        product__isnull=True, manual_name=manual_name,
+                    )
                 existing.quantity_planned += qty
-                existing.save(update_fields=['quantity_planned', 'updated_at'])
+                if serializer.validated_data.get('unit_price') is not None:
+                    existing.unit_price = serializer.validated_data['unit_price']
+                if manual_name:
+                    existing.manual_name = manual_name
+                if serializer.validated_data.get('product_sku') is not None:
+                    existing.product_sku = serializer.validated_data['product_sku']
+                existing.save(update_fields=['quantity_planned', 'unit_price', 'manual_name', 'product_sku', 'updated_at'])
                 out = self.get_serializer(existing)
                 return ApiResponse.success(data=out.data)
 
@@ -312,29 +342,62 @@ class ProjectProductRequestViewSet(NexusViewSet):
         """POST /projects/{id}/product-requests/{pk}/approve/"""
         from django.utils import timezone
         from django.db import transaction as _tx
+        from inventory.models import Product as InventoryProduct
+
         req = self.get_object()
         if req.status != ProjectProductRequest.STATUS_PENDING:
             raise ConflictError('Only pending requests can be approved.')
 
-        # Wrap in atomic: if the ProjectProduct upsert fails after req.save(),
-        # the request must roll back to STATUS_PENDING so it can be retried.
-        # Without this, a failed upsert leaves req forever approved but no
-        # product record is ever created — silent data loss.
+        if req.product is None and not req.manual_name:
+            raise ConflictError('Cannot approve a request without a product or manual_name.')
+
         with _tx.atomic():
             req.status = ProjectProductRequest.STATUS_APPROVED
             req.reviewed_by = request.user
             req.reviewed_at = timezone.now()
             req.save()
 
-            # Upsert a ProjectProduct entry
+            product = req.product
+            if not product and req.create_inventory:
+                product = InventoryProduct.objects.filter(
+                    tenant=req.tenant,
+                    sku=req.product_sku,
+                ).first()
+                if not product:
+                    product = InventoryProduct.objects.create(
+                        tenant=req.tenant,
+                        name=req.manual_name,
+                        sku=req.product_sku,
+                        unit_price=req.unit_price,
+                        created_by=request.user,
+                        is_active=True,
+                        track_stock=False,
+                    )
+                    req.product = product
+                    req.save(update_fields=['product'])
+
+            defaults = {
+                'tenant': req.tenant,
+                'created_by': request.user,
+                'quantity_planned': req.quantity,
+                'unit_price': req.unit_price,
+                'manual_name': req.manual_name,
+                'product_sku': req.product_sku,
+            }
             pp, created = ProjectProduct.objects.get_or_create(
                 project=req.project,
-                product=req.product,
-                defaults={'tenant': req.tenant, 'created_by': request.user, 'quantity_planned': req.quantity},
+                product=product,
+                manual_name=req.manual_name if product is None else '',
+                defaults=defaults,
             )
             if not created:
                 pp.quantity_planned += req.quantity
-                pp.save(update_fields=['quantity_planned'])
+                pp.unit_price = req.unit_price
+                if req.manual_name:
+                    pp.manual_name = req.manual_name
+                if req.product_sku:
+                    pp.product_sku = req.product_sku
+                pp.save(update_fields=['quantity_planned', 'unit_price', 'manual_name', 'product_sku', 'updated_at'])
 
         return ApiResponse.success(data=ProjectProductRequestSerializer(req).data)
 

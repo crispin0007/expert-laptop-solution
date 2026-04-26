@@ -254,6 +254,9 @@ export const fetchPendingCoins = () =>
 export const fetchCoinsSummary = (params?: Record<string, unknown>) =>
   apiClient.get(ACCOUNTING.COINS_SUMMARY, { params }).then(normalizeData<any>)
 
+export const fetchStaffCoinSummary = (params?: Record<string, unknown>) =>
+  apiClient.get(ACCOUNTING.COINS_STAFF_SUMMARY, { params }).then(normalizeData<any>)
+
 export const fetchStaffCoinHistory = (staffId: number) =>
   apiClient.get(ACCOUNTING.COINS_STAFF_HISTORY(staffId)).then(normalizeData<any>)
 

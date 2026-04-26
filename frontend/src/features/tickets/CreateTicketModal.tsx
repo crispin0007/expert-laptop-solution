@@ -39,6 +39,8 @@ interface CreateTicketPayload {
   customer: number | ''
   department: number | ''
   assigned_to: number | ''
+  sla_deadline: string
+  scheduled_at: string
   contact_phone: string
 }
 
@@ -56,6 +58,8 @@ const EMPTY: CreateTicketPayload = {
   customer: '',
   department: '',
   assigned_to: '',
+  sla_deadline: '',
+  scheduled_at: '',
   contact_phone: '',
 }
 
@@ -123,12 +127,21 @@ export default function CreateTicketModal({ open, onClose, onCreated }: Props) {
       toast.error('Title is required')
       return
     }
-    // Strip empty string values → omit from payload
     const payload: Record<string, unknown> = { ...form }
     ;(['ticket_type', 'customer', 'department', 'assigned_to'] as const).forEach(k => {
       if (payload[k] === '') delete payload[k]
     })
     if (!payload.contact_phone) delete payload.contact_phone
+    if (payload.sla_deadline) {
+      payload.sla_deadline = new Date(payload.sla_deadline as string).toISOString()
+    } else {
+      delete payload.sla_deadline
+    }
+    if (payload.scheduled_at) {
+      payload.scheduled_at = new Date(payload.scheduled_at as string).toISOString()
+    } else {
+      delete payload.scheduled_at
+    }
     mutation.mutate(payload)
   }
 
@@ -194,6 +207,30 @@ export default function CreateTicketModal({ open, onClose, onCreated }: Props) {
               <option value="high">High</option>
               <option value="critical">Critical</option>
             </select>
+          </div>
+        </div>
+
+        {/* Row: SLA + Schedule */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">SLA Deadline</label>
+            <input
+              type="datetime-local"
+              value={form.sla_deadline}
+              onChange={e => set('sla_deadline', e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <p className="text-xs text-slate-400 mt-1">Optional. If omitted, the ticket type default SLA is used.</p>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Schedule Start</label>
+            <input
+              type="datetime-local"
+              value={form.scheduled_at}
+              onChange={e => set('scheduled_at', e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <p className="text-xs text-slate-400 mt-1">Optional. Notify the assignee when the ticket is due to start.</p>
           </div>
         </div>
 

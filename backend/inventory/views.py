@@ -4,6 +4,7 @@ import logging
 from decimal import Decimal, InvalidOperation
 from datetime import timedelta
 
+from django.utils.text import slugify
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -172,6 +173,28 @@ class ProductViewSet(NexusViewSet):
             return ApiResponse.success(data=data)
         return super().list(request, *args, **kwargs)
 
+    def _normalize_category_path(self, raw: str):
+        separators = ['>', '›', '/', '\\']
+        for separator in separators:
+            if separator in raw:
+                return [part.strip() for part in raw.split(separator) if part.strip()]
+        return [raw.strip()] if raw.strip() else []
+
+    def _get_or_create_category(self, raw: str):
+        path = self._normalize_category_path(raw)
+        if not path:
+            raise ValueError('Category path cannot be blank')
+        parent = None
+        category = None
+        for name in path:
+            category, _ = Category.objects.get_or_create(
+                tenant=self.tenant,
+                name=name,
+                defaults={'slug': slugify(name), 'parent': parent},
+            )
+            parent = category
+        return category
+
     @action(detail=False, methods=['get'], url_path='low-stock')
     def low_stock(self, request):
         """GET /inventory/products/low-stock/ — products at or below reorder level."""
@@ -197,7 +220,8 @@ class ProductViewSet(NexusViewSet):
         """
         POST /inventory/products/import-csv/ — bulk import products from CSV.
         Required columns: name, sku, unit_price
-        Optional: barcode, brand, description, cost_price, reorder_level, is_service, is_active
+        Optional: category, barcode, brand, description, cost_price,
+                  reorder_level, is_service, is_active, track_stock
         """
         self.ensure_tenant()
         file = request.FILES.get('file')
@@ -216,7 +240,7 @@ class ProductViewSet(NexusViewSet):
         error_rows = []
         for i, row in enumerate(reader, start=2):  # row 1 = header
             name = row.get('name', '').strip()
-            sku  = row.get('sku', '').strip()
+            sku = row.get('sku', '').strip()
             if not name or not sku:
                 error_rows.append({'row': i, 'error': 'name and sku are required'})
                 errors += 1
@@ -236,6 +260,14 @@ class ProductViewSet(NexusViewSet):
             for opt_field in ('barcode', 'brand', 'description'):
                 if row.get(opt_field, '').strip():
                     defaults[opt_field] = row[opt_field].strip()
+            category_text = row.get('category', '').strip()
+            if category_text:
+                try:
+                    defaults['category'] = self._get_or_create_category(category_text)
+                except Exception as exc:
+                    error_rows.append({'row': i, 'error': f'Invalid category: {str(exc)}'})
+                    errors += 1
+                    continue
             for dec_field in ('cost_price',):
                 raw = row.get(dec_field, '').strip()
                 if raw:

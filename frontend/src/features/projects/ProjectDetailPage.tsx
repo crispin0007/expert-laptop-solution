@@ -75,8 +75,9 @@ interface Milestone {
 
 interface ProjectProduct {
   id: number
-  product: number
+  product?: number | null
   product_name: string
+  product_sku?: string
   quantity_planned: number
   note: string
   unit_price?: string
@@ -98,10 +99,13 @@ interface StaffMember {
 
 interface ProductRequest {
   id: number
-  product: number
+  product?: number | null
   product_name: string
-  product_sku: string
+  manual_name?: string
+  product_sku?: string
   quantity: number
+  unit_price?: string
+  create_inventory?: boolean
   note: string
   status: 'pending' | 'approved' | 'rejected'
   requested_by: number | null
@@ -556,12 +560,19 @@ export default function ProjectDetailPage() {
   const [ppQty, setPpQty] = useState(1)
   const [selectedProjectProduct, setSelectedProjectProduct] = useState<Product | null>(null)
   const [ppPrice, setPpPrice] = useState('')
+  const [editingRequirementId, setEditingRequirementId] = useState<number | null>(null)
+  const [editedRequirementQty, setEditedRequirementQty] = useState(1)
+  const [editedRequirementPrice, setEditedRequirementPrice] = useState('')
   const attachFileRef = useRef<HTMLInputElement>(null)
   const [uploadingAttach, setUploadingAttach] = useState(false)
 
   // Product request state
   const [showPRForm, setShowPRForm] = useState(false)
   const [prProduct, setPrProduct] = useState<Product | null>(null)
+  const [prManualName, setPrManualName] = useState('')
+  const [prManualSku, setPrManualSku] = useState('')
+  const [prUnitPrice, setPrUnitPrice] = useState('')
+  const [prCreateInventory, setPrCreateInventory] = useState(false)
   const [prQty, setPrQty] = useState(1)
   const [prNote, setPrNote] = useState('')
   const [prRejectId, setPrRejectId] = useState<number | null>(null)
@@ -681,16 +692,40 @@ export default function ProjectDetailPage() {
 
   const createPRMutation = useMutation({
     mutationFn: () => apiClient.post(PROJECTS.PRODUCT_REQUESTS(projectId), {
-      product: prProduct!.id,
+      product: prProduct?.id ?? null,
+      manual_name: prProduct ? undefined : prManualName || undefined,
+      product_sku: prProduct ? undefined : prManualSku || undefined,
       quantity: prQty,
+      unit_price: prUnitPrice || prProduct?.unit_price || '0',
+      create_inventory: prCreateInventory,
       note: prNote,
     }),
     onSuccess: () => {
       toast.success('Product request submitted')
-      setPrProduct(null); setPrQty(1); setPrNote(''); setShowPRForm(false)
+      setPrProduct(null)
+      setPrManualName('')
+      setPrManualSku('')
+      setPrUnitPrice('')
+      setPrCreateInventory(false)
+      setPrQty(1)
+      setPrNote('')
+      setShowPRForm(false)
       qc.invalidateQueries({ queryKey: ['project-product-requests', id] })
     },
-    onError: () => toast.error('Failed to submit request'),
+    onError: (err: any) => {
+      const data = err?.response?.data
+      const msg =
+        data?.product?.[0] ??
+        data?.manual_name?.[0] ??
+        data?.product_sku?.[0] ??
+        data?.quantity?.[0] ??
+        data?.unit_price?.[0] ??
+        data?.non_field_errors?.[0] ??
+        data?.detail ??
+        'Failed to submit request'
+      console.error('Create product request error', err)
+      toast.error(msg)
+    },
   })
 
   const approvePRMutation = useMutation({
@@ -808,9 +843,39 @@ export default function ProjectDetailPage() {
       const data = err?.response?.data
       const msg =
         data?.product?.[0] ??
+        data?.quantity_planned?.[0] ??
+        data?.unit_price?.[0] ??
+        data?.manual_name?.[0] ??
         data?.non_field_errors?.[0] ??
         data?.detail ??
         'Failed to add product'
+      console.error('Add product error', err)
+      toast.error(msg)
+    },
+  })
+
+  const editRequirementMutation = useMutation({
+    mutationFn: ({ pp, quantity, price }: { pp: ProjectProduct; quantity: number; price: string }) => apiClient.post(PROJECTS.PROJECT_PRODUCTS(projectId), {
+      product: pp.product ?? null,
+      manual_name: pp.product ? undefined : pp.product_name,
+      product_sku: pp.product_sku || undefined,
+      quantity_planned: quantity,
+      unit_price: price || pp.unit_price || '0',
+    }),
+    onSuccess: () => {
+      toast.success('Requirement updated')
+      setEditingRequirementId(null)
+      setEditedRequirementQty(1)
+      setEditedRequirementPrice('')
+      qc.invalidateQueries({ queryKey: ['project-products', id] })
+    },
+    onError: (err: any) => {
+      const data = err?.response?.data
+      const msg =
+        data?.quantity_planned?.[0] ??
+        data?.unit_price?.[0] ??
+        data?.detail ??
+        'Failed to update requirement'
       toast.error(msg)
     },
   })
@@ -1486,6 +1551,110 @@ export default function ProjectDetailPage() {
               </div>
             )}
           </div>
+
+          {/* ── Requirements ──────────────────────────────────────────────────── */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mt-4">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-bold text-gray-800 text-base">Requirements</h2>
+              <span className="text-xs text-gray-400">{projectProducts.length} items</span>
+            </div>
+            {projectProducts.length === 0 ? (
+              <div className="text-center py-8 text-gray-400">
+                <Package size={32} className="mx-auto mb-2 opacity-30" />
+                <p className="text-sm">No material requirements added yet</p>
+                {canManage && <p className="text-xs mt-1 text-gray-400">Add materials from the sidebar or use product requests.</p>}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {projectProducts.map(pp => (
+                  <div key={pp.id} className="border border-gray-100 rounded-2xl p-4">
+                    {editingRequirementId === pp.id ? (
+                      <div className="space-y-3">
+                        <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto] items-end">
+                          <div>
+                            <p className="text-sm font-semibold text-gray-800 truncate">{pp.product_name}</p>
+                            <div className="flex flex-wrap gap-2 text-xs text-gray-400 mt-1">
+                              {pp.product_sku && <span className="font-mono">{pp.product_sku}</span>}
+                              {pp.note && <span>{pp.note}</span>}
+                            </div>
+                          </div>
+                          <label className="text-[11px] font-medium text-gray-500">
+                            Quantity
+                            <input
+                              type="number"
+                              min={1}
+                              value={editedRequirementQty}
+                              onChange={e => setEditedRequirementQty(Math.max(1, Number(e.target.value) || 1))}
+                              className="mt-1 w-full border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                            />
+                          </label>
+                          <label className="text-[11px] font-medium text-gray-500">
+                            Unit Price
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={editedRequirementPrice}
+                              onChange={e => setEditedRequirementPrice(e.target.value)}
+                              className="mt-1 w-full border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                            />
+                          </label>
+                        </div>
+                        <div className="flex gap-2 justify-end">
+                          <button
+                            onClick={() => setEditingRequirementId(null)}
+                            className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={() => editRequirementMutation.mutate({ pp, quantity: editedRequirementQty, price: editedRequirementPrice })}
+                            disabled={editRequirementMutation.isPending}
+                            className="text-xs px-3 py-1.5 bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:opacity-50"
+                          >
+                            {editRequirementMutation.isPending ? 'Saving…' : 'Save'}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-gray-800 truncate">{pp.product_name}</p>
+                          <div className="flex flex-wrap gap-2 text-xs text-gray-400 mt-1">
+                            {pp.product_sku && <span className="font-mono">{pp.product_sku}</span>}
+                            <span>Qty {pp.quantity_planned}</span>
+                            {pp.unit_price ? <span>Rs. {parseFloat(pp.unit_price).toFixed(2)}</span> : <span className="text-gray-400">Price needed</span>}
+                          </div>
+                        </div>
+                        <div className="flex gap-2 flex-wrap">
+                          {canManage && (
+                            <button
+                              onClick={() => {
+                                setEditingRequirementId(pp.id)
+                                setEditedRequirementQty(pp.quantity_planned)
+                                setEditedRequirementPrice(pp.unit_price ?? '0')
+                              }}
+                              className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50"
+                            >
+                              Edit
+                            </button>
+                          )}
+                          {canManage && (
+                            <button
+                              onClick={() => removeProductMutation.mutate(pp.id)}
+                              className="text-xs px-3 py-1.5 border border-red-200 rounded-lg text-red-600 hover:bg-red-50"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ── Right Sidebar ──────────────────────────────────────────────────── */}
@@ -1696,6 +1865,7 @@ export default function ProjectDetailPage() {
                   <li key={pp.id} className="flex items-center justify-between text-xs group">
                     <div className="truncate">
                       <span className="font-medium text-gray-700 truncate">{pp.product_name}</span>
+                      {pp.product_sku && <span className="text-gray-400 ml-2 font-mono">{pp.product_sku}</span>}
                       <span className="text-gray-400 ml-2">×{pp.quantity_planned}</span>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
@@ -1795,12 +1965,52 @@ export default function ProjectDetailPage() {
             {!canManage && showPRForm && (
               <div className="mb-3 p-3 bg-orange-50 rounded-xl border border-orange-100 space-y-2">
                 <label className="block text-[11px] font-medium text-gray-500 mb-0.5">Product</label>
-                <ProductSearchInput onSelect={p => setPrProduct(p)} />
-                {prProduct && (
+                <ProductSearchInput
+                  onSelect={p => {
+                    setPrProduct(p)
+                    setPrManualName('')
+                    setPrManualSku('')
+                    setPrUnitPrice(p.unit_price)
+                    setPrCreateInventory(false)
+                  }}
+                />
+                {prProduct ? (
                   <div className="flex items-center gap-1.5 text-xs font-medium text-orange-700 bg-orange-100 rounded-lg px-2 py-1">
                     <Package size={11} />
                     {prProduct.name}
-                    <button onClick={() => setPrProduct(null)} className="ml-auto text-orange-400 hover:text-orange-600"><X size={11} /></button>
+                    <button
+                      onClick={() => {
+                        setPrProduct(null)
+                        setPrUnitPrice('')
+                      }}
+                      className="ml-auto text-orange-400 hover:text-orange-600"
+                    ><X size={11} /></button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      placeholder="Manual item name"
+                      value={prManualName}
+                      onChange={e => { setPrManualName(e.target.value); if (e.target.value) setPrProduct(null) }}
+                      className="w-full border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-orange-400"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Item SKU / reference (optional)"
+                      value={prManualSku}
+                      onChange={e => setPrManualSku(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-orange-400"
+                    />
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={prCreateInventory}
+                        onChange={e => setPrCreateInventory(e.target.checked)}
+                        className="mt-0.5"
+                      />
+                      <label className="text-xs text-gray-500">Create inventory item after approval</label>
+                    </div>
                   </div>
                 )}
                 <div className="flex items-center gap-2">
@@ -1809,6 +2019,15 @@ export default function ProjectDetailPage() {
                     type="number" min={1} value={prQty}
                     onChange={e => setPrQty(Math.max(1, Number(e.target.value)))}
                     className="w-16 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-orange-400"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500 shrink-0">Unit Price:</label>
+                  <input
+                    type="number" min={0} step="0.01" value={prUnitPrice}
+                    onChange={e => setPrUnitPrice(e.target.value)}
+                    className="w-28 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-orange-400"
+                    placeholder={prProduct ? prProduct.unit_price : '0.00'}
                   />
                 </div>
                 <textarea
@@ -1821,7 +2040,7 @@ export default function ProjectDetailPage() {
                 <div className="flex gap-1.5">
                   <button
                     onClick={() => createPRMutation.mutate()}
-                    disabled={!prProduct || createPRMutation.isPending}
+                    disabled={(!prProduct && !prManualName) || !prUnitPrice || createPRMutation.isPending}
                     className="flex-1 bg-orange-500 text-white py-1.5 rounded-lg text-xs hover:bg-orange-600 disabled:opacity-50 font-medium"
                   >
                     {createPRMutation.isPending ? 'Submitting…' : 'Submit Request'}
@@ -1861,10 +2080,14 @@ export default function ProjectDetailPage() {
                       <div className="text-gray-500 flex items-center gap-1.5 flex-wrap">
                         <span>×{req.quantity}</span>
                         {req.product_sku && <span className="text-gray-400 font-mono">{req.product_sku}</span>}
+                        {req.unit_price && <span className="text-gray-400">Rs. {parseFloat(req.unit_price).toFixed(2)}</span>}
                         {req.requested_by_name && (
                           <span className="text-gray-400">by {req.requested_by_name}</span>
                         )}
                       </div>
+                      {req.create_inventory && (
+                        <div className="text-emerald-700 text-[10px] font-semibold">Will add item to inventory on approval</div>
+                      )}
                       {req.note && <p className="text-gray-500 italic">"{req.note}"</p>}
                       {req.rejection_reason && (
                         <p className="text-red-500 text-[10px] flex items-center gap-1">

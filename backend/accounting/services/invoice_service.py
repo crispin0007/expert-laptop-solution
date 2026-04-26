@@ -433,6 +433,17 @@ class InvoiceService:
         return self.repo.pending_finance_review()
 
     # ── Compute helpers ───────────────────────────────────────────────────────
+    def _determine_apply_vat(self, validated_data: dict, instance=None) -> bool:
+        if 'apply_vat' in validated_data:
+            return validated_data.pop('apply_vat')
+
+        if instance is not None:
+            return not bool(getattr(instance, 'ticket_id', None) or getattr(instance, 'project_id', None))
+
+        if any(validated_data.get(key) for key in ('ticket', 'ticket_id', 'project', 'project_id')):
+            return False
+
+        return True
 
     def _compute_totals_kwargs(self, line_items, discount=Decimal('0'), apply_vat=True) -> dict:
         """Return dict of subtotal/vat_rate/vat_amount/total ready to save."""
@@ -460,7 +471,7 @@ class InvoiceService:
         from django.utils import timezone
         line_items = validated_data.get('line_items', [])
         discount = validated_data.get('discount', Decimal('0'))
-        apply_vat = validated_data.pop('apply_vat', True)
+        apply_vat = self._determine_apply_vat(validated_data)
         totals = self._compute_totals_kwargs(line_items, discount, apply_vat=apply_vat)
 
         # Voucher date is the accounting source-of-truth; default to today when omitted.
@@ -521,7 +532,8 @@ class InvoiceService:
             )
         line_items = validated_data.get('line_items', instance.line_items)
         discount = validated_data.get('discount', instance.discount)
-        totals = self._compute_totals_kwargs(line_items, discount)
+        apply_vat = self._determine_apply_vat(validated_data, instance=instance)
+        totals = self._compute_totals_kwargs(line_items, discount, apply_vat=apply_vat)
 
         # B24 — Re-snapshot any product lines that were added or re-submitted
         # during a draft edit and lack a cost_price_snapshot. Lines that already
@@ -553,7 +565,8 @@ class InvoiceService:
         from django.utils import timezone
         line_items = validated_data.get('line_items', [])
         discount = validated_data.get('discount', Decimal('0'))
-        totals = self._compute_totals_kwargs(line_items, discount)
+        apply_vat = self._determine_apply_vat(validated_data)
+        totals = self._compute_totals_kwargs(line_items, discount, apply_vat=apply_vat)
 
         # Voucher date is the accounting source-of-truth; default to today when omitted.
         if validated_data.get('date') is None:

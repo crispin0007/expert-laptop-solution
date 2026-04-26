@@ -3797,3 +3797,73 @@ def service_report(tenant, date_from, date_to):
         'total_cost':    sum(r['cost']    for r in rows),
         'total_net':     sum(r['net']     for r in rows),
     }
+
+
+def closed_tickets_report(tenant, date_from, date_to, assigned_to_id=None):
+    """Return a closed ticket ledger with ticket-linked invoice totals and approved coin earnings."""
+    from tickets.models import Ticket
+    from accounting.models import Invoice, CoinTransaction
+
+    tickets = Ticket.objects.filter(
+        tenant=tenant,
+        status=Ticket.STATUS_CLOSED,
+        is_deleted=False,
+        closed_at__date__gte=date_from,
+        closed_at__date__lte=date_to,
+    ).select_related('assigned_to', 'customer').order_by('closed_at')
+
+    if assigned_to_id is not None:
+        tickets = tickets.filter(assigned_to_id=assigned_to_id)
+
+    ticket_ids = [t.pk for t in tickets]
+    invoices = Invoice.objects.filter(
+        tenant=tenant,
+        ticket_id__in=ticket_ids,
+        status__in=[Invoice.STATUS_ISSUED, Invoice.STATUS_PAID],
+    )
+    invoice_map = {inv.ticket_id: inv for inv in invoices}
+
+    coin_totals = {
+        item['source_id']: Decimal(str(item['total_amount'] or 0))
+        for item in CoinTransaction.objects.filter(
+            tenant=tenant,
+            source_type=CoinTransaction.SOURCE_TICKET,
+            source_id__in=ticket_ids,
+            status=CoinTransaction.STATUS_APPROVED,
+        ).values('source_id').annotate(total_amount=Sum('amount'))
+    }
+
+    rows = []
+    total_invoice = Decimal('0.00')
+    total_coins = Decimal('0.00')
+    for ticket in tickets:
+        inv = invoice_map.get(ticket.pk)
+        invoice_total = inv.total if inv else Decimal('0.00')
+        coins_awarded = Decimal(str(coin_totals.get(ticket.pk, Decimal('0.00'))))
+        total_invoice += invoice_total
+        total_coins += coins_awarded
+        rows.append({
+            'ticket_number':  ticket.ticket_number or '',
+            'ticket_title':   ticket.title or '',
+            'customer_name':  ticket.customer.name if ticket.customer else '',
+            'assigned_to':    ticket.assigned_to and (
+              (ticket.assigned_to.get_full_name() if hasattr(ticket.assigned_to, 'get_full_name') else '')
+              or getattr(ticket.assigned_to, 'name', '')
+              or getattr(ticket.assigned_to, 'email', '')
+              or getattr(ticket.assigned_to, 'username', '')
+            ) or '',
+            'status':         ticket.status,
+            'closed_at':      ticket.closed_at.date().isoformat() if ticket.closed_at else '',
+            'invoice_number': inv.invoice_number if inv else '',
+            'invoice_total':  str(invoice_total),
+            'coins_awarded':  str(coins_awarded),
+        })
+
+    return {
+        'date_from':           str(date_from),
+        'date_to':             str(date_to),
+        'total_ticket_count':  len(rows),
+        'total_invoice_amount': str(total_invoice),
+        'total_coin_amount':   str(total_coins),
+        'rows':                rows,
+    }

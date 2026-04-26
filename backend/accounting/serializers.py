@@ -456,11 +456,13 @@ class CreditNoteSerializer(serializers.ModelSerializer):
 class CoinTransactionSerializer(serializers.ModelSerializer):
     staff_name       = serializers.CharField(source='staff.full_name',       read_only=True, default='')
     approved_by_name = serializers.CharField(source='approved_by.full_name', read_only=True, default='')
+    source_reference = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model  = CoinTransaction
         fields = (
             'id', 'staff', 'staff_name', 'amount', 'source_type', 'source_id',
+            'source_reference',
             'status', 'approved_by', 'approved_by_name', 'note', 'created_at',
         )
         read_only_fields = ('status', 'approved_by', 'approved_by_name', 'created_at')
@@ -470,6 +472,15 @@ class CoinTransactionSerializer(serializers.ModelSerializer):
         staff = attrs.get('staff', getattr(self.instance, 'staff', None))
         _ensure_staff_in_tenant(staff, tenant, 'staff')
         return attrs
+
+    def get_source_reference(self, obj):
+        if obj.source_type == CoinTransaction.SOURCE_TICKET and obj.source_id:
+            return f'Ticket #{obj.source_id}'
+        if obj.source_type == CoinTransaction.SOURCE_TASK and obj.source_id:
+            return f'Task #{obj.source_id}'
+        if obj.source_type == CoinTransaction.SOURCE_MANUAL:
+            return 'Manual'
+        return None
 
 
 class CoinTransactionDetailSerializer(CoinTransactionSerializer):

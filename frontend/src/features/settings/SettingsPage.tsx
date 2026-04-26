@@ -28,6 +28,7 @@ interface TenantSettings {
   vat_enabled: boolean
   vat_rate: string
   coin_to_money_rate: string
+  payslip_calendar: 'ad' | 'bs'
 }
 
 type SettingsTab = 'workspace' | 'tax' | 'security' | 'display' | 'notifications' | 'email'
@@ -479,6 +480,7 @@ export default function SettingsPage() {
   const [vatEnabled, setVatEnabled] = useState(false)
   const [vatRate, setVatRate] = useState('')
   const [coinRate, setCoinRate] = useState('')
+  const [payslipCalendar, setPayslipCalendar] = useState<'ad' | 'bs'>('ad')
   const [selectedFyYear, setSelectedFyYear] = useState<number | null>(null)
   const [fyCloseNotes, setFyCloseNotes] = useState('')
   const [showFyCloseModal, setShowFyCloseModal] = useState(false)
@@ -490,6 +492,7 @@ export default function SettingsPage() {
       setVatEnabled(settings.vat_enabled)
       setVatRate(settings.vat_rate)
       setCoinRate(settings.coin_to_money_rate)
+      setPayslipCalendar(settings.payslip_calendar ?? 'ad')
       setLogo(settings.logo ?? '')
       setFavicon(settings.favicon ?? '')
     }
@@ -503,6 +506,7 @@ export default function SettingsPage() {
         vat_enabled: vatEnabled,
         vat_rate: vatRate,
         coin_to_money_rate: coinRate,
+        payslip_calendar: payslipCalendar,
         logo: logo || '',
         favicon: favicon || '',
       }),
@@ -1107,6 +1111,46 @@ export default function SettingsPage() {
                   </div>
                 </>
               )}
+            </SectionCard>
+
+            {/* Payroll Calendar */}
+            <SectionCard icon={Calendar} title="Payroll Calendar" subtitle="Determines when monthly payslips are auto-generated">
+              <FieldRow
+                label="Calendar Mode"
+                hint="AD: payslips generate on the 1st of each Gregorian month. BS: payslips generate on the 1st of each Nepali BS month."
+              >
+                <div className="flex gap-3">
+                  {(['ad', 'bs'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => managerView && setPayslipCalendar(mode)}
+                      disabled={!managerView}
+                      className={`flex-1 rounded-xl border-2 px-4 py-3 text-left transition-all ${
+                        payslipCalendar === mode
+                          ? 'border-indigo-600 bg-indigo-50'
+                          : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/40'
+                      } disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <p className={`text-sm font-bold ${
+                          payslipCalendar === mode ? 'text-indigo-700' : 'text-gray-700'
+                        }`}>
+                          {mode === 'ad' ? 'Gregorian (AD)' : 'Nepali BS'}
+                        </p>
+                        {payslipCalendar === mode && (
+                          <span className="w-5 h-5 bg-indigo-600 rounded-full flex items-center justify-center shrink-0">
+                            <Check size={11} className="text-white" strokeWidth={3} />
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {mode === 'ad' ? 'Generate on 1st of each English month' : 'Generate on 1st of each BS month (Baisakh, Jestha…)'}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              </FieldRow>
             </SectionCard>
 
             {managerView && <SaveBar onSave={() => saveMutation.mutate()} isPending={saveMutation.isPending} />}

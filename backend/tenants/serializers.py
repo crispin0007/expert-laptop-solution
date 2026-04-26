@@ -160,7 +160,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'name', 'slug', 'logo', 'favicon', 'currency',
             'vat_enabled', 'vat_rate',
-            'coin_to_money_rate', 'custom_domain', 'plan',
+            'coin_to_money_rate', 'payslip_calendar', 'custom_domain', 'plan',
         )
         read_only_fields = ('id', 'slug', 'plan')
 

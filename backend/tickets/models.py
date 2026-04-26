@@ -208,6 +208,8 @@ class Ticket(TenantModel):
     )
 
     sla_deadline = models.DateTimeField(null=True, blank=True)
+    scheduled_at = models.DateTimeField(null=True, blank=True, help_text='Optional scheduled start date/time for this ticket.')
+    scheduled_notification_sent_at = models.DateTimeField(null=True, blank=True)
     resolved_at  = models.DateTimeField(null=True, blank=True)
     closed_at    = models.DateTimeField(null=True, blank=True)
 
@@ -228,6 +230,7 @@ class Ticket(TenantModel):
         indexes = [
             models.Index(fields=['tenant', 'status'],      name='ticket_tenant_status_idx'),
             models.Index(fields=['tenant', 'assigned_to'], name='ticket_tenant_assigned_idx'),
+            models.Index(fields=['tenant', 'scheduled_at'], name='ticket_tenant_scheduled_at_idx'),
             models.Index(fields=['tenant', 'is_deleted'],  name='ticket_tenant_deleted_idx'),
         ]
 
@@ -356,6 +359,7 @@ class TicketTimeline(TenantModel):
     EVENT_TRANSFERRED = 'transferred'
     EVENT_COMMENTED = 'commented'
     EVENT_PRODUCT_ADDED = 'product_added'
+    EVENT_SCHEDULED = 'scheduled'
     EVENT_CREATED = 'created'
 
     EVENT_TYPES = [
@@ -364,6 +368,7 @@ class TicketTimeline(TenantModel):
         (EVENT_TRANSFERRED, 'Transferred'),
         (EVENT_COMMENTED, 'Commented'),
         (EVENT_PRODUCT_ADDED, 'Product Added'),
+        (EVENT_SCHEDULED, 'Scheduled'),
         (EVENT_CREATED, 'Created'),
     ]
 

@@ -21,6 +21,7 @@ EVENT_CATALOGUE: dict[str, str] = {
     'ticket.cancelled':          'Ticket cancelled',
     'ticket.reopened':           'Ticket reopened',
     'ticket.overdue':            'Ticket past SLA deadline',
+    'ticket.scheduled':          'Ticket scheduled',
     'ticket.escalated':          'Ticket escalated',
     'ticket.comment.added':      'Comment added to ticket',
 

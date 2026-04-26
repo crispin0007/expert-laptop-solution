@@ -83,6 +83,8 @@ interface WizardState {
   title: string
   description: string
   priority: 'low' | 'medium' | 'high' | 'critical'
+  sla_deadline: string
+  scheduled_at: string
   contact_phone: string
   device_brand: string
   device_model: string
@@ -680,6 +682,30 @@ function Step4Details({
           </div>
         </div>
 
+        {/* SLA + Schedule */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">SLA Deadline</label>
+            <input
+              type="datetime-local"
+              value={state.sla_deadline}
+              onChange={e => onChange({ sla_deadline: e.target.value })}
+              className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <p className="text-xs text-slate-400 mt-1">Optional; defaults to the ticket type SLA.</p>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Schedule Start</label>
+            <input
+              type="datetime-local"
+              value={state.scheduled_at}
+              onChange={e => onChange({ scheduled_at: e.target.value })}
+              className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <p className="text-xs text-slate-400 mt-1">Optional; assigned staff are notified on this date/time.</p>
+          </div>
+        </div>
+
         {/* Department */}
         <div>
           <label className="text-xs font-medium text-slate-600 block mb-1">Department</label>
@@ -872,6 +898,8 @@ function Step5Review({
     ] : []),
     ['Customer', customer?.name ?? '—'],
     ['Priority', state.priority.charAt(0).toUpperCase() + state.priority.slice(1)],
+    ['SLA Deadline', state.sla_deadline ? new Date(state.sla_deadline).toLocaleString() : '—'],
+    ['Scheduled Start', state.scheduled_at ? new Date(state.scheduled_at).toLocaleString() : '—'],
     ['Department', dept?.name ?? '—'],
     ['Assigned Staff', assignedStaff.length > 0
       ? assignedStaff.map((s, i) => `${s.full_name || s.email}${i === 0 ? ' (lead)' : ''}`).join(', ')
@@ -923,6 +951,8 @@ const INIT: WizardState = {
   title: '',
   description: '',
   priority: 'medium',
+  sla_deadline: '',
+  scheduled_at: '',
   contact_phone: '',
   device_brand: '',
   device_model: '',
@@ -1063,6 +1093,12 @@ export default function CreateTicketWizard({ open, onClose, onCreated }: Props) 
       }
       if (state.vehicles.length > 0) {
         payload.vehicles = state.vehicles
+      }
+      if (state.sla_deadline) {
+        payload.sla_deadline = new Date(state.sla_deadline).toISOString()
+      }
+      if (state.scheduled_at) {
+        payload.scheduled_at = new Date(state.scheduled_at).toISOString()
       }
       return apiClient.post(TICKETS.LIST, payload)
     },

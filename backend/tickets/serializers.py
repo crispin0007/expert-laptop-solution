@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework import serializers
 from core.serializers import NepaliModelSerializer
 from .models import (
@@ -109,7 +110,7 @@ class TicketSerializer(NepaliModelSerializer):
             'vehicles', 'vehicle_names',
             'created_by', 'created_by_name',
             'parent_ticket',
-            'sla_deadline', 'sla_breached', 'sla_breach_at',
+            'sla_deadline', 'scheduled_at', 'sla_breached', 'sla_breach_at',
             'resolved_at', 'closed_at',
             'service_charge',
             'coin_preview',
@@ -228,6 +229,9 @@ class TicketCreateSerializer(NepaliModelSerializer):
     # Title is optional — auto-generated from category+subcategory if omitted
     title = serializers.CharField(required=False, allow_blank=True, max_length=255)
 
+    sla_deadline = serializers.DateTimeField(required=False, allow_null=True)
+    scheduled_at = serializers.DateTimeField(required=False, allow_null=True)
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         tenant = self.context.get('tenant')
@@ -252,6 +256,7 @@ class TicketCreateSerializer(NepaliModelSerializer):
             'device_brand', 'device_model',
             'priority', 'service_charge',
             'assigned_to', 'parent_ticket', 'team_members', 'vehicles',
+            'sla_deadline', 'scheduled_at',
         )
 
     def validate_team_members(self, users):
@@ -294,6 +299,17 @@ class TicketCreateSerializer(NepaliModelSerializer):
         if service_charge is not None and service_charge < 0:
             raise serializers.ValidationError(
                 {'service_charge': 'Service charge cannot be negative.'}
+            )
+        sla_deadline = data.get('sla_deadline')
+        scheduled_at = data.get('scheduled_at')
+        now = timezone.now()
+        if sla_deadline and sla_deadline <= now:
+            raise serializers.ValidationError({'sla_deadline': 'SLA deadline must be in the future.'})
+        if scheduled_at and scheduled_at <= now:
+            raise serializers.ValidationError({'scheduled_at': 'Scheduled date/time must be in the future.'})
+        if sla_deadline and scheduled_at and sla_deadline < scheduled_at:
+            raise serializers.ValidationError(
+                {'scheduled_at': 'Schedule must be before the SLA deadline.'}
             )
         return data
 

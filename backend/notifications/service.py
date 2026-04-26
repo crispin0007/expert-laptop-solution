@@ -101,6 +101,33 @@ def notify_sla_warning(ticket: 'Ticket', recipient) -> None:
         logger.exception("Failed to enqueue push for sla_warning ticket %s", ticket.pk)
 
 
+def notify_ticket_scheduled(ticket: 'Ticket') -> None:
+    """Create in-app notification + push when a ticket reaches its scheduled start time."""
+    if not ticket.assigned_to:
+        return
+    _create(
+        tenant=ticket.tenant,
+        recipient=ticket.assigned_to,
+        notification_type='ticket_scheduled',
+        title=f'Ticket scheduled: {ticket.ticket_number}',
+        body=f'Ticket "{ticket.title}" is scheduled to start now.',
+        source_type='ticket',
+        source_id=ticket.pk,
+        metadata={'ticket_number': ticket.ticket_number, 'scheduled_at': ticket.scheduled_at.isoformat() if ticket.scheduled_at else ''},
+    )
+    try:
+        from notifications.tasks import task_send_push
+        task_send_push.delay(
+            user_id=ticket.assigned_to_id,
+            tenant_id=ticket.tenant_id,
+            title=f'Ticket scheduled: {ticket.ticket_number}',
+            body=f'Ticket "{ticket.title}" is scheduled to start now.',
+            data={'type': 'ticket_scheduled', 'source_id': ticket.pk},
+        )
+    except Exception:
+        logger.exception("Failed to enqueue push for ticket_scheduled %s", ticket.pk)
+
+
 def notify_coin_approved(coin_txn) -> None:
     _create(
         tenant=coin_txn.tenant,

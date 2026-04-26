@@ -386,7 +386,12 @@ function SidebarContent({
                 {perms.isManager && <SubNavItem to="/tickets" label="All Tickets" icon={<Ticket size={13} />} />}
                 <SubNavItem to="/tickets?assigned=me" label="My Tickets" icon={<UserCircle size={13} />} />
                 {perms.can('can_manage_ticket_types') && (
-                  <SubNavItem to="/tickets/settings" label="Settings" icon={<Settings size={13} />} />
+                  <>
+                    <SubNavItem to="/tickets/settings" label="Settings" icon={<Settings size={13} />} />
+                    {perms.can('can_view_accounting') && (
+                      <SubNavItem to="/tickets/closed-report" label="Closed Tickets" icon={<FileText size={13} />} />
+                    )}
+                  </>
                 )}
               </NavSection>
             )}

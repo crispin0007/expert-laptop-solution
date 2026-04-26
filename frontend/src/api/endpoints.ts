@@ -183,6 +183,7 @@ export const ACCOUNTING = {
   REPORT_SALES_BY_ITEM_MONTHLY: '/accounting/reports/sales-by-item-monthly/',
   REPORT_SALES_MASTER: '/accounting/reports/sales-master/',
   REPORT_SALES_SUMMARY: '/accounting/reports/sales-summary/',
+  REPORT_CLOSED_TICKETS: '/accounting/reports/closed-tickets/',
   // Purchases
   REPORT_PURCHASE_BY_SUPPLIER: '/accounting/reports/purchase-by-supplier/',
   REPORT_PURCHASE_BY_ITEM: '/accounting/reports/purchase-by-item/',
@@ -221,6 +222,7 @@ export const ACCOUNTING = {
   COIN_REJECT: (id: number) => `/accounting/coins/${id}/reject/`,
   COINS_PENDING: '/accounting/coins/pending/',
   COINS_AWARD: '/accounting/coins/award/',
+  COINS_STAFF_SUMMARY: '/accounting/coins/staff-summary/',
   COINS_STAFF_HISTORY: (staffId: number) => `/accounting/coins/staff/${staffId}/`,
 
   // ── Payslips ──────────────────────────────────────────────────────────────

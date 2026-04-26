@@ -346,6 +346,44 @@ def task_check_sla_deadlines() -> None:
 
 
 @shared_task
+def task_check_ticket_schedules() -> None:
+    """Periodic task to notify staff when a scheduled ticket start time arrives."""
+    from django.utils import timezone
+    from tickets.models import Ticket
+    from notifications.service import notify_ticket_scheduled
+
+    now = timezone.now()
+    scheduled_tickets = (
+        Ticket.objects
+        .filter(
+            scheduled_at__isnull=False,
+            scheduled_notification_sent_at__isnull=True,
+            scheduled_at__lte=now,
+            assigned_to__isnull=False,
+            status__in=(
+                Ticket.STATUS_OPEN,
+                Ticket.STATUS_IN_PROGRESS,
+                Ticket.STATUS_PENDING_CUSTOMER,
+            ),
+        )
+        .select_related('assigned_to', 'tenant')
+        .iterator(chunk_size=200)
+    )
+
+    notified = 0
+    for ticket in scheduled_tickets:
+        try:
+            notify_ticket_scheduled(ticket)
+            Ticket.objects.filter(pk=ticket.pk).update(
+                scheduled_notification_sent_at=now
+            )
+            notified += 1
+        except Exception:
+            logger.exception('Failed to notify scheduled ticket=%s', ticket.pk)
+    logger.info('task_check_ticket_schedules: %d notifications sent.', notified)
+
+
+@shared_task
 def task_flush_expired_tokens() -> None:
     """
     Purge expired SimpleJWT tokens from the database.

@@ -126,6 +126,51 @@ class TestInvoiceLifecycle:
         assert str(service_lines[0].get('service_id')) == str(service_product.id)
 
     @pytest.mark.django_db
+    def test_ticket_invoice_service_does_not_auto_apply_vat(self, tenant, admin_user):
+        from tickets.models import Ticket
+        from accounting.services.ticket_invoice_service import generate_ticket_invoice
+
+        ticket = Ticket.objects.create(
+            tenant=tenant,
+            title='VAT Test Ticket',
+            service_charge=Decimal('1500.00'),
+        )
+
+        invoice = generate_ticket_invoice(ticket, tenant, created_by=admin_user)
+
+        assert invoice.vat_rate == Decimal('0')
+        assert invoice.vat_amount == Decimal('0')
+        assert invoice.total == Decimal('1500.00')
+
+    @pytest.mark.django_db
+    def test_invoice_service_defaults_no_vat_for_project_invoices(self, tenant, admin_user):
+        from projects.models import Project
+        from accounting.services.invoice_service import InvoiceService
+
+        project = Project.objects.create(
+            tenant=tenant,
+            name='VAT Test Project',
+        )
+
+        service = InvoiceService(tenant=tenant, user=admin_user)
+        invoice = service.create({
+            'project': project,
+            'line_items': [
+                {
+                    'description': 'Project billing',
+                    'qty': 1,
+                    'unit_price': '1000.00',
+                    'discount': '0',
+                    'line_type': 'service',
+                }
+            ],
+        })
+
+        assert invoice.vat_rate == Decimal('0')
+        assert invoice.vat_amount == Decimal('0')
+        assert invoice.total == Decimal('1000.00')
+
+    @pytest.mark.django_db
     def test_service_ledger_includes_ticket_invoice_service_revenue(self, tenant, admin_user):
         from inventory.models import Product
         from tickets.models import Ticket

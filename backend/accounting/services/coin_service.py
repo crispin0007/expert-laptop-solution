@@ -15,7 +15,7 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Sum, Count
 
 from core.exceptions import NotFoundError, ValidationError, CoinApprovalError, ForbiddenError
 
@@ -110,6 +110,70 @@ class CoinService:
             'rate': rate,
         }
 
+    def staff_summary(self, period_start=None, period_end=None):
+        """Return per-staff coin totals across the tenant.
+
+        Optional period_start/period_end filters coin totals by creation date.
+        """
+        from accounting.models import CoinTransaction
+        from django.db.models import Case, When, DecimalField, Q
+
+        qs = CoinTransaction.objects.filter(tenant=self.tenant)
+        if period_start and period_end:
+            qs = qs.filter(
+                created_at__date__gte=period_start,
+                created_at__date__lte=period_end,
+            )
+        summary_qs = qs.values(
+            'staff_id',
+            'staff__full_name',
+            'staff__email',
+        ).annotate(
+            total_coins=Sum('amount'),
+            approved_coins=Sum(
+                Case(
+                    When(status=CoinTransaction.STATUS_APPROVED, then='amount'),
+                    default=Decimal('0'),
+                    output_field=DecimalField(max_digits=10, decimal_places=2),
+                )
+            ),
+            pending_coins=Sum(
+                Case(
+                    When(status=CoinTransaction.STATUS_PENDING, then='amount'),
+                    default=Decimal('0'),
+                    output_field=DecimalField(max_digits=10, decimal_places=2),
+                )
+            ),
+            rejected_coins=Sum(
+                Case(
+                    When(status=CoinTransaction.STATUS_REJECTED, then='amount'),
+                    default=Decimal('0'),
+                    output_field=DecimalField(max_digits=10, decimal_places=2),
+                )
+            ),
+            total_count=Count('id'),
+            approved_count=Count('id', filter=Q(status=CoinTransaction.STATUS_APPROVED)),
+            pending_count=Count('id', filter=Q(status=CoinTransaction.STATUS_PENDING)),
+            rejected_count=Count('id', filter=Q(status=CoinTransaction.STATUS_REJECTED)),
+        ).order_by('-total_coins')
+        return [
+            {
+                'staff_id': row['staff_id'],
+                'staff_name': row['staff__full_name'] or '',
+                'staff_email': row['staff__email'] or '',
+                'total_coins': str(row['total_coins'] or Decimal('0')),
+                'approved_coins': str(row['approved_coins'] or Decimal('0')),
+                'pending_coins': str(row['pending_coins'] or Decimal('0')),
+                'rejected_coins': str(row['rejected_coins'] or Decimal('0')),
+                'total_count': row['total_count'],
+                'approved_count': row['approved_count'],
+                'pending_count': row['pending_count'],
+                'rejected_count': row['rejected_count'],
+                'approved_value': str((row['approved_coins'] or Decimal('0')) * (self.tenant.coin_to_money_rate or Decimal('1'))),
+            }
+            for row in summary_qs
+        ]
+
     # ── Create ────────────────────────────────────────────────────────────────
 
     def create(self, validated_data: dict):
@@ -193,14 +257,14 @@ class CoinService:
         if source_type not in dict(CoinTransaction.SOURCE_TYPES):
             source_type = CoinTransaction.SOURCE_MANUAL
 
-        # Prevent duplicate coin awards for the same ticket
-        if source_type == CoinTransaction.SOURCE_TICKET and source_id:
+        # Prevent duplicate coin awards for the same ticket/task source
+        if source_type in (CoinTransaction.SOURCE_TICKET, CoinTransaction.SOURCE_TASK) and source_id:
             if CoinTransaction.objects.filter(
                 tenant=self.tenant,
-                source_type=CoinTransaction.SOURCE_TICKET,
+                source_type=source_type,
                 source_id=source_id,
             ).exists():
-                raise ValidationError('Coins have already been recorded for this ticket.')
+                raise ValidationError(f'Coins have already been recorded for this {source_type}.')
 
         ct = CoinTransaction.objects.create(
             tenant=self.tenant,

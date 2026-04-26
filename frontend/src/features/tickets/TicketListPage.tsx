@@ -343,24 +343,35 @@ function StaffTicketHistoryDrawer({ staff, onClose }: Readonly<{ staff: StaffAva
 
 
 function SLABadge({ breached, deadline }: Readonly<{ breached: boolean; deadline: string | null }>) {
-  if (!deadline) return null
-  if (breached) {
+  if (!deadline) {
+    return <span className="text-xs text-gray-400">—</span>
+  }
+
+  const diff = new Date(deadline).getTime() - Date.now()
+  const days = Math.floor(diff / 86_400_000)
+  const hours = Math.floor(diff / 3_600_000)
+
+  if (breached || diff <= 0) {
     return (
       <span className="flex items-center gap-1 text-xs font-medium text-red-600">
         <AlertCircle size={12} /> SLA Breached
       </span>
     )
   }
-  const diff = new Date(deadline).getTime() - Date.now()
-  const hours = Math.floor(diff / 3_600_000)
-  if (hours <= 6) {
+
+  if (days >= 1) {
     return (
-      <span className="flex items-center gap-1 text-xs font-medium text-amber-600">
-        <Clock size={12} /> {hours}h left
+      <span className="text-xs font-medium text-gray-700">
+        {days}d left
       </span>
     )
   }
-  return null
+
+  return (
+    <span className="text-xs font-medium text-amber-600">
+      <Clock size={12} /> {Math.max(1, hours)}h left
+    </span>
+  )
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────

@@ -156,7 +156,7 @@ class ProjectTask(TenantModel):
 class ProjectProduct(TenantModel):
     """
     Products / parts linked to a project (planned usage).
-    If product has warranty, serial_number can be assigned when used.
+    Supports either an existing inventory product or a manual ad-hoc requirement.
     """
     project = models.ForeignKey(
         Project,
@@ -165,9 +165,12 @@ class ProjectProduct(TenantModel):
     )
     product = models.ForeignKey(
         'inventory.Product',
-        on_delete=models.CASCADE,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
         related_name='project_usages',
     )
+    manual_name = models.CharField(max_length=255, blank=True)
+    product_sku = models.CharField(max_length=64, blank=True)
     unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     quantity_planned = models.PositiveIntegerField(default=1)
     note = models.TextField(blank=True)
@@ -180,11 +183,12 @@ class ProjectProduct(TenantModel):
     )
 
     class Meta:
-        unique_together = ('project', 'product')
-        ordering = ['product__name']
+        unique_together = ('project', 'product', 'manual_name')
+        ordering = ['product__name', 'manual_name']
 
     def __str__(self):
-        return f"{self.project.project_number} — {self.product.name} ×{self.quantity_planned}"
+        label = self.product.name if self.product else self.manual_name
+        return f"{self.project.project_number} — {label} ×{self.quantity_planned}"
 
 
 class ProjectProductRequest(TenantModel):
@@ -211,10 +215,15 @@ class ProjectProductRequest(TenantModel):
     )
     product = models.ForeignKey(
         'inventory.Product',
-        on_delete=models.CASCADE,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
         related_name='project_requests',
     )
+    manual_name = models.CharField(max_length=255, blank=True)
+    product_sku = models.CharField(max_length=64, blank=True)
     quantity = models.PositiveIntegerField(default=1)
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    create_inventory = models.BooleanField(default=False)
     note = models.TextField(blank=True)
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
 
@@ -237,7 +246,8 @@ class ProjectProductRequest(TenantModel):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"{self.project.project_number} — {self.product.name} ({self.status})"
+        label = self.product.name if self.product else self.manual_name
+        return f"{self.project.project_number} — {label} ({self.status})"
 
 
 class ProjectMemberSchedule(TenantModel):

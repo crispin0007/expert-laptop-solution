@@ -13,6 +13,7 @@ import apiClient from '../../api/client'
 import { TICKETS, ACCOUNTING, INVENTORY, DEPARTMENTS, STAFF } from '../../api/endpoints'
 import Modal from '../../components/Modal'
 import { usePermissions } from '../../hooks/usePermissions'
+import type { Customer } from '../customers/types'
 
 function isImage(filename: string | undefined): boolean {
   if (!filename) return false
@@ -34,6 +35,7 @@ interface TicketDetail {
   status: string
   priority: string
   ticket_type_name: string
+  customer: number | null
   customer_name: string
   department_name: string
   assigned_to: number | null
@@ -1689,6 +1691,7 @@ export default function TicketDetailPage() {
   const commentFileRef = useRef<HTMLInputElement>(null)
   const attachFileRef = useRef<HTMLInputElement>(null)
   const [uploadingAttach, setUploadingAttach] = useState(false)
+  const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false)
   // ── Queries ──────────────────────────────────────────────────────────────
 
   const { data: ticket, isLoading } = useQuery<TicketDetail>({
@@ -1696,6 +1699,13 @@ export default function TicketDetailPage() {
     queryFn: () =>
       apiClient.get(TICKETS.DETAIL(ticketId)).then(r => r.data.data ?? r.data),
     enabled: !!id,
+  })
+
+  const { data: customerDetails } = useQuery<Customer>({
+    queryKey: ['customer', ticket?.customer],
+    queryFn: () =>
+      apiClient.get(`/customers/${ticket?.customer}/`).then(r => r.data.data ?? r.data),
+    enabled: !!ticket?.customer,
   })
 
   // Assigned users (viewer/custom roles) can edit their own ticket
@@ -1706,12 +1716,14 @@ export default function TicketDetailPage() {
   const canEdit = managerView || isAssigned
 
   const { data: comments = [], isLoading: commentsLoading } = useQuery<Comment[]>({
-    queryKey: ['ticket-comments', id],
+    queryKey: ['ticket-comments', ticketId],
     queryFn: () =>
       apiClient.get(TICKETS.COMMENTS(ticketId)).then(r =>
-        Array.isArray(r.data) ? r.data : (r.data.results ?? r.data.data ?? [])
+        Array.isArray(r.data)
+          ? r.data
+          : r.data.data?.results ?? r.data.data ?? r.data.results ?? r.data ?? []
       ),
-    enabled: !!id,
+    enabled: ticketId > 0,
   })
 
   const { data: timeline = [], isLoading: timelineLoading } = useQuery<TimelineEvent[]>({
@@ -1770,9 +1782,9 @@ export default function TicketDetailPage() {
       setCommentBody('')
       setIsInternal(false)
       setCommentFiles([])
-      qc.invalidateQueries({ queryKey: ['ticket-comments', id] })
-      qc.invalidateQueries({ queryKey: ['ticket-attachments', id] })
-      qc.invalidateQueries({ queryKey: ['ticket-timeline', id] })
+      qc.invalidateQueries({ queryKey: ['ticket-comments', ticketId] })
+      qc.invalidateQueries({ queryKey: ['ticket-attachments', ticketId] })
+      qc.invalidateQueries({ queryKey: ['ticket-timeline', ticketId] })
     },
     onError: () => toast.error('Failed to add comment'),
   })
@@ -1969,11 +1981,29 @@ export default function TicketDetailPage() {
             <dl className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
               {[
                 { label: 'Type', value: ticket.ticket_type_name || '—' },
-                { label: 'Customer', value: ticket.customer_name || '—' },
+                {
+                  label: 'Customer',
+                  value: ticket.customer ? (
+                    <button
+                      type="button"
+                      onClick={() => setIsCustomerModalOpen(true)}
+                      className="text-indigo-600 hover:underline"
+                    >
+                      {ticket.customer_name || 'Customer'}
+                    </button>
+                  ) : (ticket.customer_name || '—'),
+                },
+                {
+                  label: 'Customer Address',
+                  value: customerDetails?.full_address ? (
+                    <span className="text-gray-700 text-xs leading-snug">{customerDetails.full_address}</span>
+                  ) : '—',
+                },
                 { label: 'Department', value: ticket.department_name || '—' },
                 { label: 'Assigned To', value: ticket.assigned_to_name || 'Unassigned' },
                 { label: 'Created By', value: ticket.created_by_name || '—' },
                 { label: 'SLA Deadline', value: ticket.sla_deadline ? <DateDisplay adDate={ticket.sla_deadline} showTime compact /> : '—' },
+                { label: 'Scheduled Start', value: ticket.scheduled_at ? <DateDisplay adDate={ticket.scheduled_at} showTime compact /> : '—' },
                 { label: 'Created', value: <DateDisplay adDate={ticket.created_at} showTime compact /> },
                 { label: 'Contact Phone', value: (ticket.contact_phone || ticket.customer_phone)
                     ? <a href={`tel:${ticket.contact_phone || ticket.customer_phone}`} className="text-indigo-600 hover:underline flex items-center gap-1"><Phone size={10} />{ticket.contact_phone || ticket.customer_phone}</a>
@@ -2286,6 +2316,49 @@ export default function TicketDetailPage() {
         onClose={() => setShowCloseModal(false)}
         onDone={() => { setShowCloseModal(false); refreshAll() }}
       />
+      <Modal
+        open={isCustomerModalOpen}
+        onClose={() => setIsCustomerModalOpen(false)}
+        title={customerDetails?.name ? `Customer: ${customerDetails.name}` : 'Customer Details'}
+        width="max-w-xl"
+      >
+        {customerDetails ? (
+          <div className="space-y-4 text-sm text-gray-700">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <dt className="text-xs text-gray-400 mb-1">Name</dt>
+                <dd className="font-medium text-gray-900">{customerDetails.name}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-gray-400 mb-1">Type</dt>
+                <dd className="font-medium text-gray-900 capitalize">{customerDetails.type}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-gray-400 mb-1">Email</dt>
+                <dd className="font-medium text-indigo-600 break-words">{customerDetails.email || '—'}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-gray-400 mb-1">Phone</dt>
+                <dd className="font-medium text-indigo-600">{customerDetails.phone || '—'}</dd>
+              </div>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-4">
+              <dt className="text-xs text-gray-400 mb-1">Address</dt>
+              <dd className="text-gray-800 text-sm leading-relaxed">
+                {customerDetails.full_address || 'No address available'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-gray-400 mb-1">Notes</dt>
+              <dd className="text-gray-800 whitespace-pre-wrap">
+                {customerDetails.notes || '—'}
+              </dd>
+            </div>
+          </div>
+        ) : (
+          <div className="text-center py-10 text-sm text-gray-500">Loading customer details…</div>
+        )}
+      </Modal>
     </div>
   )
 }

@@ -1782,6 +1782,26 @@ class ReportViewSet(TenantMixin, viewsets.ViewSet):
             raise AppValidationError(str(exc))
         return ApiResponse.success(data=service_report(self.tenant, df, dt))
 
+    @action(detail=False, methods=['get'], url_path='closed-tickets')
+    def closed_tickets(self, request):
+        """GET /reports/closed-tickets/?date_from=&date_to=&staff_id="""
+        from .services.report_service import closed_tickets_report
+        self.ensure_tenant()
+        try:
+            df, dt = self._parse_dates(request, 'date_from', 'date_to')
+        except ValueError as exc:
+            raise AppValidationError(str(exc))
+
+        staff_id = None
+        staff_id_raw = request.query_params.get('staff_id')
+        if staff_id_raw:
+            try:
+                staff_id = int(staff_id_raw)
+            except ValueError:
+                raise AppValidationError('staff_id must be an integer.')
+
+        return ApiResponse.success(data=closed_tickets_report(self.tenant, df, dt, assigned_to_id=staff_id))
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Coins
@@ -1933,6 +1953,41 @@ class CoinTransactionViewSet(NexusViewSet):
             'total_pending_coins':  str(result['pending']),
             'transactions':         CoinTransactionSerializer(result['queryset'], many=True).data,
         })
+
+    @action(detail=False, methods=['get'], url_path='staff-summary')
+    def staff_summary(self, request):
+        """GET /coins/staff-summary/ — per-staff coin totals for the tenant.
+
+        Optional query params:
+          - year=YYYY&month=MM  => summary for that calendar month
+          - period_start=YYYY-MM-DD&period_end=YYYY-MM-DD
+        """
+        period_start = None
+        period_end = None
+
+        month = request.query_params.get('month')
+        year = request.query_params.get('year')
+        if month and year:
+            try:
+                from datetime import date
+                import calendar
+                month_int = int(month)
+                year_int = int(year)
+                last_day = calendar.monthrange(year_int, month_int)[1]
+                period_start = date(year_int, month_int, 1)
+                period_end = date(year_int, month_int, last_day)
+            except (ValueError, IndexError):
+                return ApiResponse.error(errors=['Invalid month/year provided.'])
+        elif request.query_params.get('period_start') and request.query_params.get('period_end'):
+            try:
+                from datetime import date
+                period_start = date.fromisoformat(request.query_params['period_start'])
+                period_end = date.fromisoformat(request.query_params['period_end'])
+            except ValueError:
+                return ApiResponse.error(errors=['Invalid period_start or period_end format. Use YYYY-MM-DD.'])
+
+        summary = self.get_service().staff_summary(period_start=period_start, period_end=period_end)
+        return ApiResponse.success(data=summary)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2415,8 +2470,11 @@ class QuotationViewSet(NexusViewSet):
         if quo.converted_invoice_id:
             raise ConflictError('Already converted.')
         from .services.invoice_service import compute_invoice_totals
-        t        = self.tenant
-        vat_rate = t.vat_rate if t.vat_enabled else Decimal('0')
+        t = self.tenant
+        if quo.ticket_id or quo.project_id:
+            vat_rate = Decimal('0')
+        else:
+            vat_rate = t.vat_rate if t.vat_enabled else Decimal('0')
         subtotal, vat_amount, total = compute_invoice_totals(
             quo.line_items, quo.discount, vat_rate,
         )

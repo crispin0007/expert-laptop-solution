@@ -5,8 +5,8 @@ import tailwindcss from '@tailwindcss/vite'
 // When running inside Docker the backend is reachable via the Docker-compose
 // service name 'web', not 'localhost'. Set VITE_API_BASE in the container's
 // environment to 'http://web:8000'. Locally (outside Docker) this falls back
-// to http://localhost:8000 so zero config is required for local dev.
-const API_TARGET = process.env.VITE_API_BASE ?? 'http://localhost:8000'
+// to http://localhost:18000 because the backend is exposed on host port 18000.
+const API_TARGET = process.env.VITE_API_BASE ?? 'http://localhost:18000'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],

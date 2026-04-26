@@ -168,6 +168,18 @@ class Tenant(models.Model):
         max_digits=10, decimal_places=4, default=Decimal('1.0'),
         help_text='How many currency units one coin equals (e.g. 10 = 1 coin = Rs. 10)',
     )
+    PAYSLIP_CALENDAR_AD = 'ad'
+    PAYSLIP_CALENDAR_BS = 'bs'
+    PAYSLIP_CALENDAR_CHOICES = [
+        (PAYSLIP_CALENDAR_AD, 'Gregorian (AD)'),
+        (PAYSLIP_CALENDAR_BS, 'Nepali Bikram Sambat (BS)'),
+    ]
+    payslip_calendar = models.CharField(
+        max_length=2,
+        choices=PAYSLIP_CALENDAR_CHOICES,
+        default=PAYSLIP_CALENDAR_AD,
+        help_text='Calendar used for monthly payslip generation and scheduling.',
+    )
     task_coin_reward = models.PositiveSmallIntegerField(
         default=1,
         help_text='Coins awarded to staff when a project task is completed.',

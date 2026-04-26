@@ -19,6 +19,7 @@ import { useTenantStore } from '../store/tenantStore'
 // GrapeJS (1.1 MB) is isolated to the cms/pages/:id/edit route.
 const TicketListPage           = lazy(() => import('../features/tickets/TicketListPage'))
 const TicketDetailPage         = lazy(() => import('../features/tickets/TicketDetailPage'))
+const TicketClosedReportPage   = lazy(() => import('../features/tickets/ClosedTicketsReportPage'))
 const TicketTypeManagementPage = lazy(() => import('../features/tickets/TicketTypeManagementPage'))
 const ProjectListPage          = lazy(() => import('../features/projects/ProjectListPage'))
 const ProjectDetailPage        = lazy(() => import('../features/projects/ProjectDetailPage'))
@@ -86,6 +87,20 @@ export default function Router() {
                   <RoleGuard require="can_view_tickets">
                     <TicketListPage />
                   </RoleGuard>
+                </ModuleGuard>
+              }
+            />
+            <Route
+              path="tickets/closed-report"
+              element={
+                <ModuleGuard module="tickets">
+                  <ModuleGuard module="accounting">
+                    <RoleGuard require="can_view_tickets">
+                      <RoleGuard require="can_view_accounting">
+                        <TicketClosedReportPage />
+                      </RoleGuard>
+                    </RoleGuard>
+                  </ModuleGuard>
                 </ModuleGuard>
               }
             />

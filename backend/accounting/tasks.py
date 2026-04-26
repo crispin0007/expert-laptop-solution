@@ -16,7 +16,7 @@ from datetime import timedelta
 from celery import shared_task
 from django.utils import timezone
 
-from core.nepali_date import fiscal_year_of
+from core.nepali_date import ad_to_bs, bs_to_ad, fiscal_year_of
 
 log = logging.getLogger(__name__)
 
@@ -26,7 +26,8 @@ def task_generate_monthly_payslips(self):
     """
     Auto-generate draft payslips for all staff that have a StaffSalaryProfile.
 
-    Schedule: 1st of month, 00:05 UTC  (set in CELERY_BEAT_SCHEDULE).
+    Schedule: daily at 00:05 UTC (set in CELERY_BEAT_SCHEDULE).
+    Only generates for a tenant when its configured calendar reaches month start.
     Idempotent: skips if a payslip already exists for the staff + previous month.
     """
     from accounting.models import StaffSalaryProfile, Payslip
@@ -36,10 +37,13 @@ def task_generate_monthly_payslips(self):
     first_of_current = today.replace(day=1)
     last_of_prev     = first_of_current - timedelta(days=1)
     first_of_prev    = last_of_prev.replace(day=1)
+    today_bs         = ad_to_bs(today)
+    is_ad_month_start = today.day == 1
+    is_bs_month_start = today_bs.day == 1
 
     log.info(
-        "task_generate_monthly_payslips: generating payslips for %s → %s",
-        first_of_prev, last_of_prev,
+        "task_generate_monthly_payslips: localdate=%s bs_date=%s ad_mode_start=%s bs_mode_start=%s",
+        today, today_bs.isoformat(), is_ad_month_start, is_bs_month_start,
     )
 
     created_count = 0
@@ -56,12 +60,28 @@ def task_generate_monthly_payslips(self):
         tenant = profile.tenant
         staff  = profile.staff
 
+        if tenant.payslip_calendar == tenant.PAYSLIP_CALENDAR_BS:
+            if not is_bs_month_start:
+                continue
+            bs_year = today_bs.year
+            bs_month = today_bs.month
+            prev_bs_year, prev_bs_month = (
+                (bs_year - 1, 12) if bs_month == 1 else (bs_year, bs_month - 1)
+            )
+            period_start = bs_to_ad(prev_bs_year, prev_bs_month, 1)
+            period_end = today - timedelta(days=1)
+        else:
+            if not is_ad_month_start:
+                continue
+            period_start = first_of_prev
+            period_end = last_of_prev
+
         # ── idempotency check ────────────────────────────────────────────────
         if Payslip.objects.filter(
             tenant=tenant,
             staff=staff,
-            period_start=first_of_prev,
-            period_end=last_of_prev,
+            period_start=period_start,
+            period_end=period_end,
         ).exists():
             skipped_count += 1
             continue
@@ -71,8 +91,8 @@ def task_generate_monthly_payslips(self):
             svc = PayslipService(tenant=tenant, user=None)
             payslip, created = svc.generate(
                 staff_id     = staff.pk,
-                period_start = first_of_prev,
-                period_end   = last_of_prev,
+                period_start = period_start,
+                period_end   = period_end,
             )
             if not created:
                 skipped_count += 1

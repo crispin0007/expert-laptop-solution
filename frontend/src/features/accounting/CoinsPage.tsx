@@ -5,7 +5,7 @@ import { STAFF } from '../../api/endpoints'
 import Modal from '../../components/Modal'
 import toast from 'react-hot-toast'
 import { useFyStore } from '../../store/fyStore'
-import { approveCoin, awardCoins, fetchCoinDetail, fetchCoinsList, fetchCoinsSummary, fetchStaffCoinHistory, rejectCoin } from './services'
+import { approveCoin, awardCoins, fetchCoinDetail, fetchCoinsList, fetchCoinsSummary, fetchStaffCoinHistory, fetchStaffCoinSummary, rejectCoin } from './services'
 import {
   CheckCircle2, XCircle, Loader2, Coins, History, Plus,
   X, Ticket, Package, Wrench, User, ArrowUpRight,
@@ -22,7 +22,8 @@ interface CoinTxn {
   staff_name: string
   amount: string
   source_type: string
-  source_id: number
+  source_id: number | null
+  source_reference?: string
   status: string
   note: string
   created_at: string
@@ -69,9 +70,11 @@ interface StaffUser {
 
 interface StaffCoinHistory {
   transactions: CoinTxn[]
-  total_earned: number
-  total_approved: number
-  currency_value: number
+  total_earned: string
+  total_approved: string
+  total_pending_coins: string
+  total_approved_value: string
+  currency_value: string
 }
 
 
@@ -430,8 +433,129 @@ function AwardCoinsModal({ open, onClose, onDone }: {
 
 // ── Staff Coin History Panel ───────────────────────────────────────────────────
 
+interface StaffCoinSummaryRow {
+  staff_id: number
+  staff_name: string
+  staff_email: string
+  total_coins: string
+  approved_coins: string
+  pending_coins: string
+  rejected_coins: string
+  total_count: number
+  approved_count: number
+  pending_count: number
+  rejected_count: number
+  approved_value: string
+}
+
+function StaffCoinSummaryPanel() {
+  const now = new Date()
+  const [month, setMonth] = useState(String(now.getMonth() + 1))
+  const [year, setYear] = useState(String(now.getFullYear()))
+
+  const params = {
+    month,
+    year,
+  }
+
+  const { data: rows = [], isLoading } = useQuery<StaffCoinSummaryRow[]>({
+    queryKey: ['staff-coin-summary', month, year],
+    queryFn: () => fetchStaffCoinSummary(params),
+  })
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <History size={16} className="text-indigo-400" />
+          <div>
+            <h2 className="font-semibold text-gray-700">Staff Coin Summary</h2>
+            <p className="text-xs text-gray-400">Monthly view for {new Date(Number(year), Number(month) - 1).toLocaleString('default', { month: 'long' })} {year}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Month</label>
+          <select
+            value={month}
+            onChange={e => setMonth(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            {[...Array(12)].map((_, index) => {
+              const value = String(index + 1)
+              return (
+                <option key={value} value={value}>
+                  {new Date(0, index).toLocaleString('default', { month: 'short' })}
+                </option>
+              )
+            })}
+          </select>
+          <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Year</label>
+          <select
+            value={year}
+            onChange={e => setYear(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            {Array.from({ length: 3 }, (_, idx) => {
+              const y = now.getFullYear() - (2 - idx)
+              return <option key={y} value={String(y)}>{y}</option>
+            })}
+          </select>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-10 text-gray-400 gap-2">
+          <Loader2 size={14} className="animate-spin" /> Loading…
+        </div>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-gray-400 text-center py-10">No coin activity recorded yet.</p>
+      ) : (
+        <div className="grid gap-3">
+          {rows.map(row => (
+            <div key={row.staff_id} className="border border-gray-100 rounded-2xl p-4 hover:shadow-sm transition">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">{row.staff_name || row.staff_email}</p>
+                  <p className="text-xs text-gray-400">{row.staff_email}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-gray-500">Transactions</p>
+                  <p className="text-sm font-semibold text-gray-800">{row.total_count}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-4 text-xs text-gray-500">
+                <div className="rounded-xl bg-gray-50 p-3">
+                  <div className="text-[11px] uppercase tracking-wide mb-1">Total Coned</div>
+                  <div className="font-semibold text-gray-800">{row.total_coins}</div>
+                </div>
+                <div className="rounded-xl bg-emerald-50 p-3">
+                  <div className="text-[11px] uppercase tracking-wide mb-1">Claimed</div>
+                  <div className="font-semibold text-emerald-700">{row.approved_coins}</div>
+                </div>
+                <div className="rounded-xl bg-amber-50 p-3">
+                  <div className="text-[11px] uppercase tracking-wide mb-1">Remaining</div>
+                  <div className="font-semibold text-amber-700">{row.pending_coins}</div>
+                </div>
+                <div className="rounded-xl bg-red-50 p-3">
+                  <div className="text-[11px] uppercase tracking-wide mb-1">Rejected</div>
+                  <div className="font-semibold text-red-700">{row.rejected_coins}</div>
+                </div>
+                <div className="rounded-xl bg-indigo-50 p-3">
+                  <div className="text-[11px] uppercase tracking-wide mb-1">Approved Value</div>
+                  <div className="font-semibold text-indigo-700">Rs. {Number(row.approved_value).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function StaffCoinHistoryPanel() {
   const [selectedStaffId, setSelectedStaffId] = useState<number | ''>('')
+  const [coinFilter, setCoinFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
 
   const { data: staffList = [] } = useQuery<StaffUser[]>({
     queryKey: ['staff-list-history'],
@@ -446,6 +570,10 @@ function StaffCoinHistoryPanel() {
     queryFn: () => fetchStaffCoinHistory(selectedStaffId as number),
     enabled: !!selectedStaffId,
   })
+
+  const filteredTransactions = history?.transactions.filter(tx =>
+    coinFilter === 'all' ? true : tx.status === coinFilter
+  ) ?? []
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
@@ -476,12 +604,45 @@ function StaffCoinHistoryPanel() {
       )}
 
       {selectedStaffId && history && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-3 gap-3">
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="grid grid-cols-3 gap-3 flex-1 min-w-[220px]">
+              <div className="bg-amber-50 rounded-xl p-3 text-center">
+                <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Total Coned</p>
+                <p className="text-lg font-semibold text-gray-800">{Number(history.total_earned).toLocaleString()}</p>
+              </div>
+              <div className="bg-emerald-50 rounded-xl p-3 text-center">
+                <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Claimed</p>
+                <p className="text-lg font-semibold text-emerald-700">{Number(history.total_approved).toLocaleString()}</p>
+              </div>
+              <div className="bg-amber-50 rounded-xl p-3 text-center">
+                <p className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Remaining</p>
+                <p className="text-lg font-semibold text-amber-700">{Number(history.total_pending_coins).toLocaleString()}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {(['all', 'pending', 'approved', 'rejected'] as const).map(status => (
+                <button
+                  key={status}
+                  type="button"
+                  onClick={() => setCoinFilter(status)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition ${
+                    coinFilter === status ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                  }`}
+                >
+                  {status === 'all' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="text-xs text-gray-500">Approved value: Rs. {Number(history.total_approved_value).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+
+          <div className="space-y-2">
             {[
-              { label: 'Total Earned', value: `${history.total_earned} coins` },
-              { label: 'Approved', value: `${history.total_approved} coins` },
-              { label: 'Currency Value', value: `Rs. ${history.currency_value?.toFixed(2) ?? '0.00'}` },
+              { label: 'Total Coned', value: `${Number(history.total_earned).toLocaleString()} coins` },
+              { label: 'Claimed', value: `${Number(history.total_approved).toLocaleString()} coins` },
+              { label: 'Remaining', value: `${Number(history.total_pending_coins).toLocaleString()} coins` },
+              { label: 'Currency Value', value: `Rs. ${Number(history.total_approved_value).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` },
             ].map(card => (
               <div key={card.label} className="bg-amber-50 rounded-xl p-3 text-center">
                 <p className="text-xs text-gray-400 mb-1">{card.label}</p>
@@ -490,11 +651,11 @@ function StaffCoinHistoryPanel() {
             ))}
           </div>
 
-          {history.transactions.length === 0 ? (
+          {filteredTransactions.length === 0 ? (
             <p className="text-sm text-gray-400 text-center py-4">No coin transactions yet.</p>
           ) : (
             <div className="space-y-2">
-              {history.transactions.map(c => (
+              {filteredTransactions.map(c => (
                 <div key={c.id} className={`flex items-center justify-between rounded-xl px-4 py-3 ${
                   c.status === 'approved' ? 'bg-green-50 border border-green-100' :
                   c.status === 'pending' ? 'bg-amber-50 border border-amber-100' :
@@ -521,7 +682,7 @@ function StaffCoinHistoryPanel() {
               ))}
             </div>
           )}
-        </div>
+        </>
       )}
     </div>
   )
@@ -543,6 +704,7 @@ export default function CoinsPage() {
   const navigate = useNavigate()
   const { can } = usePermissions()
   const managerView = can('can_approve_coins')
+  const canViewCoins = can('can_view_coins')
   const { fyYear } = useFyStore()
 
   const [activeTab, setActiveTab] = useState<'pending' | 'approved'>('pending')
@@ -625,6 +787,8 @@ export default function CoinsPage() {
           </div>
         </div>
       )}
+
+      {canViewCoins && <StaffCoinSummaryPanel />}
 
       {/* Main transactions panel */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -709,13 +873,17 @@ export default function CoinsPage() {
                       </span>
                     </p>
                     <p className="text-xs text-gray-400">
-                      {c.source_type === 'ticket' && c.source_id ? (
-                        <span
-                          onClick={e => { e.stopPropagation(); navigate(`/tickets/${c.source_id}`) }}
-                          className="text-indigo-500 hover:text-indigo-700 cursor-pointer hover:underline"
-                        >
-                          Ticket #{c.source_id}
-                        </span>
+                      {c.source_reference ? (
+                        c.source_type === 'ticket' && c.source_id ? (
+                          <span
+                            onClick={e => { e.stopPropagation(); navigate(`/tickets/${c.source_id}`) }}
+                            className="text-indigo-500 hover:text-indigo-700 cursor-pointer hover:underline"
+                          >
+                            {c.source_reference}
+                          </span>
+                        ) : (
+                          <span>{c.source_reference}</span>
+                        )
                       ) : (
                         <span>{c.source_type}{c.source_id ? ` #${c.source_id}` : ''}</span>
                       )}

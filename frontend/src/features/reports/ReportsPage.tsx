@@ -7,7 +7,7 @@
 import { useState, useRef, useEffect, Fragment } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import apiClient from '../../api/client'
-import { ACCOUNTING, INVENTORY, CUSTOMERS } from '../../api/endpoints'
+import { ACCOUNTING, INVENTORY, CUSTOMERS, STAFF } from '../../api/endpoints'
 import toast from 'react-hot-toast'
 import {
   BarChart2, BookOpen, TrendingUp, TrendingDown, ShoppingBag, ShoppingCart,
@@ -177,6 +177,7 @@ interface ReportMeta {
   dateMode: ReportDateMode
   needsCustomer?: boolean
   needsSupplier?: boolean
+  needsStaff?: boolean
   needsCostCentre?: boolean
 }
 
@@ -222,6 +223,7 @@ const REPORTS: ReportMeta[] = [
   { key: 'sales-master',              label: 'Sales Master',        endpoint: ACCOUNTING.REPORT_SALES_MASTER,              icon: FileText,     category: 'sales', dateMode: 'range' },
   { key: 'sales-by-customer',         label: 'By Customer',         endpoint: ACCOUNTING.REPORT_SALES_BY_CUSTOMER,         icon: Users,        category: 'sales', dateMode: 'range' },
   { key: 'sales-by-item',             label: 'By Item',             endpoint: ACCOUNTING.REPORT_SALES_BY_ITEM,             icon: ShoppingBag,  category: 'sales', dateMode: 'range' },
+  { key: 'closed-tickets',            label: 'Closed Tickets',       endpoint: ACCOUNTING.REPORT_CLOSED_TICKETS,          icon: FileText,     category: 'sales', dateMode: 'range', needsStaff: true },
   { key: 'sales-by-customer-monthly', label: 'By Customer Monthly', endpoint: ACCOUNTING.REPORT_SALES_BY_CUSTOMER_MONTHLY, icon: CalendarDays, category: 'sales', dateMode: 'range' },
   { key: 'sales-by-item-monthly',     label: 'By Item Monthly',     endpoint: ACCOUNTING.REPORT_SALES_BY_ITEM_MONTHLY,     icon: CalendarDays, category: 'sales', dateMode: 'range' },
   { key: 'service-report',             label: 'Service Report',      endpoint: ACCOUNTING.REPORT_SERVICE_REPORT,            icon: BarChart2,    category: 'sales', dateMode: 'range' },
@@ -1801,6 +1803,13 @@ function toCSV(key: ReportType, data: Record<string, unknown>): string {
       }
       break
     }
+    case 'closed-tickets': {
+      const d = data as unknown as { rows: { ticket_number: string; ticket_title: string; customer_name: string; assigned_to: string; closed_at: string; invoice_number: string; invoice_total: string; coins_awarded: string }[]; total_ticket_count: number; total_invoice_amount: string; total_coin_amount: string }
+      row('Ticket Number', 'Ticket Title', 'Customer', 'Assigned Staff', 'Closed At', 'Invoice #', 'Invoice Total', 'Approved Coins')
+      d.rows.forEach(r => row(r.ticket_number, r.ticket_title, r.customer_name, r.assigned_to, r.closed_at, r.invoice_number, r.invoice_total, r.coins_awarded))
+      row('Total', '', '', '', '', '', d.total_invoice_amount, d.total_coin_amount)
+      break
+    }
     case 'service-report': {
       const sd = data as unknown as { rows: { name: string; invoice_count: number; revenue: string; expense_count: number; cost: string; net: string }[]; total_revenue: string; total_cost: string; total_net: string }
       row('Service', 'Invoices', 'Revenue', 'Expenses', 'Cost', 'Net')
@@ -2125,6 +2134,7 @@ export default function ReportsPage() {
   const [dateTo, setDateTo] = useState(today)
   const [customerId, setCustomerId] = useState<number | null>(null)
   const [supplierId, setSupplierId] = useState<number | null>(null)
+  const [staffId, setStaffId] = useState<number | null>(null)
   const [costCentreId, setCostCentreId] = useState<number | null>(null)
   // Compare period — optional, used by P&L and Balance Sheet
   const [compareEnabled, setCompareEnabled] = useState(false)
@@ -2155,6 +2165,7 @@ export default function ReportsPage() {
     }
     if (report.needsCustomer && customerId) parts.push(`customer_id=${customerId}`)
     if (report.needsSupplier && supplierId) parts.push(`supplier_id=${supplierId}`)
+    if (report.needsStaff && staffId) parts.push(`staff_id=${staffId}`)
     if (report.needsCostCentre && costCentreId) parts.push(`cost_centre_id=${costCentreId}`)
     if (supportsCompare && compareEnabled) {
       if (reportKey === 'pl' && compareFrom && compareTo) {
@@ -2184,6 +2195,15 @@ export default function ReportsPage() {
     staleTime: 60_000,
   })
 
+  const { data: staffList } = useQuery<{ id: number; name: string }[]>({
+    queryKey: ['report-staff-dropdown'],
+    queryFn: () => apiClient.get(`${STAFF.LIST}?page_size=500`).then(r =>
+      (r.data?.data?.results ?? r.data?.results ?? []).map((s: { id: number; name: string }) => ({ id: s.id, name: s.name }))
+    ),
+    enabled: report?.needsStaff ?? false,
+    staleTime: 60_000,
+  })
+
   const { data: costCentreList } = useQuery<{ id: number; name: string; code: string }[]>({
     queryKey: ['report-cost-centres-dropdown'],
     queryFn: () => apiClient.get(`${ACCOUNTING.COST_CENTRES}?page_size=500`).then(r => {
@@ -2200,7 +2220,7 @@ export default function ReportsPage() {
   const qc = useQueryClient()
 
   const { data: reportData, isLoading, isError, error, refetch } = useQuery<Record<string, unknown>>({
-    queryKey: ['report', reportKey, dateFrom, dateTo, customerId, supplierId, costCentreId, compareEnabled, compareFrom, compareTo],
+    queryKey: ['report', reportKey, dateFrom, dateTo, customerId, supplierId, staffId, costCentreId, compareEnabled, compareFrom, compareTo],
     queryFn: () => apiClient.get(report.endpoint + buildParams()).then(r => r.data?.data ?? r.data),
     enabled: false,
   })
@@ -2295,6 +2315,24 @@ ${el.innerHTML}
         return <MonthlyCrossTableView data={d as unknown as MonthlyCrossData} entityKey="supplier" />
       case 'purchase-by-item-monthly':
         return <MonthlyCrossTableView data={d as unknown as MonthlyCrossData} entityKey="item" />
+      case 'closed-tickets': {
+        const ct = d as unknown as { rows: { ticket_number: string; ticket_title: string; customer_name: string; assigned_to: string; closed_at: string; invoice_number: string; invoice_total: string; coins_awarded: string }[]; total_ticket_count: number; total_invoice_amount: string; total_coin_amount: string }
+        return (
+          <div className="overflow-x-auto">
+            <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-start justify-between flex-wrap gap-3">
+              <div className="flex gap-6 text-right text-sm">
+                <div><p className="text-xs text-gray-400">Closed Tickets</p><p className="font-bold text-gray-900">{ct.total_ticket_count}</p></div>
+                <div><p className="text-xs text-gray-400">Invoice Total</p><p className="font-bold text-green-700">{npr(ct.total_invoice_amount)}</p></div>
+                <div><p className="text-xs text-gray-400">Approved Coins</p><p className="font-bold text-indigo-700">{npr(ct.total_coin_amount)}</p></div>
+              </div>
+            </div>
+            <GenericTableView
+              rows={ct.rows}
+              totalRow={{ invoice_total: ct.total_invoice_amount, coins_awarded: ct.total_coin_amount }}
+            />
+          </div>
+        )
+      }
       case 'service-report': {
         const sd = d as unknown as { date_from: string; date_to: string; rows: { id: number; name: string; invoice_count: number; revenue: string; expense_count: number; cost: string; net: string }[]; total_revenue: string; total_cost: string; total_net: string }
         return (
@@ -2487,6 +2525,20 @@ ${el.innerHTML}
                     >
                       <option value="">— Select supplier —</option>
                       {(suppliersList ?? []).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                {report.needsStaff && (
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1 font-medium">Assigned Staff</label>
+                    <select
+                      value={staffId ?? ''}
+                      onChange={e => setStaffId(e.target.value ? parseInt(e.target.value) : null)}
+                      className="h-9 px-3 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 min-w-[200px]"
+                    >
+                      <option value="">— All staff —</option>
+                      {(staffList ?? []).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                     </select>
                   </div>
                 )}

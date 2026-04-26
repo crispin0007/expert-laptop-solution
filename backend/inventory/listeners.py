@@ -250,6 +250,8 @@ def _apply_project_stock_movements(project_id: int, tenant, ProjectProduct) -> N
 
     with transaction.atomic():
         for pp in project_products:
+            if not pp.product:
+                continue
             StockMovement.objects.create(
                 tenant=tenant,
                 product=pp.product,

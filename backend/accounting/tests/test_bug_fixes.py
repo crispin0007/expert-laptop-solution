@@ -2033,6 +2033,59 @@ class TestR1ReportRegressions:
         Invoice.objects.filter(pk=in_period.pk).update(
             created_at=timezone.make_aware(datetime.datetime(2025, 12, 30, 12, 0, 0))
         )
+
+    @pytest.mark.django_db
+    def test_closed_tickets_report_includes_invoice_and_coin_totals(self, tenant, admin_user):
+        """Closed tickets report must return ticket rows, invoice totals and approved coin sums."""
+        from accounting.models import Invoice, CoinTransaction
+        from accounting.services.report_service import closed_tickets_report
+        from tickets.models import Ticket
+
+        ticket = Ticket.objects.create(
+            tenant=tenant,
+            title='Repair laptop',
+            description='Battery replacement',
+            status=Ticket.STATUS_CLOSED,
+            assigned_to=admin_user,
+            closed_at=datetime.datetime(2026, 4, 10, 15, 30, tzinfo=datetime.timezone.utc),
+        )
+
+        Invoice.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            ticket=ticket,
+            date=datetime.date(2026, 4, 10),
+            line_items=[],
+            subtotal=Decimal('250.00'),
+            discount=Decimal('0.00'),
+            vat_rate=Decimal('0.00'),
+            vat_amount=Decimal('0.00'),
+            total=Decimal('250.00'),
+            status=Invoice.STATUS_ISSUED,
+        )
+
+        CoinTransaction.objects.create(
+            tenant=tenant,
+            staff=admin_user,
+            amount=Decimal('12.50'),
+            source_type=CoinTransaction.SOURCE_TICKET,
+            source_id=ticket.pk,
+            status=CoinTransaction.STATUS_APPROVED,
+        )
+
+        report = closed_tickets_report(
+            tenant,
+            datetime.date(2026, 4, 1),
+            datetime.date(2026, 4, 30),
+        )
+
+        assert report['total_ticket_count'] == 1
+        assert report['total_invoice_amount'] == '250.00'
+        assert report['total_coin_amount'] == '12.50'
+        assert len(report['rows']) == 1
+        assert report['rows'][0]['ticket_number'] == ticket.ticket_number
+        assert report['rows'][0]['invoice_total'] == '250.00'
+        assert report['rows'][0]['coins_awarded'] == '12.50'
         Invoice.objects.filter(pk=out_of_period.pk).update(
             created_at=timezone.make_aware(datetime.datetime(2026, 3, 11, 12, 0, 0))
         )
@@ -2906,6 +2959,175 @@ class TestN5PayrollCorrectionWorkflow:
             period_end=datetime.date(2026, 6, 30),
         )
         assert same_period.count() == 2
+
+
+class TestN6CoinPayslipSafety:
+
+    @pytest.mark.django_db
+    def test_award_rejects_duplicate_ticket_coin_transactions(self, tenant, admin_user):
+        from django.contrib.auth import get_user_model
+        from accounts.models import TenantMembership
+        from accounting.models import CoinTransaction
+        from accounting.services.coin_service import CoinService
+        from core.exceptions import ValidationError
+
+        user_model = get_user_model()
+        staff = user_model.objects.create_user(
+            username='coin_ticket_staff',
+            email='coin.ticket@test.com',
+            password='testpassword',
+        )
+        TenantMembership.objects.create(
+            user=staff,
+            tenant=tenant,
+            role='staff',
+            is_active=True,
+        )
+
+        svc = CoinService(tenant=tenant, user=admin_user)
+        svc.award(
+            staff_id=staff.id,
+            amount=Decimal('5.00'),
+            source_type=CoinTransaction.SOURCE_TICKET,
+            source_id=1001,
+            note='Ticket reward',
+        )
+
+        with pytest.raises(ValidationError):
+            svc.award(
+                staff_id=staff.id,
+                amount=Decimal('3.00'),
+                source_type=CoinTransaction.SOURCE_TICKET,
+                source_id=1001,
+                note='Duplicate ticket reward',
+            )
+
+    @pytest.mark.django_db
+    def test_staff_summary_filters_by_month(self, tenant, admin_user):
+        from django.contrib.auth import get_user_model
+        from accounts.models import TenantMembership
+        from accounting.models import CoinTransaction
+        from accounting.services.coin_service import CoinService
+        from datetime import date
+
+        user_model = get_user_model()
+        staff = user_model.objects.create_user(
+            username='coin_summary_staff',
+            email='coin.summary@test.com',
+            password='testpassword',
+        )
+        TenantMembership.objects.create(
+            user=staff,
+            tenant=tenant,
+            role='staff',
+            is_active=True,
+        )
+
+        CoinTransaction.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            staff=staff,
+            amount=Decimal('1.00'),
+            source_type=CoinTransaction.SOURCE_MANUAL,
+            status=CoinTransaction.STATUS_APPROVED,
+        ).refresh_from_db()
+
+        old_coin = CoinTransaction.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            staff=staff,
+            amount=Decimal('2.00'),
+            source_type=CoinTransaction.SOURCE_MANUAL,
+            status=CoinTransaction.STATUS_APPROVED,
+        )
+        old_coin.created_at = old_coin.created_at.replace(year=2025, month=12)
+        old_coin.save(update_fields=['created_at'])
+
+        svc = CoinService(tenant=tenant, user=admin_user)
+        summary = svc.staff_summary(
+            period_start=date(2026, 1, 1),
+            period_end=date(2026, 12, 31),
+        )
+
+        assert len(summary) == 1
+        assert summary[0]['approved_coins'] == '3.00'
+
+        month_summary = svc.staff_summary(
+            period_start=date(2025, 12, 1),
+            period_end=date(2025, 12, 31),
+        )
+
+        assert len(month_summary) == 1
+        assert month_summary[0]['approved_coins'] == '2.00'
+
+    @pytest.mark.django_db
+    def test_generate_payslip_includes_approved_coins_in_gross(self, tenant, admin_user):
+        from django.contrib.auth import get_user_model
+        from accounts.models import TenantMembership
+        from accounting.models import CoinTransaction, StaffSalaryProfile
+        from accounting.services.payslip_service import PayslipService
+        from django.utils import timezone
+
+        user_model = get_user_model()
+        staff = user_model.objects.create_user(
+            username='coin_payslip_staff',
+            email='coin.payslip@test.com',
+            password='testpassword',
+        )
+        TenantMembership.objects.create(
+            user=staff,
+            tenant=tenant,
+            role='staff',
+            is_active=True,
+        )
+        StaffSalaryProfile.objects.create(
+            tenant=tenant,
+            staff=staff,
+            base_salary=Decimal('600.00'),
+            tds_rate=Decimal('0.1000'),
+            bonus_default=Decimal('50.00'),
+            effective_from=datetime.date(2026, 1, 1),
+        )
+
+        ct1 = CoinTransaction.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            staff=staff,
+            amount=Decimal('2.50'),
+            source_type=CoinTransaction.SOURCE_TASK,
+            source_id=2001,
+            status=CoinTransaction.STATUS_APPROVED,
+            approved_by=admin_user,
+            note='Task reward 1',
+        )
+        ct2 = CoinTransaction.objects.create(
+            tenant=tenant,
+            created_by=admin_user,
+            staff=staff,
+            amount=Decimal('1.50'),
+            source_type=CoinTransaction.SOURCE_TASK,
+            source_id=2002,
+            status=CoinTransaction.STATUS_APPROVED,
+            approved_by=admin_user,
+            note='Task reward 2',
+        )
+
+        ct1.created_at = timezone.make_aware(datetime.datetime(2026, 4, 15, 12, 0))
+        ct1.save(update_fields=['created_at'])
+        ct2.created_at = timezone.make_aware(datetime.datetime(2026, 4, 16, 12, 0))
+        ct2.save(update_fields=['created_at'])
+
+        svc = PayslipService(tenant=tenant, user=admin_user)
+        payslip, created = svc.generate(
+            staff_id=staff.id,
+            period_start=datetime.date(2026, 4, 1),
+            period_end=datetime.date(2026, 4, 30),
+        )
+
+        assert created is True
+        assert payslip.total_coins == Decimal('4.00')
+        assert payslip.gross_amount == Decimal('40.00')
+        assert payslip.net_pay == Decimal('625.00')
 
 
 # ─────────────────────────────────────────────────────────────────────────────

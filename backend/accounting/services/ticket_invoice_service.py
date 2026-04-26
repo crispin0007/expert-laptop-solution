@@ -67,7 +67,7 @@ def generate_ticket_invoice(ticket, tenant, due_date=None, notes='', created_by=
       'service'  → service_charge on Ticket
       'product'  → each TicketProduct
 
-    VAT rate is snapshotted from tenant at generation time (audit requirement).
+    Ticket invoices do not auto-apply VAT by default.
     Raises ValueError if ticket already has an active invoice.
     """
     from tickets.models import TicketProduct
@@ -127,7 +127,7 @@ def generate_ticket_invoice(ticket, tenant, due_date=None, notes='', created_by=
             "Set a service charge or add products before generating an invoice."
         )
 
-    vat_rate   = tenant.vat_rate if tenant.vat_enabled else Decimal('0')
+    vat_rate   = Decimal('0')
     subtotal, vat_amount, total = compute_invoice_totals(line_items, Decimal('0'), vat_rate)
 
     # B24 — Snapshot cost_price for product lines so COGS uses the cost at

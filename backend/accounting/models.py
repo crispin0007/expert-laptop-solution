@@ -520,6 +520,12 @@ class CoinTransaction(TenantModel):
 
     class Meta:
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'source_type', 'source_id'],
+                name='acc_cointransaction_source_uniq',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.staff} +{self.amount} coins [{self.status}]"

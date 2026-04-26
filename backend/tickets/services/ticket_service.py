@@ -20,7 +20,7 @@ import logging
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from core.exceptions import (
@@ -217,13 +217,23 @@ class TicketService:
             validated_data['title'] = self._build_auto_title(validated_data)
 
         ticket_type  = validated_data.get('ticket_type')
-        sla_hours    = ticket_type.default_sla_hours if ticket_type else 24
-        sla_deadline = timezone.now() + timezone.timedelta(hours=sla_hours)
+        sla_deadline = validated_data.pop('sla_deadline', None)
+        scheduled_at = validated_data.pop('scheduled_at', None)
+
+        if sla_deadline is not None:
+            if sla_deadline <= timezone.now():
+                raise ValidationError('SLA deadline must be in the future.')
+            time_delta = sla_deadline - timezone.now()
+            sla_hours = max(1, int((time_delta.total_seconds() + 3599) // 3600))
+        else:
+            sla_hours = ticket_type.default_sla_hours if ticket_type else 24
+            sla_deadline = timezone.now() + timezone.timedelta(hours=sla_hours)
 
         ticket = Ticket.objects.create(
             tenant=self.tenant,
             created_by=self.user,
             sla_deadline=sla_deadline,
+            scheduled_at=scheduled_at,
             **validated_data,
         )
 
@@ -243,6 +253,29 @@ class TicketService:
             actor=self.user,
             created_by=self.user,
         )
+
+        if scheduled_at:
+            TicketTimeline.objects.create(
+                tenant=self.tenant,
+                ticket=ticket,
+                event_type=TicketTimeline.EVENT_SCHEDULED,
+                description=(
+                    f"Scheduled for {scheduled_at.strftime('%Y-%m-%d %H:%M %Z')}"
+                ),
+                actor=self.user,
+                created_by=self.user,
+                metadata={'scheduled_at': scheduled_at.isoformat()},
+            )
+            try:
+                from core.events import EventBus
+                EventBus.publish('ticket.scheduled', {
+                    'id': ticket.pk,
+                    'tenant_id': self.tenant.pk,
+                    'assigned_to_id': ticket.assigned_to_id,
+                    'scheduled_at': scheduled_at.isoformat(),
+                }, tenant=self.tenant)
+            except Exception:
+                logger.error('EventBus.publish ticket.scheduled failed for ticket %s', ticket.pk, exc_info=True)
 
         if team_members:
             ticket.team_members.set(team_members)
@@ -320,11 +353,51 @@ class TicketService:
             raise TicketStateError(
                 'This ticket is locked. Only a manager or admin can modify it.'
             )
+        from tickets.models import TicketTimeline
+
         team_members = validated_data.pop('team_members', None)
         vehicles     = validated_data.pop('vehicles', None)
 
+        original_scheduled_at = instance.scheduled_at
+        original_sla_deadline = instance.sla_deadline
+
         for field, value in validated_data.items():
             setattr(instance, field, value)
+
+        if 'scheduled_at' in validated_data and validated_data['scheduled_at'] != original_scheduled_at:
+            instance.scheduled_notification_sent_at = None
+            if validated_data['scheduled_at'] is not None:
+                TicketTimeline.objects.create(
+                    tenant=instance.tenant,
+                    ticket=instance,
+                    event_type=TicketTimeline.EVENT_SCHEDULED,
+                    description=(
+                        f"Rescheduled for {validated_data['scheduled_at'].strftime('%Y-%m-%d %H:%M %Z')}"
+                    ),
+                    actor=self.user,
+                    created_by=self.user,
+                    metadata={'scheduled_at': validated_data['scheduled_at'].isoformat()},
+                )
+            try:
+                from core.events import EventBus
+                EventBus.publish('ticket.scheduled', {
+                    'id': instance.pk,
+                    'tenant_id': instance.tenant_id,
+                    'assigned_to_id': instance.assigned_to_id,
+                    'scheduled_at': validated_data['scheduled_at'].isoformat(),
+                }, tenant=instance.tenant)
+            except Exception:
+                logger.error('EventBus.publish ticket.scheduled failed for ticket %s', instance.pk, exc_info=True)
+
+        if 'sla_deadline' in validated_data and validated_data['sla_deadline'] != original_sla_deadline:
+            try:
+                sla = instance.sla
+                sla.sla_hours = max(1, int((validated_data['sla_deadline'] - timezone.now()).total_seconds() // 3600))
+                sla.breach_at = validated_data['sla_deadline']
+                sla.save(update_fields=['sla_hours', 'breach_at'])
+            except Exception:
+                pass
+
         # Only write the columns that were supplied + updated_at.
         # A bare .save() re-writes every field and can silently clobber
         # concurrent edits to columns not in the current request.
@@ -741,16 +814,27 @@ class TicketService:
                     )
                 if reason:
                     note_parts.append(reason)
-                coin_txn = CoinTransaction.objects.create(
-                    tenant=ticket.tenant,
-                    created_by=actor,
-                    staff=ticket.assigned_to,
-                    amount=coin_amount,
-                    source_type=CoinTransaction.SOURCE_TICKET,
-                    source_id=ticket.pk,
-                    status=CoinTransaction.STATUS_PENDING,
-                    note=' '.join(note_parts).strip(),
-                )
+                try:
+                    coin_txn = CoinTransaction.objects.create(
+                        tenant=ticket.tenant,
+                        created_by=actor,
+                        staff=ticket.assigned_to,
+                        amount=coin_amount,
+                        source_type=CoinTransaction.SOURCE_TICKET,
+                        source_id=ticket.pk,
+                        status=CoinTransaction.STATUS_PENDING,
+                        note=' '.join(note_parts).strip(),
+                    )
+                except IntegrityError:
+                    coin_txn = CoinTransaction.objects.get(
+                        tenant=ticket.tenant,
+                        source_type=CoinTransaction.SOURCE_TICKET,
+                        source_id=ticket.pk,
+                    )
+                    logger.info(
+                        "Ticket %s coin transaction already exists: %s",
+                        ticket.pk, coin_txn.pk,
+                    )
 
         logger.info(
             "Ticket %s closed by %s. coins=%s breakdown=%s",

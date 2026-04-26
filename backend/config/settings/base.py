@@ -169,6 +169,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'notifications.tasks.task_check_sla_deadlines',
         'schedule': 900,  # 15 minutes in seconds
     },
+    'check-ticket-schedules-every-5min': {
+        'task': 'notifications.tasks.task_check_ticket_schedules',
+        'schedule': 300,  # 5 minutes in seconds
+    },
     # Purge expired SimpleJWT tokens every night at 03:00 UTC.
     # Without this the OutstandingToken + BlacklistedToken tables grow forever
     # and every token validation becomes slower as the unbounded table is scanned.
@@ -183,12 +187,12 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'core.tasks.task_detect_and_ban_probe_ips',
         'schedule': 300,  # 5 minutes
     },
-    # Auto-generate draft payslips on the 1st of each month at 00:05 UTC.
-    # Iterates all StaffSalaryProfiles and creates a Payslip for the previous
-    # calendar month (idempotent — skips if one already exists).
+    # Auto-generate draft payslips daily at 00:05 UTC.
+    # Only tenants whose configured payslip calendar has reached month start
+    # will actually create a new payslip.
     'auto-generate-monthly-payslips': {
         'task': 'accounting.tasks.task_generate_monthly_payslips',
-        'schedule': crontab(day_of_month=1, hour=0, minute=5),
+        'schedule': crontab(hour=0, minute=5),
     },
     # Process scheduled reversing journal entries daily at 00:10 UTC.
     # Finds all posted JournalEntries with reversal_date <= today and no reversal yet.
